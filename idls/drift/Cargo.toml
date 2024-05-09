@@ -1,0 +1,27 @@
+[package]
+name = "drift-cpi"
+version = { workspace = true }
+edition = { workspace = true }
+
+[features]
+default = ["cpi"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+
+[dependencies]
+anchor-gen = { workspace = true }
+anchor-lang = { workspace = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+borsh = { workspace = true }
+common = { path = "../../common" }
+lazy_static = { workspace = true }
+log = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+serde_json = { workspace = true }
+sol-chainsaw = { workspace = true }
+solana-sdk = { workspace = true }

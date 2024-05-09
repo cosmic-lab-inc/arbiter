@@ -1,0 +1,40 @@
+[config]
+default_to_workspace = false
+
+[tasks.backfill]
+script = "cargo run -r -p backfill"
+
+[tasks.epoch]
+script = "cargo run -r -p epoch_server"
+
+[tasks.covest]
+script = "cargo run -p covest"
+
+########################################
+# TIMESCALE
+########################################
+
+# sqlx is a manager to connect to a postgres database. It does not create a server or users!
+[tasks.install_sqlx_cli]
+command = "cargo"
+args = ["install", "sqlx-cli", "--no-default-features", "--features", "native-tls,postgres"]
+
+[tasks.wipe_migrations]
+script = "rm -rf migrations"
+
+[tasks.create_migrations]
+dependencies = ["install_sqlx_cli"]
+env = { DATABASE_URL = "postgres://tsdbadmin:uf4eakx5fmlnjmn2@j2ar0fxl57.b5o7u5bwsb.tsdb.cloud.timescale.com:37602/tsdb?sslmode=require" }
+command = "sqlx"
+args = ["migrate", "add", "-r", "epoch"]
+
+[tasks.copy_migrations]
+script = "chmod +x ./migrate.sh && ./migrate.sh"
+
+[tasks.migrate_database]
+dependencies = ["install_sqlx_cli"]
+env = { DATABASE_URL = "postgres://tsdbadmin:uf4eakx5fmlnjmn2@j2ar0fxl57.b5o7u5bwsb.tsdb.cloud.timescale.com:37602/tsdb?sslmode=require" }
+script = "sqlx migrate run"
+
+[tasks.setup-timescale]
+dependencies = ["wipe_migrations", "create_migrations", "copy_migrations", "migrate_database"]

@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "decoder",
+    "arbiter_client",
+    "idls/*"
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Cosmic Lab <epochsolana@gmail.com>"]
+repository = "https://github.com/cosmic-lab-inc"
+license = "Apache-2.0"
+edition = "2021"
+description = "Solana archival account state, easily accessible by anyone."
+categories = ["cryptography::cryptocurrencies", "database"]
+keywords = ["solana"]
+
+[workspace.dependencies]
+anchor-gen = { version = "0.3.1" }
+#anchor-lang = "0.27.0"
+anchor-lang = ">=0.20.0"
+anyhow = "1.0.75"
+base64 = "0.22.0"
+bincode = "1.3.3"
+borsh = { version = "0.10.3", features = ["std", "bytes"] }
+bytemuck = { version = "1.14.3", features = ["derive", "extern_crate_std"] }
+bytes = "1.2"
+chrono = { version = "0.4.35", features = ["serde"] }
+clap = { version = "=4.2.7", features = ["derive", "env"] }
+cloud-storage = "0.11.1"
+crossbeam = { version = "0.8.1" }
+crossbeam-channel = "0.5.8"
+csv = { version = "1.1.6" }
+dotenv = "0.15.0"
+futures = "0.3.30"
+futures-util = { version = "0.3.30", features = ["default"] }
+itertools = "0.10.3"
+lazy_static = "1.4.0"
+log = "0.4"
+memmap2 = "0.5.4"
+num_cpus = { version = "1.13.1" }
+once_cell = "1.19.0"
+rayon = "1.9.0"
+regex = "1.9.1"
+reqwest = { version = "0.11.20", features = ["blocking", "stream"] }
+serde = { version = "1.0.152", features = ["derive"] }
+serde_bytes = "0.11.14"
+serde_derive = "1.0.171"
+serde_json = "1.0.114"
+serde_yaml = "0.9.25"
+simplelog = "0.12.0"
+sol-chainsaw = "0.0.2"
+solana-accounts-db = { version = "1.14", features = ["dev-context-only-utils"] }
+solana-runtime = { version = "1.14", features = ["dev-context-only-utils"] }
+solana-sdk = { version = "1.14", features = ["dev-context-only-utils"] }
+solana-program = { version = "1.14" }
+solana-client = "1.14"
+solana-account-decoder = "1.14"
+time = "0.3.14"
+tar = "0.4.38"
+thiserror = "1.0.44"
+tokio = { version = "1.34.0", features = ["full"] }
+tokio-retry = "0.3.0"
+tokio-stream = { version = "0.1.14", features = ["net"] }
+rand = "0.8.5"
