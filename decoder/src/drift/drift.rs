@@ -1,9 +1,14 @@
-use borsh::BorshDeserialize;
+// use crate::drift::perp::PerpMarket;
+// use crate::drift::spot::{SpotBalanceType, SpotMarket};
+use drift::state::{
+  perp_market::PerpMarket,
+  spot_market::{SpotBalanceType, SpotMarket},
+};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account::Account;
 use solana_sdk::pubkey::Pubkey;
 
-use drift_cpi::{PerpMarket, SpotBalanceType, SpotMarket};
+use crate::Decoder;
 
 pub struct TokenBalance {
   pub balance: u128,
@@ -23,22 +28,22 @@ impl Drift {
       &authority.to_bytes()[..],
       &sub_account_id.to_le_bytes(),
     ];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift::id()).0)
   }
 
   pub fn user_stats_pda(authority: &Pubkey) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"user_stats", &authority.to_bytes()[..]];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift::id()).0)
   }
 
   pub fn spot_market_pda(market_index: u16) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"spot_market", &market_index.to_le_bytes()];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift::id()).0)
   }
 
   pub fn perp_market_pda(market_index: u16) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"perp_market", &market_index.to_le_bytes()];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift::id()).0)
   }
 
   /// token_amount = SpotPosition.scaled_balance as u128
@@ -47,7 +52,7 @@ impl Drift {
   /// spot_market = SpotMarket.market_index == SpotPosition.market_index
   ///
   /// balance_type = SpotPosition.balance_type
-  pub fn get_spot_balance(
+  pub fn spot_balance(
     token_amount: u128,
     spot_market: &SpotMarket,
     balance_type: &SpotBalanceType,
@@ -93,7 +98,10 @@ impl Drift {
       .into_iter()
       .flat_map(|a| {
         let mut bytes = &a.data.as_slice()[8..];
-        PerpMarket::deserialize(&mut bytes)
+        match Decoder::de::<PerpMarket>(&mut bytes) {
+          Ok(market) => Some(market.clone()),
+          Err(_) => None,
+        }
       })
       .collect();
     Ok(markets)
@@ -110,13 +118,12 @@ impl Drift {
       .into_iter()
       .flat_map(|a| {
         let mut bytes = &a.data.as_slice()[8..];
-        SpotMarket::deserialize(&mut bytes)
+        match Decoder::de::<SpotMarket>(&mut bytes) {
+          Ok(market) => Some(market.clone()),
+          Err(_) => None,
+        }
       })
       .collect();
     Ok(markets)
   }
 }
-
-pub const QUOTE_PRECISION: u128 = 1_000_000;
-// expo = -6
-pub const PRICE_PRECISION: u128 = 1_000_000; //expo = -6;

@@ -31,27 +31,6 @@ macro_rules! decode_account {
                     _ => Err(anyhow::anyhow!("Invalid account discriminant")),
                 }
             }
-
-            fn json_decode_account(
-                chainsaw: &sol_chainsaw::ChainsawDeserializer<'static>,
-                program_id: &solana_sdk::pubkey::Pubkey,
-                utf8_discrim: &str,
-                data: &mut &[u8]
-            ) -> anyhow::Result<serde_json::Value> {
-                match utf8_discrim {
-                    $(
-                      $variant if utf8_discrim == $crate::get_type_name::<$account_type>() => {
-                          let name = $crate::get_type_name::<$account_type>();
-                          // TODO: this errors on packed structs because it desers with Borsh first...
-                          let str = chainsaw
-                              .deserialize_account_to_json_string(&program_id.to_string(), data)?;
-                          let acct = serde_json::from_str::<serde_json::Value>(&str)?;
-                          Ok(acct)
-                      },
-                    )*
-                    _ => Err(anyhow::anyhow!("Invalid account discriminant")),
-                }
-            }
         }
     };
 }

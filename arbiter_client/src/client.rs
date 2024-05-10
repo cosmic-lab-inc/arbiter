@@ -1,21 +1,13 @@
 #![allow(unused_imports)]
 
-use std::sync::Arc;
-
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
-use solana_sdk::signer::Signer;
 
 use common::*;
-use decoder::ProgramDecoder;
-
-// use pyth_sdk_solana::PythError;
-// use pyth_sdk_solana::state::{AccountType, GenericPriceAccount, MAGIC, SolanaPriceAccount, VERSION_2};
 
 pub struct ArbiterClient {
   pub signer: Keypair,
   pub rpc: RpcClient,
-  pub decoder: Arc<ProgramDecoder>,
 }
 
 impl ArbiterClient {
@@ -23,7 +15,6 @@ impl ArbiterClient {
     Ok(Self {
       signer,
       rpc: RpcClient::new(rpc_url),
-      decoder: Arc::new(ProgramDecoder::new()?),
     })
   }
 

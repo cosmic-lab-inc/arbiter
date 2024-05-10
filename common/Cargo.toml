@@ -7,15 +7,13 @@ edition = { workspace = true }
 anchor-lang = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
-borsh = { workspace = true }
+bytemuck = { workspace = true }
 chrono = { workspace = true }
-itertools = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }
 simplelog = { workspace = true }
-sol-chainsaw = { workspace = true }
 solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 time = { workspace = true }
