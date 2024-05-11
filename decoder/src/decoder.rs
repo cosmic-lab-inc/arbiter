@@ -35,7 +35,6 @@ pub struct Decoder {
 }
 
 impl Decoder {
-  // TODO: get rid of chainsaw, all we need is the account discrim -> name lookup, which we can replicate.
   pub fn new() -> anyhow::Result<Self> {
     let mut idls = HashMap::new();
     let mut program_account_names = HashMap::new();
@@ -63,7 +62,7 @@ impl Decoder {
     Ok(Self { idls, program_account_names })
   }
 
-  pub fn borsh_decode_account(
+  pub fn de(
     program_id: &Pubkey,
     account_name: &str,
     data: &[u8],

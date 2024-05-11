@@ -18,12 +18,12 @@ base64 = { workspace = true }
 borsh = { workspace = true }
 common = { path = "../../common" }
 log = { workspace = true }
+num-traits = "0.2"
 once_cell = { workspace = true }
+pyth-client = "0.2.2"
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }
 solana-sdk = { workspace = true }
 switchboard-cpi = { path = "../switchboard" }
-pyth-client = "0.2.2"
-num-traits = "0.2"
 uint = { version = "0.9.1", default-features = false }

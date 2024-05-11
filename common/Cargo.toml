@@ -10,6 +10,8 @@ base64 = { workspace = true }
 bytemuck = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
+plotters = { version = "0.3.5", features = ["default"] }
+rand = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }
@@ -18,5 +20,3 @@ solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
-plotters = { version = "0.3.5", features = ["default"] }
-rand = { workspace = true }

@@ -1,37 +1,30 @@
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 
+use anchor_lang::Discriminator;
 use anchor_lang::prelude::AccountInfo;
 use base64::Engine;
+use rayon::prelude::*;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 
 pub use client::*;
 use common::*;
-use decoder::drift::Drift;
+use decoder::{Decoder, PnlStub};
+use decoder::drift::DriftClient;
 use drift_cpi::math::PRICE_PRECISION;
 use drift_cpi::oracle::{get_oracle_price, OraclePriceData};
 use drift_cpi::OracleSource;
 pub use trader::*;
+pub use time::*;
 
 pub mod client;
 pub mod trader;
+pub mod time;
 
-/// name: SOL-PERP index: 0
-/// name: BTC-PERP index: 1
-/// name: ETH-PERP index: 2
-/// name: APT-PERP index: 3
-/// name: 1MBONK-PERP index: 4
-/// name: MATIC-PERP index: 5
-/// name: ARB-PERP index: 6
-/// name: DOGE-PERP index: 7
-/// name: BNB-PERP index: 8
-/// name: SUI-PERP index: 9
-/// name: 1MPEPE-PERP index: 10
-/// name: OP-PERP index: 11
-///
 /// NodeJS websocket: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/sdk/src/accounts/webSocketAccountSubscriber.ts#L174
 /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs
 /// Rust oracle type: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/programs/drift/src/state/oracle.rs#L126
@@ -57,11 +50,11 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
     spot_market_index: u16,
   }
 
-  let perp_markets = Drift::perp_markets(client.rpc()).await?;
-  let spot_markets = Drift::spot_markets(client.rpc()).await?;
+  let perp_markets = DriftClient::perp_markets(client.rpc()).await?;
+  let spot_markets = DriftClient::spot_markets(client.rpc()).await?;
   let mut oracles: HashMap<String, MarketInfo> = HashMap::new();
   for market in perp_markets {
-    let perp_name = Drift::decode_name(&market.name);
+    let perp_name = DriftClient::decode_name(&market.name);
     let spot_market = spot_markets
       .iter()
       .find(|spot| spot.market_index == market.quote_spot_market_index)
@@ -129,41 +122,59 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
 }
 
 
+/// cargo test --package arbiter_client --lib top_users -- --exact --show-output
 #[tokio::test]
-async fn usdc_oracle() -> anyhow::Result<()> {
+async fn top_users() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  // let rpc_url = "http://localhost:8899".to_string();
-  let rpc_url = "https://guillemette-ldmq0k-fast-mainnet.helius-rpc.com/".to_string();
+  let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
+  let signer = ArbiterClient::read_keypair_from_env("WALLET")?;
+  let client = ArbiterClient::new(signer, rpc_url).await?;
+  let decoder = Decoder::new()?;
+
+  let users = DriftClient::top_traders_by_pnl(client.rpc(), &decoder).await?;
+  println!("users: {}", users.len());
+  let stats: Vec<decoder::TraderStub> = users.into_iter().map(|u| {
+    decoder::TraderStub {
+      authority: u.authority.to_string(),
+      pnl: u.settled_perp_pnl(),
+      best_user: u.best_user().key.to_string(),
+    }
+  }).collect();
+  // write to json file
+  let stats_json = serde_json::to_string(&stats)?;
+  std::fs::write("top_traders.json", stats_json)?;
+  Ok(())
+}
+
+/// cargo test --package arbiter_client --lib historical_pnl -- --exact --show-output
+#[tokio::test]
+async fn historical_pnl() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+  let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
   let signer = ArbiterClient::read_keypair_from_env("WALLET")?;
   let client = ArbiterClient::new(signer, rpc_url).await?;
 
-  let oracle = pubkey!("Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD");
-  let oracle_source = OracleSource::PythStableCoin;
-  let res = client.rpc().get_account_with_commitment(&oracle, CommitmentConfig::default()).await?;
-  let slot = res.context.slot;
-  let raw = res.value.ok_or(anyhow::anyhow!("Failed to get account"))?;
+  let user = pubkey!("4oTeSjNig62yD4KCehU4jkpNVYowLfaTie6LTtGbmefX");
 
-  let mut data = raw.data;
-  let mut lamports = raw.lamports;
-  let oracle_acct_info = AccountInfo::new(
-    &oracle,
-    false,
-    false,
-    &mut lamports,
-    &mut data,
-    &raw.owner,
-    raw.executable,
-    raw.rent_epoch,
-  );
-  let price_data = get_oracle_price(
-    &oracle_source,
-    &oracle_acct_info,
-    slot
-  ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
-  println!("price data: {:#?}", price_data);
-  let price = price_data.price as f64 / PRICE_PRECISION as f64;
-  println!("price: {}", price);
+  let data = client.drift_historical_pnl(
+    &user,
+    5
+  ).await?;
+
+  let data: Vec<PnlStub> = data.into_iter().map(|d| {
+    PnlStub {
+      pnl: d.pnl,
+      user: d.user.to_string(),
+      ts: d.ts,
+    }
+  }).collect();
+
+  // write to json file
+  let json = serde_json::to_string(&data)?;
+  std::fs::write("pnl_history.json", json)?;
+
 
   Ok(())
 }
