@@ -1,28 +1,24 @@
+use anchor_lang::prelude::*;
 use bytemuck::{CheckedBitPattern, NoUninit};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
-use common::{CheckedArray, trunc};
 use common::serde::serialize_pubkey;
+use common::trunc;
 
 use crate::drift::types::math::QUOTE_PRECISION;
 use crate::drift::types::order::Order;
 use crate::drift::types::perp::PerpPosition;
 use crate::drift::types::spot::SpotPosition;
 
-#[derive(Debug, Copy, Clone, CheckedBitPattern, NoUninit, Serialize)]
-#[repr(C, packed)]
-#[serde(rename_all = "camelCase")]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct User {
-  #[serde(serialize_with = "serialize_pubkey")]
   pub authority: Pubkey,
-  #[serde(serialize_with = "serialize_pubkey")]
   pub delegate: Pubkey,
-  #[serde(with = "serde_bytes")]
   pub name: [u8; 32],
-  pub spot_positions: CheckedArray<SpotPosition, 8>, // [SpotPosition; 8],
-  pub perp_positions: CheckedArray<PerpPosition, 8>, // [PerpPosition; 8],
-  pub orders: CheckedArray<Order, 32>,               // [Order; 32],
+  pub spot_positions: [SpotPosition; 8],
+  pub perp_positions: [PerpPosition; 8],
+  pub orders: [Order; 32],
   pub last_add_perp_lp_shares_ts: i64,
   pub total_deposits: u64,
   pub total_withdraws: u64,
@@ -43,7 +39,6 @@ pub struct User {
   pub has_open_order: bool,
   pub open_auctions: u8,
   pub has_open_auction: bool,
-  #[serde(with = "serde_bytes")]
   pub padding: [u8; 21],
 }
 

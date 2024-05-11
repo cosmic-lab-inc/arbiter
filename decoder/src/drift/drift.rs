@@ -97,9 +97,10 @@ impl Drift {
     let markets: Vec<PerpMarket> = valid_accounts
       .into_iter()
       .flat_map(|a| {
-        let mut bytes = &a.data.as_slice()[8..];
-        match Decoder::de::<PerpMarket>(&mut bytes) {
-          Ok(market) => Some(market.clone()),
+        let bytes = &a.data.as_slice()[8..];
+        let acct = crate::drift::perp::PerpMarket::try_from_slice(bytes)?;
+        match Decoder::de::<PerpMarket>(bytes) {
+          Ok(market) => Some(*market),
           Err(_) => None,
         }
       })
@@ -117,9 +118,9 @@ impl Drift {
     let markets: Vec<SpotMarket> = valid_accounts
       .into_iter()
       .flat_map(|a| {
-        let mut bytes = &a.data.as_slice()[8..];
-        match Decoder::de::<SpotMarket>(&mut bytes) {
-          Ok(market) => Some(market.clone()),
+        let bytes = &a.data.as_slice()[8..];
+        match Decoder::de::<SpotMarket>(bytes) {
+          Ok(market) => Some(*market),
           Err(_) => None,
         }
       })
