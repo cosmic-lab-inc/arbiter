@@ -1,10 +1,12 @@
-use std::fmt::Debug;
-use std::mem::size_of;
+use std::collections::HashMap;
 use std::str::FromStr;
 
-use bytemuck::checked::try_from_bytes;
-use bytemuck::CheckedBitPattern;
+use base64::Engine;
+use base64::engine::general_purpose;
+use borsh::{BorshDeserialize, BorshSerialize};
 use futures::future::try_join_all;
+use log::{error, info};
+use once_cell::sync::Lazy;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_config::RpcTransactionConfig;
@@ -14,13 +16,67 @@ use solana_sdk::hash::hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 
-use common::{Chunk, KeyedAccount, TrxData};
+use common::{Chunk, DecodeProgramAccount, KeyedAccount, TrxData};
 
-pub struct Decoder;
+/// Master list of supported programs that can provide decoded accounts based on an Anchor IDL.
+pub static PROGRAMS: Lazy<Vec<(String, Pubkey)>> =
+  Lazy::new(|| vec![(drift_cpi::PROGRAM_NAME.clone(), *drift_cpi::PROGRAM_ID)]);
+
+/// Registry of program account decoders that match a discriminant,
+/// such as "User", to a specific account type.
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub enum ProgramDecoder {
+  Drift(drift_cpi::AccountType),
+}
+
+pub struct Decoder {
+  pub idls: HashMap<Pubkey, String>,
+  pub program_account_names: HashMap<Pubkey, Vec<String>>
+}
 
 impl Decoder {
-  pub fn de<T: CheckedBitPattern + Debug>(account_buffer: &[u8]) -> anyhow::Result<&T> {
-    try_from_bytes(&account_buffer[8..][..size_of::<T>()]).map_err(Into::into)
+  // TODO: get rid of chainsaw, all we need is the account discrim -> name lookup, which we can replicate.
+  pub fn new() -> anyhow::Result<Self> {
+    let mut idls = HashMap::new();
+    let mut program_account_names = HashMap::new();
+
+    for (_name, program) in PROGRAMS.iter() {
+      let idl_path = format!("{}/idl.json", drift_cpi::PATH.clone());
+      // let idl_path = format!("./idls/{}/idl.json", *name);
+      info!("Load IDL at {}", idl_path);
+      let idl_str = match std::fs::read_to_string(idl_path) {
+        Ok(idl) => idl,
+        Err(e) => {
+          error!("Failed to read IDL path: {:?}", e);
+          return Err(anyhow::Error::from(e));
+        }
+      };
+
+      let idl = serde_json::from_str::<serde_json::Value>(&idl_str).unwrap();
+      let accounts = serde_json::from_value::<Vec<serde_json::Value>>(idl["accounts"].clone()).unwrap();
+      let account_names = accounts.iter().map(|account| account["name"].as_str().unwrap().to_string()).collect::<Vec<String>>();
+
+      idls.insert(*program, idl_str);
+      program_account_names.insert(*program, account_names);
+    }
+
+    Ok(Self { idls, program_account_names })
+  }
+
+  pub fn borsh_decode_account(
+    program_id: &Pubkey,
+    account_name: &str,
+    data: &[u8],
+  ) -> anyhow::Result<ProgramDecoder> {
+    match *program_id {
+      _ if *program_id == *drift_cpi::PROGRAM_ID => Ok(ProgramDecoder::Drift(
+        drift_cpi::AccountType::borsh_decode_account(account_name, data)?,
+      )),
+      _ => Err(anyhow::anyhow!(
+          "Program {} not supported",
+          program_id.to_string()
+      )),
+    }
   }
 
   /// Derives the account discriminator form the account name as Anchor does.
@@ -29,6 +85,37 @@ impl Decoder {
     let hashed = hash(format!("account:{}", name).as_bytes()).to_bytes();
     discriminator.copy_from_slice(&hashed[..8]);
     discriminator
+  }
+
+  pub fn discrim_to_name(
+    &self,
+    program_id: &Pubkey,
+    account_discrim: &[u8; 8],
+  ) -> anyhow::Result<Option<String>> {
+    let names = self.program_account_names.get(program_id).ok_or(anyhow::anyhow!("Program not found"))?;
+    let name = names.iter().find(|name| {
+      let bytes = Self::account_discriminator(name);
+      bytes == *account_discrim
+    }).cloned();
+    Ok(name)
+  }
+
+  pub fn name_to_base64_discrim(account_name: &str) -> String {
+    let bytes = Self::account_discriminator(account_name);
+    general_purpose::STANDARD.encode(bytes)
+  }
+
+  pub fn base64_discrim_to_name(
+    &self,
+    program_id: &Pubkey,
+    base64_discrim: &str,
+  ) -> anyhow::Result<String> {
+    let bytes = general_purpose::STANDARD.decode(base64_discrim)?;
+    let discrim: [u8; 8] = bytes[..8].try_into()?;
+    match self.discrim_to_name(program_id, &discrim)? {
+      Some(name) => Ok(name),
+      None => Err(anyhow::anyhow!("No name found for base64 discriminator")),
+    }
   }
 
   pub async fn accounts(
@@ -167,7 +254,7 @@ impl Decoder {
         let signature = Signature::from_str(&sig.signature)?;
         let tx = decoded_tx.into_legacy_transaction();
         if let Some(tx) = &tx {
-          let signer = tx.message.account_keys.get(0);
+          let signer = tx.message.account_keys.first();
           if let Some(signer) = signer {
             let trx_data = TrxData {
               tx: tx.clone(),

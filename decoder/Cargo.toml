@@ -23,6 +23,6 @@ simplelog = { workspace = true }
 solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 tokio = { workspace = true }
-drift = { git = "https://github.com/drift-labs/protocol-v2.git", rev = "2bbe28c", features = [
-    "mainnet-beta", "drift-rs"
-] }
+drift-cpi = { path = "../idls/drift" }
+switchboard-cpi = { path = "../idls/switchboard" }
+once_cell = { workspace = true }

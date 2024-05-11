@@ -1,0 +1,21 @@
+[package]
+name = "switchboard-cpi"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "switchboard"
+
+[features]
+default = ["cpi"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+solana-sdk = { workspace = true }
