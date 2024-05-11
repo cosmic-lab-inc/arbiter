@@ -46,9 +46,12 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   let client = ArbiterClient::new(signer, rpc_url).await?;
 
   struct MarketInfo {
-    oracle: Pubkey,
-    oracle_source: drift_cpi::OracleSource,
-    oracle_price_data: Option<OraclePriceData>,
+    perp_oracle: Pubkey,
+    perp_oracle_source: OracleSource,
+    perp_oracle_price_data: Option<OraclePriceData>,
+    spot_oracle: Pubkey,
+    spot_oracle_source: OracleSource,
+    spot_oracle_price_data: Option<OraclePriceData>,
     perp_name: String,
     perp_market_index: u16,
     spot_market_index: u16,
@@ -63,13 +66,18 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
       .iter()
       .find(|spot| spot.market_index == market.quote_spot_market_index)
       .ok_or(anyhow::anyhow!("Spot market not found"))?;
-    let oracle = spot_market.oracle;
-    let oracle_source = spot_market.oracle_source;
+    let spot_oracle = spot_market.oracle;
+    let spot_oracle_source = spot_market.oracle_source;
+    let perp_oracle = market.amm.oracle;
+    let perp_oracle_source = market.amm.oracle_source;
 
     oracles.insert(perp_name.clone(), MarketInfo {
-      oracle,
-      oracle_source,
-      oracle_price_data: None,
+      perp_oracle,
+      perp_oracle_source,
+      perp_oracle_price_data: None,
+      spot_oracle,
+      spot_oracle_source,
+      spot_oracle_price_data: None,
       perp_name,
       perp_market_index: market.market_index,
       spot_market_index: market.quote_spot_market_index,
@@ -77,10 +85,10 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   }
 
   let oracle_keys: Vec<Pubkey> = oracles.values().map(|v| {
-    v.oracle
+    v.perp_oracle
   }).collect();
   let oracle_sources: Vec<OracleSource> = oracles.values().map(|v| {
-    v.oracle_source
+    v.perp_oracle_source
   }).collect();
   let names: Vec<String> = oracles.keys().cloned().collect();
 
@@ -110,7 +118,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
         &oracle_acct_info,
         slot
       ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
-      oracles.get_mut(&name).unwrap().oracle_price_data = Some(price_data);
+      oracles.get_mut(&name).unwrap().perp_oracle_price_data = Some(price_data);
       let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
       println!("{}: {}", name, price);
