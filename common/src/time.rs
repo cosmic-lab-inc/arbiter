@@ -2,15 +2,6 @@ use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Timelike, Utc
 use log::error;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum TimeError {
-  #[error("Invalid date")]
-  InvalidDate(String),
-  #[error("Custom time error")]
-  Custom(Box<dyn std::error::Error + Send + Sync>),
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct Time {
@@ -160,7 +151,7 @@ impl Time {
     match res {
       LocalResult::None => {
         error!("self: {}", self.to_string());
-        Err(anyhow::anyhow!("Invalid date: {}", (self.to_string())))
+        Err(anyhow::anyhow!("Invalid date: {}", self.to_string()))
       }
       LocalResult::Single(t) => Ok(t),
       LocalResult::Ambiguous(t, ..) => Ok(t),
@@ -169,7 +160,7 @@ impl Time {
 
   /// Convert `chrono::DateTime` to `Time`
   pub fn now() -> Self {
-    let date = chrono::Utc::now();
+    let date = Utc::now();
     let year = date.naive_utc().year();
     let month = date.naive_utc().month();
     let day = date.naive_utc().day();
@@ -253,12 +244,6 @@ impl Time {
 
   pub fn from_unix_msec(unix: i64) -> Self {
     let date = chrono::Utc.timestamp_millis_opt(unix).unwrap();
-    let year = date.naive_utc().year();
-    let month = Month::from_num(date.naive_utc().month());
-    let day = Day::from_num(date.naive_utc().day());
-    let hour = date.naive_utc().hour();
-    let minute = date.naive_utc().minute();
-    let second = date.naive_utc().second();
     Time::new(
       date.naive_utc().year(),
       date.naive_utc().month(),

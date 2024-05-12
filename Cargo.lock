@@ -355,7 +355,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25bdb32cbbdce2b519a9cd7df3a678443100e265d5e25ca763b7572a5104f5f3"
 
 [[package]]
-name = "arbiter_client"
+name = "arbiter"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
@@ -369,11 +369,11 @@ dependencies = [
  "decoder",
  "derive_more",
  "dotenv",
- "drift-cpi",
  "flate2",
  "futures",
  "lazy_static",
  "log",
+ "nexus",
  "plotters",
  "rayon",
  "reqwest 0.12.4",
@@ -381,6 +381,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "simplelog",
+ "solana-account-decoder",
  "solana-client",
  "solana-sdk",
  "spl-associated-token-account 3.0.2",
@@ -1230,6 +1231,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1253,6 +1267,15 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df0346b5d5e76ac2fe4e327c5fd1118d6be7c51dfb18f9b7922923f287471e35"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -2749,6 +2772,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "base64 0.22.1",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "common",
+ "crossbeam",
+ "decoder",
+ "futures",
+ "futures-util",
+ "log",
+ "reqwest 0.12.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-rpc-client-api",
+ "solana-sdk",
+ "spl-associated-token-account 3.0.2",
+ "spl-token",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.21.0",
+ "url",
+]
+
+[[package]]
 name = "nix"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3954,6 +4010,7 @@ version = "1.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "455182ea6142b14f93f4bc5320a2b31c1f266b66a4a5c858b013302a5d8cbfc3"
 dependencies = [
+ "indexmap 2.2.6",
  "itoa",
  "ryu",
  "serde",
@@ -4480,7 +4537,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.20.1",
  "tungstenite 0.20.1",
  "url",
 ]
@@ -5590,6 +5647,20 @@ dependencies = [
  "tokio-rustls",
  "tungstenite 0.20.1",
  "webpki-roots 0.25.4",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
+dependencies = [
+ "futures-util",
+ "log",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tungstenite 0.21.0",
 ]
 
 [[package]]

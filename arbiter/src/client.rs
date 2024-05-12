@@ -11,16 +11,16 @@ use solana_sdk::signature::Keypair;
 use tokio::io::ReadBuf;
 
 use common::*;
-use decoder::HistoricalSettlePnl;
+use decoder::{HistoricalPerformance, HistoricalSettlePnl};
 use crate::Time;
 
-pub struct ArbiterClient {
+pub struct Arbiter {
   pub signer: Keypair,
   pub rpc: RpcClient,
   pub client: Client
 }
 
-impl ArbiterClient {
+impl Arbiter {
   pub async fn new(signer: Keypair, rpc_url: String) -> anyhow::Result<Self> {
     Ok(Self {
       signer,
@@ -45,7 +45,7 @@ impl ArbiterClient {
     &self,
     user: &Pubkey,
     days_back: i64
-  ) -> anyhow::Result<Vec<HistoricalSettlePnl>> {
+  ) -> anyhow::Result<HistoricalPerformance> {
     let end = Time::now();
     // drift doesn't have anything more recent than 2 days ago
     let end = end.delta_date(-2);
@@ -63,11 +63,10 @@ impl ArbiterClient {
         date.month.to_mm(),
         date.day.to_dd()
       );
-      println!("{}", url);
 
       let res = self
         .client
-        .get(url)
+        .get(url.clone())
         // gzip header
         .header("Accept-Encoding", "gzip")
         .send()
@@ -82,14 +81,21 @@ impl ArbiterClient {
           let datum = record.deserialize::<HistoricalSettlePnl>(None)?;
           data.push(datum);
         }
-      } else {
-        log::error!("Failed to get historical Drift data: {}", res.status());
+      } else if res.status() != 403 {
+        log::error!(
+          "Failed to get historical Drift data with status: {}, for user {} and date: {}/{}/{}", 
+          res.status(),
+          user,
+          date.year,
+          date.month.to_mm(),
+          date.day.to_dd()
+        );
       }
     }
     // sort data so latest `ts` field (timestamp) is last index
     data.sort_by_key(|a| a.ts);
 
-    Ok(data)
+    Ok(HistoricalPerformance(data))
   }
 }
 

@@ -11,7 +11,7 @@ pub struct Data {
 pub struct Plot;
 
 impl Plot {
-  pub fn plot(series: Vec<Vec<Data>>, out_file: &str, title: &str, y_label: &str) -> anyhow::Result<()> {
+  pub fn plot(series: Vec<Vec<Data>>, out_file: &str, title: &str, y_label: &str, x_label: &str) -> anyhow::Result<()> {
     let all: Vec<&Data> = series.iter().flatten().collect();
 
     let mut min_x = i64::MAX;
@@ -42,7 +42,7 @@ impl Plot {
       .margin_bottom(20)
       .margin_left(30)
       .margin_right(30)
-      .set_all_label_area_size(120)
+      .set_all_label_area_size(170)
       .caption(
         title,
         ("sans-serif", 40.0).into_font(),
@@ -54,7 +54,7 @@ impl Plot {
       .configure_mesh()
       .light_line_style(WHITE)
       .label_style(("sans-serif", 30, &BLACK).into_text_style(&root))
-      .x_desc("UNIX Milliseconds")
+      .x_desc(x_label)
       .y_desc(y_label)
       .draw().map_err(
       |e| anyhow::anyhow!("Failed to draw mesh: {}", e)

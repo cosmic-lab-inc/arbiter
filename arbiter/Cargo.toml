@@ -1,5 +1,5 @@
 [package]
-name = "arbiter_client"
+name = "arbiter"
 version = { workspace = true }
 edition = { workspace = true }
 
@@ -15,7 +15,6 @@ common = { path = "../common" }
 decoder = { path = "../decoder" }
 derive_more = "0.99.17"
 dotenv = { workspace = true }
-drift-cpi = { path = "../idls/drift" }
 futures = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
@@ -39,3 +38,5 @@ uuid = { version = "1.3.0", features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ] }
 flate2 = "1.0"
+solana-account-decoder = { workspace = true }
+nexus = { path = "../nexus" }

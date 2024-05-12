@@ -2,11 +2,14 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use anchor_lang::Discriminator;
 use anchor_lang::prelude::AccountInfo;
 use base64::Engine;
+use futures::StreamExt;
 use rayon::prelude::*;
+use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
@@ -15,15 +18,40 @@ pub use client::*;
 use common::*;
 use decoder::{Decoder, PnlStub};
 use decoder::drift::DriftClient;
-use drift_cpi::math::PRICE_PRECISION;
-use drift_cpi::oracle::{get_oracle_price, OraclePriceData};
-use drift_cpi::OracleSource;
+use decoder::drift::math::PRICE_PRECISION;
+use decoder::drift::oracle::{get_oracle_price, OraclePriceData};
+use decoder::drift::{OracleSource, User};
 pub use trader::*;
 pub use time::*;
+use nexus::Nexus;
 
-pub mod client;
-pub mod trader;
-pub mod time;
+mod client;
+mod trader;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+  // let wss = "wss://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8";
+  let wss = "wss://atlas-mainnet.helius-rpc.com?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8";
+  let mut nexus = Nexus::new(wss).await?;
+
+  let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
+  // let key = pubkey!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
+
+  let mut stream = nexus.transactions(&key).await?;
+  while let Some(event) = stream.next().await {
+    println!("{:#?}", event);
+  }
+
+  // let mut stream = nexus.accounts(&key).await?;
+  // while let Some(event) = stream.next().await {
+  //   log::info!("{:#?}", event);
+  // }
+
+  Ok(())
+}
+
 
 /// NodeJS websocket: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/sdk/src/accounts/webSocketAccountSubscriber.ts#L174
 /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs
@@ -33,10 +61,9 @@ pub mod time;
 async fn drift_perp_markets() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  // let rpc_url = "http://localhost:8899".to_string();
-  let rpc_url = "https://guillemette-ldmq0k-fast-mainnet.helius-rpc.com/".to_string();
-  let signer = ArbiterClient::read_keypair_from_env("WALLET")?;
-  let client = ArbiterClient::new(signer, rpc_url).await?;
+  let rpc_url = "https://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8".to_string();
+  let signer = Arbiter::read_keypair_from_env("WALLET")?;
+  let client = Arbiter::new(signer, rpc_url).await?;
 
   struct MarketInfo {
     perp_oracle: Pubkey,
@@ -128,8 +155,8 @@ async fn top_users() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
   let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
-  let signer = ArbiterClient::read_keypair_from_env("WALLET")?;
-  let client = ArbiterClient::new(signer, rpc_url).await?;
+  let signer = Arbiter::read_keypair_from_env("WALLET")?;
+  let client = Arbiter::new(signer, rpc_url).await?;
   let decoder = Decoder::new()?;
 
   let users = DriftClient::top_traders_by_pnl(client.rpc(), &decoder).await?;
@@ -153,28 +180,36 @@ async fn historical_pnl() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
   let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
-  let signer = ArbiterClient::read_keypair_from_env("WALLET")?;
-  let client = ArbiterClient::new(signer, rpc_url).await?;
+  // let rpc_url = "https://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8".to_string();
+  let signer = Arbiter::read_keypair_from_env("WALLET")?;
+  let client = Arbiter::new(signer, rpc_url).await?;
 
-  let user = pubkey!("4oTeSjNig62yD4KCehU4jkpNVYowLfaTie6LTtGbmefX");
-
-  let data = client.drift_historical_pnl(
-    &user,
-    5
-  ).await?;
-
-  let data: Vec<PnlStub> = data.into_iter().map(|d| {
-    PnlStub {
-      pnl: d.pnl,
-      user: d.user.to_string(),
-      ts: d.ts,
-    }
+  let top_traders_path = "top_traders.json";
+  let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(top_traders_path)?)?;
+  let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().take(200).collect();
+  let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
+    Pubkey::from_str(&t.best_user)
   }).collect();
 
-  // write to json file
-  let json = serde_json::to_string(&data)?;
-  std::fs::write("pnl_history.json", json)?;
+  // let user = pubkey!("4oTeSjNig62yD4KCehU4jkpNVYowLfaTie6LTtGbmefX");
+  // let user = pubkey!("8WBjm2nPgH6AUoSiZTCUU6qEPSJoT4wj3j9JE5W1QkR7");
+  let user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
 
+  for user in users {
+    let data = client.drift_historical_pnl(
+      &user,
+      100
+    ).await?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    Plot::plot(
+      vec![data.dataset()],
+      &format!("{}_cum_pnl.png", user),
+      &format!("{} Performance", user),
+      "Cum USDC PnL",
+      "Unix Seconds",
+    )?;
+  }
 
   Ok(())
 }

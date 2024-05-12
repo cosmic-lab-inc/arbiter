@@ -1,0 +1,33 @@
+[package]
+name = "nexus"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+anchor-lang = { workspace = true }
+url = "2.2.2"
+crossbeam = "0.8.2"
+anyhow = { workspace = true }
+base64 = { workspace = true }
+borsh = { workspace = true }
+bytemuck = { workspace = true }
+chrono = { workspace = true }
+common = { path = "../common" }
+decoder = { path = "../decoder" }
+futures = { workspace = true }
+futures-util = "0.3.30"
+log = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-client = { workspace = true }
+solana-sdk = { workspace = true }
+spl-associated-token-account = { version = "3.0.2", features = ["no-entrypoint"] }
+spl-token = { version = "4", features = ["no-entrypoint"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.21.0", features = ["native-tls", "handshake"] }
+solana-account-decoder = { workspace = true }
+tokio-stream = "0.1.15"
+semver = "1.0.23"
+solana-rpc-client-api = { workspace = true }

@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "arbiter_client",
+    "arbiter",
     "common",
     "decoder",
-    "idls/*"
+    "idls/*",
+    "nexus"
 ]
 
 [workspace.package]
@@ -40,11 +41,12 @@ reqwest = { version = "0.12.4", features = ["blocking", "stream", "json"] }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_derive = "1.0.171"
-serde_json = "1.0.114"
+serde_json = { version = "1.0.114", features = ["preserve_order"] }
 serde_yaml = "0.9.25"
 simplelog = "0.12.0"
 solana-sdk = "1.14.16"
 solana-account-decoder = "1.14.16"
+solana-rpc-client-api = "1.14.16"
 solana-client = "1.14.16"
 time = "0.3.14"
 thiserror = "1.0.44"
