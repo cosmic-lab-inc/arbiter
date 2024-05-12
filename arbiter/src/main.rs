@@ -32,9 +32,8 @@ mod trader;
 async fn main() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  // let wss = "wss://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8";
-  let wss = "wss://atlas-mainnet.helius-rpc.com?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8";
-  let mut nexus = Nexus::new(wss).await?;
+  let wss = std::env::var("WSS")?;
+  let mut nexus = Nexus::new(&wss).await?;
 
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
   // let key = pubkey!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
@@ -61,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
 async fn drift_perp_markets() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  let rpc_url = "https://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8".to_string();
+  let rpc_url = std::env::var("RPC_URL")?;
   let signer = Arbiter::read_keypair_from_env("WALLET")?;
   let client = Arbiter::new(signer, rpc_url).await?;
 
@@ -154,7 +153,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
 async fn top_users() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
+  let rpc_url = std::env::var("RPC_URL")?;
   let signer = Arbiter::read_keypair_from_env("WALLET")?;
   let client = Arbiter::new(signer, rpc_url).await?;
   let decoder = Decoder::new()?;
@@ -179,8 +178,7 @@ async fn top_users() -> anyhow::Result<()> {
 async fn historical_pnl() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  let rpc_url = "https://rpc.hellomoon.io/250fbc17-3f01-436a-b6dd-993e8e32a47d".to_string();
-  // let rpc_url = "https://mainnet.helius-rpc.com/?api-key=0b810c4e-acb6-49a3-b2cd-90e671480ca8".to_string();
+  let rpc_url = std::env::var("RPC_URL")?;
   let signer = Arbiter::read_keypair_from_env("WALLET")?;
   let client = Arbiter::new(signer, rpc_url).await?;
 
