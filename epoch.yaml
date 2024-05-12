@@ -1,6 +1,0 @@
-gcs_sa_key: epoch_sa_key.json
-
-redis_username: default
-redis_password: IJD4LqEHEk3mjoMxvcXDvDIKSUyNUSDD
-redis_host: redis-17359.c284.us-east1-2.gce.cloud.redislabs.com
-redis_port: 17359
