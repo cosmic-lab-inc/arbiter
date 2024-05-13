@@ -18,15 +18,20 @@ pub struct HistoricalSettlePnl {
   pub program_id: String
 }
 
+#[derive(Debug, Clone)]
 pub struct HistoricalPerformance(pub Vec<HistoricalSettlePnl>);
 
 impl HistoricalPerformance {
-  pub fn summary(&self) -> Vec<PnlStub> {
+  pub fn user(&self) -> String {
+    self.0[0].user.clone()
+  }
+
+  pub fn summary(&self) -> Vec<TradeRecord> {
     let mut cum_pnl = 0.0;
     let mut stubs = vec![];
     for record in self.0.iter() {
       cum_pnl += record.pnl;
-      stubs.push(PnlStub {
+      stubs.push(TradeRecord {
         cum_quote_pnl: trunc!(cum_pnl, 2),
         trade_quote_pnl: trunc!(record.pnl, 2),
         user: record.user.clone(),
@@ -36,21 +41,34 @@ impl HistoricalPerformance {
     stubs
   }
 
+  pub fn avg_quote_pnl(&self) -> f64 {
+    let mut cum_pnl = 0.0;
+    for record in self.0.iter() {
+      cum_pnl += record.pnl;
+    }
+    cum_pnl / self.0.len() as f64
+  }
+
   pub fn dataset(&self) -> Vec<Data> {
-    let data = self.summary().into_iter().map(|s| {
+    self.summary().into_iter().map(|s| {
       Data {
         x: s.ts as i64,
         y: s.cum_quote_pnl,
       }
-    }).collect();
-    data
+    }).collect()
   }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PnlStub {
+pub struct TradeRecord {
   pub cum_quote_pnl: f64,
   pub trade_quote_pnl: f64,
   pub user: String,
   pub ts: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PnlStub {
+  pub user: String,
+  pub avg_quote_pnl: f64
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2.71.0",
+  "version": "2.74.0",
   "name": "drift",
   "instructions": [
     {
@@ -2652,8 +2652,38 @@
           "type": "u32"
         },
         {
+          "name": "ifLiquidationFee",
+          "type": "u32"
+        },
+        {
           "name": "activeStatus",
           "type": "bool"
+        },
+        {
+          "name": "assetTier",
+          "type": {
+            "defined": "AssetTier"
+          }
+        },
+        {
+          "name": "scaleInitialAssetWeightStart",
+          "type": "u64"
+        },
+        {
+          "name": "withdrawGuardThreshold",
+          "type": "u64"
+        },
+        {
+          "name": "orderTickSize",
+          "type": "u64"
+        },
+        {
+          "name": "orderStepSize",
+          "type": "u64"
+        },
+        {
+          "name": "ifTotalFactor",
+          "type": "u32"
         },
         {
           "name": "name",
@@ -2932,6 +2962,12 @@
           }
         },
         {
+          "name": "contractTier",
+          "type": {
+            "defined": "ContractTier"
+          }
+        },
+        {
           "name": "marginRatioInitial",
           "type": "u32"
         },
@@ -2944,8 +2980,60 @@
           "type": "u32"
         },
         {
+          "name": "ifLiquidationFee",
+          "type": "u32"
+        },
+        {
+          "name": "imfFactor",
+          "type": "u32"
+        },
+        {
           "name": "activeStatus",
           "type": "bool"
+        },
+        {
+          "name": "baseSpread",
+          "type": "u32"
+        },
+        {
+          "name": "maxSpread",
+          "type": "u32"
+        },
+        {
+          "name": "maxOpenInterest",
+          "type": "u128"
+        },
+        {
+          "name": "maxRevenueWithdrawPerPeriod",
+          "type": "u64"
+        },
+        {
+          "name": "quoteMaxInsurance",
+          "type": "u64"
+        },
+        {
+          "name": "orderStepSize",
+          "type": "u64"
+        },
+        {
+          "name": "orderTickSize",
+          "type": "u64"
+        },
+        {
+          "name": "minOrderSize",
+          "type": "u64"
+        },
+        {
+          "name": "concentrationCoefScale",
+          "type": "u128"
+        },
+        {
+          "name": "curveUpdateIntensity",
+          "type": "u8"
+        },
+        {
+          "name": "ammJitIntensity",
+          "type": "u8"
         },
         {
           "name": "name",
@@ -5499,7 +5587,7 @@
             "name": "status",
             "docs": [
               "Whether a market is active, reduce only, expired, etc",
-              "Affects whether users can open\/close positions"
+              "Affects whether users can open/close positions"
             ],
             "type": {
               "defined": "MarketStatus"
@@ -5538,7 +5626,7 @@
           {
             "name": "feeAdjustment",
             "docs": [
-              "Between -100 and 100, represents what % to increase\/decrease the fee by",
+              "Between -100 and 100, represents what % to increase/decrease the fee by",
               "E.g. if this is -50 and the fee is 5bps, the new fee will be 2.5bps",
               "if this is 50 and the fee is 5bps, the new fee will be 7.5bps"
             ],
@@ -5571,7 +5659,7 @@
           {
             "name": "oracle",
             "docs": [
-              "The oracle used to price the markets deposits\/borrows"
+              "The oracle used to price the markets deposits/borrows"
             ],
             "type": "publicKey"
           },
@@ -5707,7 +5795,7 @@
           {
             "name": "withdrawGuardThreshold",
             "docs": [
-              "no withdraw limits\/guards when deposits below this threshold",
+              "no withdraw limits/guards when deposits below this threshold",
               "precision: token mint precision"
             ],
             "type": "u64"
@@ -5756,7 +5844,7 @@
           {
             "name": "lastTwapTs",
             "docs": [
-              "Last time the deposit\/borrow\/utilization averages were updated"
+              "Last time the deposit/borrow/utilization averages were updated"
             ],
             "type": "u64"
           },
@@ -5853,7 +5941,7 @@
           {
             "name": "imfFactor",
             "docs": [
-              "The initial margin fraction factor. Used to increase liability weight\/decrease asset weight for large positions",
+              "The initial margin fraction factor. Used to increase liability weight/decrease asset weight for large positions",
               "precision: MARGIN_PRECISION"
             ],
             "type": "u32"
@@ -5861,7 +5949,7 @@
           {
             "name": "liquidatorFee",
             "docs": [
-              "The fee the liquidator is paid for taking over borrow\/deposit",
+              "The fee the liquidator is paid for taking over borrow/deposit",
               "precision: LIQUIDATOR_FEE_PRECISION"
             ],
             "type": "u32"
@@ -6124,7 +6212,7 @@
           {
             "name": "authority",
             "docs": [
-              "The owner\/authority of the account"
+              "The owner/authority of the account"
             ],
             "type": "publicKey"
           },
@@ -6239,7 +6327,7 @@
           {
             "name": "cumulativePerpFunding",
             "docs": [
-              "Cumulative funding paid\/received for perps",
+              "Cumulative funding paid/received for perps",
               "precision: QUOTE_PRECISION"
             ],
             "type": "i64"
@@ -7105,7 +7193,7 @@
           {
             "name": "lastRevenueWithdrawTs",
             "docs": [
-              "The last time revenue was settled in\/out of market"
+              "The last time revenue was settled in/out of market"
             ],
             "type": "i64"
           }
@@ -7210,7 +7298,7 @@
           {
             "name": "concentrationCoef",
             "docs": [
-              "determines how close the min\/max base asset reserve sit vs base reserves",
+              "determines how close the min/max base asset reserve sit vs base reserves",
               "allow for decreasing slippage without increasing liquidity and v.v.",
               "precision: PERCENTAGE_PRECISION"
             ],
@@ -7387,7 +7475,7 @@
           {
             "name": "totalMmFee",
             "docs": [
-              "total fees collected by the vAMM's bid\/ask spread",
+              "total fees collected by the vAMM's bid/ask spread",
               "precision: QUOTE_PRECISION"
             ],
             "type": "i128"
@@ -7488,7 +7576,7 @@
           {
             "name": "lastOracleReservePriceSpreadPct",
             "docs": [
-              "the gap between the oracle price and the reserve price = y * peg_multiplier \/ x"
+              "the gap between the oracle price and the reserve price = y * peg_multiplier / x"
             ],
             "type": "i64"
           },
@@ -7511,7 +7599,7 @@
           {
             "name": "lastMarkPriceTwap",
             "docs": [
-              "average estimate of (bid+ask)\/2 price over funding_period",
+              "average estimate of (bid+ask)/2 price over funding_period",
               "precision: PRICE_PRECISION"
             ],
             "type": "u64"
@@ -7519,7 +7607,7 @@
           {
             "name": "lastMarkPriceTwap5min",
             "docs": [
-              "average estimate of (bid+ask)\/2 price over FIVE_MINUTES"
+              "average estimate of (bid+ask)/2 price over FIVE_MINUTES"
             ],
             "type": "u64"
           },
@@ -7718,7 +7806,7 @@
           {
             "name": "oracleSource",
             "docs": [
-              "the oracle provider information. used to decode\/scale the oracle public key"
+              "the oracle provider information. used to decode/scale the oracle public key"
             ],
             "type": {
               "defined": "OracleSource"
@@ -8043,7 +8131,7 @@
           {
             "name": "scaledBalance",
             "docs": [
-              "The scaled balance of the position. To get the token amount, multiply by the cumulative deposit\/borrow",
+              "The scaled balance of the position. To get the token amount, multiply by the cumulative deposit/borrow",
               "interest of corresponding market.",
               "precision: SPOT_BALANCE_PRECISION"
             ],
@@ -8068,7 +8156,7 @@
           {
             "name": "cumulativeDeposits",
             "docs": [
-              "The cumulative deposits\/borrows a user has made into a market",
+              "The cumulative deposits/borrows a user has made into a market",
               "precision: token mint precision"
             ],
             "type": "i64"
@@ -8133,7 +8221,7 @@
             "name": "quoteAssetAmount",
             "docs": [
               "Used to calculate the users pnl. Upon entry, is equal to base_asset_amount * avg entry price - fees",
-              "Updated when the user open\/closes position or settles pnl. Includes fees\/funding",
+              "Updated when the user open/closes position or settles pnl. Includes fees/funding",
               "precision: QUOTE_PRECISION"
             ],
             "type": "i64"
@@ -8142,7 +8230,7 @@
             "name": "quoteBreakEvenAmount",
             "docs": [
               "The amount of quote the user would need to exit their position at to break even",
-              "Updated when the user open\/closes position or settles pnl. Includes fees\/funding",
+              "Updated when the user open/closes position or settles pnl. Includes fees/funding",
               "precision: QUOTE_PRECISION"
             ],
             "type": "i64"
@@ -8151,7 +8239,7 @@
             "name": "quoteEntryAmount",
             "docs": [
               "The amount quote the user entered the position with. Equal to base asset amount * avg entry price",
-              "Updated when the user open\/closes position. Excludes fees\/funding",
+              "Updated when the user open/closes position. Excludes fees/funding",
               "precision: QUOTE_PRECISION"
             ],
             "type": "i64"
@@ -8295,7 +8383,7 @@
           {
             "name": "auctionStartPrice",
             "docs": [
-              "The start price for the auction. Only relevant for market\/oracle orders",
+              "The start price for the auction. Only relevant for market/oracle orders",
               "precision: PRICE_PRECISION"
             ],
             "type": "i64"
@@ -8303,7 +8391,7 @@
           {
             "name": "auctionEndPrice",
             "docs": [
-              "The end price for the auction. Only relevant for market\/oracle orders",
+              "The end price for the auction. Only relevant for market/oracle orders",
               "precision: PRICE_PRECISION"
             ],
             "type": "i64"
@@ -8333,7 +8421,7 @@
           {
             "name": "marketIndex",
             "docs": [
-              "The perp\/spot market index"
+              "The perp/spot market index"
             ],
             "type": "u16"
           },
@@ -8367,7 +8455,7 @@
           {
             "name": "userOrderId",
             "docs": [
-              "User generated order id. Can make it easier to place\/cancel orders"
+              "User generated order id. Can make it easier to place/cancel orders"
             ],
             "type": "u8"
           },
@@ -8909,7 +8997,11 @@
             "name": "ExternalMarket"
           },
           {
-            "name": "Match"
+            "name": "Match",
+            "fields": [
+              "publicKey",
+              "u16"
+            ]
           }
         ]
       }
@@ -9118,6 +9210,9 @@
           },
           {
             "name": "Speculative"
+          },
+          {
+            "name": "HighlySpeculative"
           },
           {
             "name": "Isolated"
@@ -10439,7 +10534,7 @@
     {
       "code": 6020,
       "name": "BnConversionError",
-      "msg": "Conversion to u128\/u64 failed with an overflow or underflow"
+      "msg": "Conversion to u128/u64 failed with an overflow or underflow"
     },
     {
       "code": 6021,

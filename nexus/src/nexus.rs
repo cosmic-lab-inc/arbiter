@@ -26,7 +26,7 @@ impl Nexus {
   pub async fn transactions(&mut self, key: &Pubkey) -> anyhow::Result<EventStream<serde_json::Value>> {
     let config = RpcTransactionsConfig {
       filter: TransactionSubscribeFilter::standard(key),
-      options: TransactionSubscribeOptions::standard()
+      options: TransactionSubscribeOptions::default()
     };
     let (stream, unsub) = self.client.transaction_subscribe(config).await?;
     self.trx_unsub = Some(unsub);

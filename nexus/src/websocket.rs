@@ -170,9 +170,7 @@ impl NexusClient {
     Ok(node_version)
   }
 
-  async fn subscribe<'a, T>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
-                            where
-                              T: DeserializeOwned + Send + 'a,
+  async fn subscribe<'a, T: DeserializeOwned + Send + 'a>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
   {
     let (response_sender, response_receiver) = oneshot::channel();
     self.subscribe_sender
@@ -246,166 +244,165 @@ impl NexusClient {
 
     loop {
       tokio::select! {
-                // Send close on shutdown signal
-                _ = &mut shutdown_receiver => {
-                    let frame = CloseFrame { code: CloseCode::Normal, reason: "".into() };
-                    ws.send(Message::Close(Some(frame))).await?;
-                    ws.flush().await?;
-                    break;
-                },
-                // Send `Message::Ping` each 10s if no any other communication
-                () = sleep(Duration::from_secs(10)) => {
-                    ws.send(Message::Ping(Vec::new())).await?;
-                },
-                // Read message for subscribe
-                Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
-                    request_id += 1;
-                    request_id = 420;
-                    let method = format!("{operation}Subscribe");
-                    let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    println!("sub: {:#?}", json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}));
-                    ws.send(Message::Text(text)).await?;
-                    requests_subscribe.insert(request_id, (operation, response_sender));
-                },
-                // Read message for unsubscribe
-                Some((operation, sid, response_sender)) = unsubscribe_receiver.recv() => {
-                    subscriptions.remove(&sid);
-                    request_id += 1;
-                    let method = format!("{operation}Unsubscribe");
-                    let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":[sid]}).to_string();
-                    ws.send(Message::Text(text)).await?;
-                    requests_unsubscribe.insert(request_id, response_sender);
-                },
-                // Read message for other requests
-                Some((method, params, response_sender)) = request_receiver.recv() => {
-                    request_id += 1;
-                    let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await?;
-                    other_requests.insert(request_id, response_sender);
-                }
-                // Read incoming WebSocket message
-                next_msg = ws.next() => {
-                    let msg = match next_msg {
-                        Some(msg) => msg?,
-                        None => break,
-                    };
-                    trace!("ws.next(): {:?}", &msg);
+        // Send close on shutdown signal
+        _ = &mut shutdown_receiver => {
+          let frame = CloseFrame { code: CloseCode::Normal, reason: "".into() };
+          ws.send(Message::Close(Some(frame))).await?;
+          ws.flush().await?;
+          break;
+        },
+        // Send `Message::Ping` each 10s if no any other communication
+        () = sleep(Duration::from_secs(10)) => {
+          ws.send(Message::Ping(Vec::new())).await?;
+        },
+        // Read message for subscribe
+        Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
+          request_id += 1;
+          let method = format!("{operation}Subscribe");
+          let body = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params});
+          println!("sub: {:#}", body);
+          ws.send(Message::Text(body.to_string())).await?;
+          requests_subscribe.insert(request_id, (operation, response_sender));
+        },
+        // Read message for unsubscribe
+        Some((operation, sid, response_sender)) = unsubscribe_receiver.recv() => {
+          subscriptions.remove(&sid);
+          request_id += 1;
+          let method = format!("{operation}Unsubscribe");
+          let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":[sid]}).to_string();
+          ws.send(Message::Text(text)).await?;
+          requests_unsubscribe.insert(request_id, response_sender);
+        },
+        // Read message for other requests
+        Some((method, params, response_sender)) = request_receiver.recv() => {
+          request_id += 1;
+          let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
+          ws.send(Message::Text(text)).await?;
+          other_requests.insert(request_id, response_sender);
+        }
+        // Read incoming WebSocket message
+        next_msg = ws.next() => {
+          let msg = match next_msg {
+            Some(msg) => msg?,
+            None => break,
+          };
+          trace!("ws.next(): {:?}", &msg);
 
-                    // Get text from the message
-                    let text = match msg {
-                        Message::Text(text) => text,
-                        Message::Binary(_data) => continue, // Ignore
-                        Message::Ping(data) => {
-                            ws.send(Message::Pong(data)).await?;
-                            continue
-                        },
-                        Message::Pong(_data) => continue,
-                        Message::Close(_frame) => break,
-                        Message::Frame(_frame) => continue,
-                    };
+          // Get text from the message
+          let text = match msg {
+            Message::Text(text) => text,
+            Message::Binary(_data) => continue, // Ignore
+            Message::Ping(data) => {
+                ws.send(Message::Pong(data)).await?;
+                continue
+            },
+            Message::Pong(_data) => continue,
+            Message::Close(_frame) => break,
+            Message::Frame(_frame) => continue,
+          };
 
 
-                    let mut json: Map<String, Value> = serde_json::from_str(&text)?;
+          let mut json: Map<String, Value> = serde_json::from_str(&text)?;
 
-                    // Subscribe/Unsubscribe response, example:
-                    // `{"jsonrpc":"2.0","result":5308752,"id":1}`
-                    if let Some(id) = json.get("id") {
-                        let id = id.as_u64().ok_or_else(|| {
-                            NexusClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.clone() }
-                        })?;
+          // Subscribe/Unsubscribe response, example:
+          // `{"jsonrpc":"2.0","result":5308752,"id":1}`
+          if let Some(id) = json.get("id") {
+            let id = id.as_u64().ok_or_else(|| {
+                NexusClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.clone() }
+            })?;
 
-                        let err = json.get("error").map(|error_object| {
-                            match serde_json::from_value::<RpcErrorObject>(error_object.clone()) {
-                                Ok(rpc_error_object) => {
-                                    format!("{} ({})",  rpc_error_object.message, rpc_error_object.code)
-                                }
-                                Err(err) => format!(
-                                    "Failed to deserialize RPC error response: {} [{}]",
-                                    serde_json::to_string(error_object).unwrap(),
-                                    err
-                                )
-                            }
-                        });
-
-                        if let Some(response_sender) = other_requests.remove(&id) {
-                            match err {
-                                Some(reason) => {
-                                    let _ = response_sender.send(Err(NexusClientError::RequestFailed { reason, message: text.clone()}));
-                                },
-                                None => {
-                                    let json_result = json.get("result").ok_or_else(|| {
-                                        NexusClientError::RequestFailed { reason: "missing `result` field".into(), message: text.clone() }
-                                    })?;
-                                    if response_sender.send(Ok(json_result.clone())).is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                        } else if let Some(response_sender) = requests_unsubscribe.remove(&id) {
-                            let _ = response_sender.send(()); // do not care if receiver is closed
-                        } else if let Some((operation, response_sender)) = requests_subscribe.remove(&id) {
-                            match err {
-                                Some(reason) => {
-                                    let _ = response_sender.send(Err(NexusClientError::SubscribeFailed { reason, message: text.clone()}));
-                                },
-                                None => {
-                                    // Subscribe Id
-                                    let sid = json.get("result").and_then(Value::as_u64).ok_or_else(|| {
-                                        NexusClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.clone() }
-                                    })?;
-
-                                    // Create notifications channel and unsubscribe function
-                                    let (notifications_sender, notifications_receiver) = mpsc::unbounded_channel();
-                                    let unsubscribe_sender = unsubscribe_sender.clone();
-                                    let unsubscribe = Box::new(move || async move {
-                                        let (response_sender, response_receiver) = oneshot::channel();
-                                        // do nothing if ws already closed
-                                        if unsubscribe_sender.send((operation, sid, response_sender)).is_ok() {
-                                            let _ = response_receiver.await; // channel can be closed only if ws is closed
-                                        }
-                                    }.boxed());
-
-                                    if response_sender.send(Ok((notifications_receiver, unsubscribe))).is_err() {
-                                        break;
-                                    }
-                                    subscriptions.insert(sid, notifications_sender);
-                                }
-                            }
-                        } else {
-                            error!("Unknown request id: {}", id);
-                            break;
-                        }
-                        continue;
+            let err = json.get("error").map(|error_object| {
+                match serde_json::from_value::<RpcErrorObject>(error_object.clone()) {
+                    Ok(rpc_error_object) => {
+                        format!("{} ({})",  rpc_error_object.message, rpc_error_object.code)
                     }
-
-                    // Notification, example:
-                    // `{"jsonrpc":"2.0","method":"logsNotification","params":{"result":{...},"subscription":3114862}}`
-                    if let Some(Value::Object(params)) = json.get_mut("params") {
-                        if let Some(sid) = params.get("subscription").and_then(Value::as_u64) {
-                            let mut unsubscribe_required = false;
-
-                            if let Some(notifications_sender) = subscriptions.get(&sid) {
-                                if let Some(result) = params.remove("result") {
-                                    if notifications_sender.send(result).is_err() {
-                                        unsubscribe_required = true;
-                                    }
-                                }
-                            } else {
-                                unsubscribe_required = true;
-                            }
-
-                            if unsubscribe_required {
-                                if let Some(Value::String(method)) = json.remove("method") {
-                                    if let Some(operation) = method.strip_suffix("Notification") {
-                                        let (response_sender, _response_receiver) = oneshot::channel();
-                                        let _ = unsubscribe_sender.send((operation.to_string(), sid, response_sender));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Err(err) => format!(
+                        "Failed to deserialize RPC error response: {} [{}]",
+                        serde_json::to_string(error_object).unwrap(),
+                        err
+                    )
                 }
+            });
+
+            if let Some(response_sender) = other_requests.remove(&id) {
+              match err {
+                Some(reason) => {
+                  let _ = response_sender.send(Err(NexusClientError::RequestFailed { reason, message: text.clone()}));
+                },
+                None => {
+                  let json_result = json.get("result").ok_or_else(|| {
+                      NexusClientError::RequestFailed { reason: "missing `result` field".into(), message: text.clone() }
+                  })?;
+                  if response_sender.send(Ok(json_result.clone())).is_err() {
+                      break;
+                  }
+                }
+              }
+            } else if let Some(response_sender) = requests_unsubscribe.remove(&id) {
+              let _ = response_sender.send(()); // do not care if receiver is closed
+            } else if let Some((operation, response_sender)) = requests_subscribe.remove(&id) {
+              match err {
+                Some(reason) => {
+                  let _ = response_sender.send(Err(NexusClientError::SubscribeFailed { reason, message: text.clone()}));
+                },
+                None => {
+                  // Subscribe Id
+                  let sid = json.get("result").and_then(Value::as_u64).ok_or_else(|| {
+                    NexusClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.clone() }
+                  })?;
+
+                  // Create notifications channel and unsubscribe function
+                  let (notifications_sender, notifications_receiver) = mpsc::unbounded_channel();
+                  let unsubscribe_sender = unsubscribe_sender.clone();
+                  let unsubscribe = Box::new(move || async move {
+                    let (response_sender, response_receiver) = oneshot::channel();
+                    // do nothing if ws already closed
+                    if unsubscribe_sender.send((operation, sid, response_sender)).is_ok() {
+                      let _ = response_receiver.await; // channel can be closed only if ws is closed
+                    }
+                  }.boxed());
+
+                  if response_sender.send(Ok((notifications_receiver, unsubscribe))).is_err() {
+                      break;
+                  }
+                  subscriptions.insert(sid, notifications_sender);
+                }
+              }
+            } else {
+                error!("Unknown request id: {}", id);
+                break;
             }
+            continue;
+          }
+
+          // Notification, example:
+          // `{"jsonrpc":"2.0","method":"logsNotification","params":{"result":{...},"subscription":3114862}}`
+          if let Some(Value::Object(params)) = json.get_mut("params") {
+            if let Some(sid) = params.get("subscription").and_then(Value::as_u64) {
+              let mut unsubscribe_required = false;
+
+              if let Some(notifications_sender) = subscriptions.get(&sid) {
+                if let Some(result) = params.remove("result") {
+                  if notifications_sender.send(result).is_err() {
+                    unsubscribe_required = true;
+                  }
+                }
+              } else {
+                unsubscribe_required = true;
+              }
+
+              if unsubscribe_required {
+                if let Some(Value::String(method)) = json.remove("method") {
+                  if let Some(operation) = method.strip_suffix("Notification") {
+                    let (response_sender, _response_receiver) = oneshot::channel();
+                    let _ = unsubscribe_sender.send((operation.to_string(), sid, response_sender));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     Ok(())

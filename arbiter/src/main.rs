@@ -16,7 +16,7 @@ use solana_sdk::pubkey::Pubkey;
 
 pub use client::*;
 use common::*;
-use decoder::{Decoder, PnlStub};
+use decoder::{Decoder, PnlStub, TradeRecord};
 use decoder::drift::DriftClient;
 use decoder::drift::math::PRICE_PRECISION;
 use decoder::drift::oracle::{get_oracle_price, OraclePriceData};
@@ -32,12 +32,11 @@ mod trader;
 async fn main() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
+
   let wss = std::env::var("WSS")?;
   let mut nexus = Nexus::new(&wss).await?;
-
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-  // let key = pubkey!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
-
+  // let key = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
   let mut stream = nexus.transactions(&key).await?;
   while let Some(event) = stream.next().await {
     println!("{:#?}", event);
@@ -47,6 +46,55 @@ async fn main() -> anyhow::Result<()> {
   // while let Some(event) = stream.next().await {
   //   log::info!("{:#?}", event);
   // }
+
+
+  // HISTORICAL ANALYSIS
+
+  // let rpc_url = std::env::var("RPC_URL")?;
+  // let signer = Arbiter::read_keypair_from_env("WALLET")?;
+  // let client = Arbiter::new(signer, rpc_url).await?;
+  //
+  // let prefix = env!("CARGO_MANIFEST_DIR").to_string();
+  //
+  // let path = format!("{}/traders.json", prefix);
+  // let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+  // // ordered least to greatest profit, so reverse order and take the best performers
+  // let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().rev().take(100).collect();
+  // let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
+  //   Pubkey::from_str(&t.best_user)
+  // }).collect();
+  //
+  // let mut top_dogs = vec![];
+  // for user in users {
+  //   let data = client.drift_historical_pnl(
+  //     &user,
+  //     100
+  //   ).await?;
+  //   tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+  //
+  //   if data.dataset().len() > 1 && data.avg_quote_pnl() > 0.0 {
+  //     top_dogs.push(data.clone());
+  //
+  //     Plot::plot(
+  //       vec![data.dataset()],
+  //       &format!("{}/pnl/{}_cum_pnl.png", prefix, user),
+  //       &format!("{} Performance", user),
+  //       "Cum USDC PnL",
+  //       "Unix Seconds",
+  //     )?;
+  //     log::info!("{} done", shorten_address(&user));
+  //   }
+  // }
+  //
+  // let best: Vec<PnlStub> = top_dogs.into_iter().map(|d| {
+  //   PnlStub {
+  //     user: d.user(),
+  //     avg_quote_pnl: d.avg_quote_pnl(),
+  //   }
+  // }).collect();
+  // let json = serde_json::to_string(&best)?;
+  // std::fs::write("top_traders.json", json)?;
+
 
   Ok(())
 }
@@ -169,30 +217,31 @@ async fn top_users() -> anyhow::Result<()> {
   }).collect();
   // write to json file
   let stats_json = serde_json::to_string(&stats)?;
-  std::fs::write("top_traders.json", stats_json)?;
+  std::fs::write("traders.json", stats_json)?;
   Ok(())
 }
 
-/// cargo test --package arbiter_client --lib historical_pnl -- --exact --show-output
+/// cargo test --package arbiter --bin arbiter historical_pnl -- --exact --show-output
 #[tokio::test]
 async fn historical_pnl() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
+
   let rpc_url = std::env::var("RPC_URL")?;
   let signer = Arbiter::read_keypair_from_env("WALLET")?;
   let client = Arbiter::new(signer, rpc_url).await?;
 
-  let top_traders_path = "top_traders.json";
-  let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(top_traders_path)?)?;
-  let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().take(200).collect();
+  let prefix = env!("CARGO_MANIFEST_DIR").to_string();
+
+  let path = format!("{}/traders.json", prefix);
+  let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+  // ordered least to greatest profit, so reverse order and take the best performers
+  let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().rev().take(100).collect();
   let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
     Pubkey::from_str(&t.best_user)
   }).collect();
 
-  // let user = pubkey!("4oTeSjNig62yD4KCehU4jkpNVYowLfaTie6LTtGbmefX");
-  // let user = pubkey!("8WBjm2nPgH6AUoSiZTCUU6qEPSJoT4wj3j9JE5W1QkR7");
-  let user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-
+  let mut top_dogs = vec![];
   for user in users {
     let data = client.drift_historical_pnl(
       &user,
@@ -200,14 +249,28 @@ async fn historical_pnl() -> anyhow::Result<()> {
     ).await?;
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    Plot::plot(
-      vec![data.dataset()],
-      &format!("{}_cum_pnl.png", user),
-      &format!("{} Performance", user),
-      "Cum USDC PnL",
-      "Unix Seconds",
-    )?;
+    if data.dataset().len() > 1 && data.avg_quote_pnl() > 0.0 {
+      top_dogs.push(data.clone());
+
+      Plot::plot(
+        vec![data.dataset()],
+        &format!("{}/pnl/{}_cum_pnl.png", prefix, user),
+        &format!("{} Performance", user),
+        "Cum USDC PnL",
+        "Unix Seconds",
+      )?;
+      log::info!("{} done", shorten_address(&user));
+    }
   }
+
+  let best: Vec<PnlStub> = top_dogs.into_iter().map(|d| {
+    PnlStub {
+      user: d.user(),
+      avg_quote_pnl: d.avg_quote_pnl(),
+    }
+  }).collect();
+  let json = serde_json::to_string(&best)?;
+  std::fs::write("top_traders.json", json)?;
 
   Ok(())
 }

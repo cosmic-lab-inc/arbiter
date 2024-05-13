@@ -56,6 +56,7 @@ pub enum UiTransactionEncoding {
   Base64,
   #[serde(rename = "base64+zstd")]
   Base64Zstd,
+  JsonParsed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,24 +68,29 @@ pub enum TransactionDetails {
   None,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionSubscribeOptions {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub commitment: Option<TransactionCommitment>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub encoding: Option<UiTransactionEncoding>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub transaction_details: Option<TransactionDetails>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub show_rewards: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub max_supported_transaction_version: Option<u8>
 }
 
-impl TransactionSubscribeOptions {
-  pub fn standard() -> Self {
+impl Default for TransactionSubscribeOptions {
+  fn default() -> Self {
     Self {
       commitment: Some(TransactionCommitment::Confirmed),
       encoding: Some(UiTransactionEncoding::Base64),
       transaction_details: Some(TransactionDetails::Full),
-      show_rewards: Some(false),
-      max_supported_transaction_version: Some(1)
+      show_rewards: Some(true),
+      max_supported_transaction_version: Some(0)
     }
   }
 }
