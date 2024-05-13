@@ -19,7 +19,8 @@ categories = ["cryptography::cryptocurrencies", "database"]
 keywords = ["solana"]
 
 [workspace.dependencies]
-anchor-gen = "0.3.1"
+#anchor-gen = "0.3.1"
+anchor-gen = { git = "https://github.com/cosmic-lab-inc/anchor-gen.git", branch = "main" }
 once_cell = "1.19.0"
 anchor-lang = "0.29.0"
 anyhow = "1.0.75"

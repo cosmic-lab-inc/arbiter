@@ -145,7 +145,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
 }
 
 
-/// cargo test --package arbiter_client --lib top_users -- --exact --show-output
+/// cargo test --package arbiter --bin arbiter top_users -- --exact --show-output
 #[tokio::test]
 async fn top_users() -> anyhow::Result<()> {
   init_logger();

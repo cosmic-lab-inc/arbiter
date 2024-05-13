@@ -16,7 +16,8 @@ use solana_sdk::hash::hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 
-use common::{Chunk, DecodeProgramAccount, KeyedAccount, TrxData};
+use common::{Chunk, KeyedAccount, TrxData};
+use drift_cpi::DecodeAccount;
 
 /// Master list of supported programs that can provide decoded accounts based on an Anchor IDL.
 pub static PROGRAMS: Lazy<Vec<(String, Pubkey)>> =
@@ -69,7 +70,9 @@ impl Decoder {
   ) -> anyhow::Result<ProgramDecoder> {
     match *program_id {
       _ if *program_id == *drift_cpi::PROGRAM_ID => Ok(ProgramDecoder::Drift(
-        drift_cpi::AccountType::borsh_decode_account(account_name, data)?,
+        drift_cpi::AccountType::decode(account_name, data).map_err(
+          |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
+        )?
       )),
       _ => Err(anyhow::anyhow!(
           "Program {} not supported",
