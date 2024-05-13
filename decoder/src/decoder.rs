@@ -15,6 +15,7 @@ use solana_sdk::account::Account;
 use solana_sdk::hash::hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
+use heck::ToSnakeCase;
 
 use common::{Chunk, KeyedAccount, TrxData};
 use drift_cpi::DecodeAccount;
@@ -32,13 +33,15 @@ pub enum ProgramDecoder {
 
 pub struct Decoder {
   pub idls: HashMap<Pubkey, String>,
-  pub program_account_names: HashMap<Pubkey, Vec<String>>
+  pub program_account_names: HashMap<Pubkey, Vec<String>>,
+  pub program_instruction_names: HashMap<Pubkey, Vec<String>>,
 }
 
 impl Decoder {
   pub fn new() -> anyhow::Result<Self> {
     let mut idls = HashMap::new();
     let mut program_account_names = HashMap::new();
+    let mut program_instruction_names = HashMap::new();
 
     for (_name, program) in PROGRAMS.iter() {
       let idl_path = format!("{}/idl.json", drift_cpi::PATH.clone());
@@ -55,12 +58,15 @@ impl Decoder {
       let idl = serde_json::from_str::<serde_json::Value>(&idl_str).unwrap();
       let accounts = serde_json::from_value::<Vec<serde_json::Value>>(idl["accounts"].clone()).unwrap();
       let account_names = accounts.iter().map(|account| account["name"].as_str().unwrap().to_string()).collect::<Vec<String>>();
+      let ixs = serde_json::from_value::<Vec<serde_json::Value>>(idl["instructions"].clone()).unwrap();
+      let ix_names = ixs.iter().map(|ix| ix["name"].as_str().unwrap().to_string()).collect::<Vec<String>>();
 
       idls.insert(*program, idl_str);
       program_account_names.insert(*program, account_names);
+      program_instruction_names.insert(*program, ix_names);
     }
 
-    Ok(Self { idls, program_account_names })
+    Ok(Self { idls, program_account_names, program_instruction_names })
   }
 
   pub fn de(
@@ -89,7 +95,15 @@ impl Decoder {
     discriminator
   }
 
-  pub fn discrim_to_name(
+  pub fn instruction_discriminator(name: &str) -> [u8; 8] {
+    let name = name.to_snake_case();
+    let mut discriminator = [0u8; 8];
+    let hashed = hash(format!("global:{}", name).as_bytes()).to_bytes();
+    discriminator.copy_from_slice(&hashed[..8]);
+    discriminator
+  }
+
+  pub fn account_discrim_to_name(
     &self,
     program_id: &Pubkey,
     account_discrim: &[u8; 8],
@@ -102,19 +116,50 @@ impl Decoder {
     Ok(name)
   }
 
-  pub fn name_to_base64_discrim(account_name: &str) -> String {
+  pub fn instruction_discrim_to_name(
+    &self,
+    program_id: &Pubkey,
+    ix_discrim: &[u8; 8],
+  ) -> anyhow::Result<Option<String>> {
+    let names = self.program_instruction_names.get(program_id).ok_or(anyhow::anyhow!("Program not found"))?;
+    let name = names.iter().find(|name| {
+      let bytes = Self::instruction_discriminator(name);
+      bytes == *ix_discrim
+    }).cloned();
+    Ok(name)
+  }
+
+  pub fn account_name_to_base64_discrim(account_name: &str) -> String {
     let bytes = Self::account_discriminator(account_name);
     general_purpose::STANDARD.encode(bytes)
   }
 
-  pub fn base64_discrim_to_name(
+  pub fn instruction_name_to_base64_discrim(account_name: &str) -> String {
+    let bytes = Self::instruction_discriminator(account_name);
+    general_purpose::STANDARD.encode(bytes)
+  }
+
+  pub fn account_base64_discrim_to_name(
     &self,
     program_id: &Pubkey,
     base64_discrim: &str,
   ) -> anyhow::Result<String> {
     let bytes = general_purpose::STANDARD.decode(base64_discrim)?;
     let discrim: [u8; 8] = bytes[..8].try_into()?;
-    match self.discrim_to_name(program_id, &discrim)? {
+    match self.account_discrim_to_name(program_id, &discrim)? {
+      Some(name) => Ok(name),
+      None => Err(anyhow::anyhow!("No name found for base64 discriminator")),
+    }
+  }
+
+  pub fn instruction_base64_discrim_to_name(
+    &self,
+    program_id: &Pubkey,
+    base64_discrim: &str,
+  ) -> anyhow::Result<String> {
+    let bytes = general_purpose::STANDARD.decode(base64_discrim)?;
+    let discrim: [u8; 8] = bytes[..8].try_into()?;
+    match self.instruction_discrim_to_name(program_id, &discrim)? {
       Some(name) => Ok(name),
       None => Err(anyhow::anyhow!("No name found for base64 discriminator")),
     }

@@ -11,7 +11,7 @@ pub trait Cast: Sized {
       Ok(result) => Ok(result),
       Err(_) => {
         let caller = Location::caller();
-        Err(anyhow::anyhow!("Failed to cast"))
+        Err(anyhow::anyhow!("Failed cast from: {:?}", caller))
       }
     }
   }

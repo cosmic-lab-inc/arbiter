@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "anchor-gen"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
 dependencies = [
  "anchor-generate-cpi-crate",
  "anchor-generate-cpi-interface",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-crate"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
 dependencies = [
  "anchor-idl",
  "proc-macro2",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-interface"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
 dependencies = [
  "anchor-idl",
  "darling 0.14.4",
@@ -250,7 +250,7 @@ dependencies = [
 [[package]]
 name = "anchor-idl"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
 dependencies = [
  "anchor-syn 0.24.2",
  "darling 0.14.4",
@@ -383,6 +383,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-client",
  "solana-sdk",
+ "solana-transaction-status",
  "spl-associated-token-account 3.0.2",
  "spl-token",
  "thiserror",
@@ -1457,6 +1458,7 @@ dependencies = [
  "common",
  "drift-cpi",
  "futures",
+ "heck 0.5.0",
  "lazy_static",
  "log",
  "once_cell",
@@ -2154,6 +2156,12 @@ name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"

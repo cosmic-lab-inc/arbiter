@@ -88,7 +88,7 @@ impl Default for TransactionSubscribeOptions {
   fn default() -> Self {
     Self {
       commitment: Some(TransactionCommitment::Confirmed),
-      encoding: Some(UiTransactionEncoding::Base64),
+      encoding: Some(UiTransactionEncoding::JsonParsed),
       transaction_details: Some(TransactionDetails::Full),
       show_rewards: Some(true),
       max_supported_transaction_version: Some(0)

@@ -27,3 +27,4 @@ solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 switchboard-cpi = { path = "../idls/switchboard" }
 tokio = { workspace = true }
+heck = "0.5.0"

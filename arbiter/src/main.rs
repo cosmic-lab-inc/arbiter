@@ -7,12 +7,14 @@ use std::str::FromStr;
 use anchor_lang::Discriminator;
 use anchor_lang::prelude::AccountInfo;
 use base64::Engine;
+use base64::engine::general_purpose;
 use futures::StreamExt;
 use rayon::prelude::*;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
+use solana_transaction_status::EncodedTransaction;
 
 pub use client::*;
 use common::*;
@@ -35,10 +37,26 @@ async fn main() -> anyhow::Result<()> {
 
   let wss = std::env::var("WSS")?;
   let mut nexus = Nexus::new(&wss).await?;
+  let decoder = Decoder::new()?;
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
   let mut stream = nexus.transactions(&key).await?;
   while let Some(event) = stream.next().await {
-    println!("{:#?}", event);
+    match event.transaction.transaction {
+      EncodedTransaction::Binary(data, encoding) => {
+        if encoding == solana_transaction_status::TransactionBinaryEncoding::Base64 {
+          let bytes = general_purpose::STANDARD.decode(data)?;
+          let discrim: [u8; 8] = bytes[..8].try_into()?;
+          match decoder.instruction_discrim_to_name(&decoder::drift::id(), &discrim)? {
+            Some(name) => println!("ix name: {}", name),
+            None => println!("unknown ix: {:?}", discrim)
+          }
+        }
+      }
+      EncodedTransaction::Json(data) => {
+        println!("json: {:#?}", data);
+      }
+      _ => {}
+    }
   }
 
   // let mut stream = nexus.accounts(&key).await?;

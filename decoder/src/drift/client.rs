@@ -164,7 +164,7 @@ impl DriftClient {
       .flat_map(|k| Self::user_stats_pda(k))
       .collect::<Vec<Pubkey>>();
 
-    let name = decoder.discrim_to_name(&drift_cpi::ID, &UserStats::discriminator())?.ok_or(anyhow::anyhow!("No name found for UserStats discrim"))?;
+    let name = decoder.account_discrim_to_name(&drift_cpi::ID, &UserStats::discriminator())?.ok_or(anyhow::anyhow!("No name found for UserStats discrim"))?;
     let account_infos = Decoder::accounts(client, &pdas).await?;
     let user_stats: Vec<KeyedAccount<UserStats>> = account_infos
       .into_par_iter()
@@ -208,7 +208,7 @@ impl DriftClient {
       user_accounts.par_chunks(1_000).collect();
 
     // par iter over chunked accounts
-    let name = decoder.discrim_to_name(
+    let name = decoder.account_discrim_to_name(
       &drift_cpi::ID,
       &User::discriminator()
     )?.ok_or(anyhow::anyhow!("No name found for User discrim"))?;
