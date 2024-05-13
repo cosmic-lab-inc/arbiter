@@ -21,7 +21,7 @@ macro_rules! checked_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                        Err(anyhow::anyhow!("Failed safe math from: {:?}", caller))
                     }
                 }
             }
@@ -33,7 +33,7 @@ macro_rules! checked_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                        Err(anyhow::anyhow!("Failed safe math from: {:?}", caller))
                     }
                 }
             }
@@ -45,7 +45,7 @@ macro_rules! checked_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                       Err(anyhow::anyhow!("Failed safe from from: {:?}", caller))
                     }
                 }
             }
@@ -57,7 +57,7 @@ macro_rules! checked_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                      Err(anyhow::anyhow!("Failed safe math from: {:?}", caller))
                     }
                 }
             }
@@ -69,7 +69,7 @@ macro_rules! checked_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                        Err(anyhow::anyhow!("Failed safe from from: {:?}", caller))
                     }
                 }
             }
@@ -103,7 +103,7 @@ macro_rules! div_floor_impl {
                     Some(result) => Ok(result),
                     None => {
                         let caller = Location::caller();
-                        Err(anyhow::anyhow!("Failed to safe math"))
+                       Err(anyhow::anyhow!("Failed safe math from: {:?}", caller))
                     }
                 }
             }

@@ -5,7 +5,6 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use solana_rpc_client_api::response::{Response, RpcKeyedAccount};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
-use solana_transaction_status::EncodedTransactionWithStatusMeta;
 use crate::types::*;
 use crate::websocket::*;
 

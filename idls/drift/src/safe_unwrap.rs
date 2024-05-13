@@ -16,7 +16,7 @@ impl<T> SafeUnwrap for Option<T> {
       Some(v) => Ok(v),
       None => {
         let caller = Location::caller();
-        Err(anyhow::anyhow!("Failed unwrap"))
+        Err(anyhow::anyhow!("Failed unwrap from: {:?}", caller))
       }
     }
   }
@@ -32,7 +32,7 @@ impl<T, U> SafeUnwrap for Result<T, U> {
       Ok(v) => Ok(v),
       Err(_) => {
         let caller = Location::caller();
-        Err(anyhow::anyhow!("Failed unwrap"))
+        Err(anyhow::anyhow!("Failed unwrap from: {:?}", caller))
       }
     }
   }

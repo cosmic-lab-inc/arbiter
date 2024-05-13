@@ -2,9 +2,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
-use solana_client::rpc_response::Response;
 use solana_sdk::transaction::{TransactionError, TransactionVersion};
-use solana_transaction_status::{EncodedTransaction, EncodedTransactionWithStatusMeta, Rewards, UiInnerInstructions, UiLoadedAddresses, UiTransactionStatusMeta, UiTransactionTokenBalance};
+use solana_transaction_status::{EncodedTransaction, EncodedTransactionWithStatusMeta, Rewards, UiInnerInstructions, UiLoadedAddresses, UiTransactionTokenBalance};
 
 pub type StreamUnsub = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 pub type EventStream<'a, T> = BoxStream<'a, T>;

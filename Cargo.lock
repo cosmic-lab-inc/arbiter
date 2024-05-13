@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "anchor-gen"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#f4d1090280725c2d92ef2979151cc33e7041871e"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
 dependencies = [
  "anchor-generate-cpi-crate",
  "anchor-generate-cpi-interface",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-crate"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#f4d1090280725c2d92ef2979151cc33e7041871e"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
 dependencies = [
  "anchor-idl",
  "proc-macro2",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-interface"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#f4d1090280725c2d92ef2979151cc33e7041871e"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
 dependencies = [
  "anchor-idl",
  "darling 0.14.4",
@@ -250,7 +250,7 @@ dependencies = [
 [[package]]
 name = "anchor-idl"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#f4d1090280725c2d92ef2979151cc33e7041871e"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#986bf04a610842dabcaf9b5d13dfbe6a47deb999"
 dependencies = [
  "anchor-syn 0.24.2",
  "darling 0.14.4",
