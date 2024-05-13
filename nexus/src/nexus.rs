@@ -2,9 +2,10 @@ use anchor_lang::{Discriminator, Owner};
 use solana_account_decoder::{UiAccount, UiAccountEncoding};
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
-use solana_rpc_client_api::response::RpcKeyedAccount;
+use solana_rpc_client_api::response::{Response, RpcKeyedAccount};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
+use solana_transaction_status::EncodedTransactionWithStatusMeta;
 use crate::types::*;
 use crate::websocket::*;
 
@@ -23,7 +24,7 @@ impl Nexus {
     })
   }
 
-  pub async fn transactions(&mut self, key: &Pubkey) -> anyhow::Result<EventStream<serde_json::Value>> {
+  pub async fn transactions(&mut self, key: &Pubkey) -> anyhow::Result<EventStream<TransactionNotification>> {
     let config = RpcTransactionsConfig {
       filter: TransactionSubscribeFilter::standard(key),
       options: TransactionSubscribeOptions::default()
@@ -34,7 +35,7 @@ impl Nexus {
     Ok(stream)
   }
 
-  pub async fn accounts(&mut self, key: &Pubkey) -> anyhow::Result<EventStream<UiAccount>> {
+  pub async fn accounts(&mut self, key: &Pubkey) -> anyhow::Result<EventStream<Response<UiAccount>>> {
     let config = RpcAccountInfoConfig {
       encoding: Some(UiAccountEncoding::Base64),
       commitment: Some(CommitmentConfig::confirmed()),
@@ -45,7 +46,7 @@ impl Nexus {
     Ok(stream)
   }
 
-  pub async fn program<A: Discriminator + Owner>(&mut self) -> anyhow::Result<EventStream<RpcKeyedAccount>> {
+  pub async fn program<A: Discriminator + Owner>(&mut self) -> anyhow::Result<EventStream<Response<RpcKeyedAccount>>> {
     let filter = RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &A::discriminator()));
     let account_config = RpcAccountInfoConfig {
       encoding: Some(UiAccountEncoding::Base64),

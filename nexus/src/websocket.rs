@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::fmt::Debug;
 use solana_account_decoder::UiAccount;
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_rpc_client_api::filter::maybe_map_filters;
@@ -40,7 +41,7 @@ use {
   },
   url::Url,
 };
-use crate::RpcTransactionsConfig;
+use crate::{RpcTransactionsConfig, TransactionNotification};
 
 pub type NexusClientResult<T = ()> = Result<T, NexusClientError>;
 
@@ -170,7 +171,7 @@ impl NexusClient {
     Ok(node_version)
   }
 
-  async fn subscribe<'a, T: DeserializeOwned + Send + 'a>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
+  async fn subscribe<'a, T: DeserializeOwned + Send + Debug + 'a>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
   {
     let (response_sender, response_receiver) = oneshot::channel();
     self.subscribe_sender
@@ -182,7 +183,17 @@ impl NexusClient {
       .map_err(|err| NexusClientError::ConnectionClosed(err.to_string()))??;
     Ok((
       UnboundedReceiverStream::new(notifications)
-        .filter_map(|value| ready(serde_json::from_value::<T>(value).ok()))
+        .filter_map(|value| {
+          match serde_json::from_value::<T>(value.clone()) {
+            Err(e) => {
+              log::error!("Failed to parse websocket notification: {:#?} for value: {:#?}", e, value);
+              ready(None)
+            }
+            Ok(res) => {
+              ready(Some(res))
+            }
+          }
+        })
         .boxed(),
       unsubscribe,
     ))
@@ -191,7 +202,7 @@ impl NexusClient {
   pub async fn transaction_subscribe(
     &self,
     config: RpcTransactionsConfig
-  ) -> SubscribeResult<'_, RpcResponse<Value>> {
+  ) -> SubscribeResult<'_, TransactionNotification> {
     let params = json!([config.filter, config.options]);
     self.subscribe("transaction", params).await
   }
@@ -260,7 +271,7 @@ impl NexusClient {
           request_id += 1;
           let method = format!("{operation}Subscribe");
           let body = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params});
-          println!("sub: {:#}", body);
+          println!("subscription: {:#}", body);
           ws.send(Message::Text(body.to_string())).await?;
           requests_subscribe.insert(request_id, (operation, response_sender));
         },
@@ -300,7 +311,6 @@ impl NexusClient {
             Message::Close(_frame) => break,
             Message::Frame(_frame) => continue,
           };
-
 
           let mut json: Map<String, Value> = serde_json::from_str(&text)?;
 

@@ -36,7 +36,6 @@ async fn main() -> anyhow::Result<()> {
   let wss = std::env::var("WSS")?;
   let mut nexus = Nexus::new(&wss).await?;
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-  // let key = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
   let mut stream = nexus.transactions(&key).await?;
   while let Some(event) = stream.next().await {
     println!("{:#?}", event);
@@ -47,58 +46,8 @@ async fn main() -> anyhow::Result<()> {
   //   log::info!("{:#?}", event);
   // }
 
-
-  // HISTORICAL ANALYSIS
-
-  // let rpc_url = std::env::var("RPC_URL")?;
-  // let signer = Arbiter::read_keypair_from_env("WALLET")?;
-  // let client = Arbiter::new(signer, rpc_url).await?;
-  //
-  // let prefix = env!("CARGO_MANIFEST_DIR").to_string();
-  //
-  // let path = format!("{}/traders.json", prefix);
-  // let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-  // // ordered least to greatest profit, so reverse order and take the best performers
-  // let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().rev().take(100).collect();
-  // let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
-  //   Pubkey::from_str(&t.best_user)
-  // }).collect();
-  //
-  // let mut top_dogs = vec![];
-  // for user in users {
-  //   let data = client.drift_historical_pnl(
-  //     &user,
-  //     100
-  //   ).await?;
-  //   tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-  //
-  //   if data.dataset().len() > 1 && data.avg_quote_pnl() > 0.0 {
-  //     top_dogs.push(data.clone());
-  //
-  //     Plot::plot(
-  //       vec![data.dataset()],
-  //       &format!("{}/pnl/{}_cum_pnl.png", prefix, user),
-  //       &format!("{} Performance", user),
-  //       "Cum USDC PnL",
-  //       "Unix Seconds",
-  //     )?;
-  //     log::info!("{} done", shorten_address(&user));
-  //   }
-  // }
-  //
-  // let best: Vec<PnlStub> = top_dogs.into_iter().map(|d| {
-  //   PnlStub {
-  //     user: d.user(),
-  //     avg_quote_pnl: d.avg_quote_pnl(),
-  //   }
-  // }).collect();
-  // let json = serde_json::to_string(&best)?;
-  // std::fs::write("top_traders.json", json)?;
-
-
   Ok(())
 }
-
 
 /// NodeJS websocket: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/sdk/src/accounts/webSocketAccountSubscriber.ts#L174
 /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs

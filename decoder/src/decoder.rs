@@ -240,7 +240,7 @@ impl Decoder {
 
     let mut txs = Vec::<TrxData>::new();
     let opts = RpcTransactionConfig {
-      max_supported_transaction_version: Some(0),
+      max_supported_transaction_version: Some(1),
       ..Default::default()
     };
     for sig in sigs {
