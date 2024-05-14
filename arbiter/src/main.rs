@@ -48,9 +48,7 @@ async fn main() -> anyhow::Result<()> {
       EncodedTransaction::Binary(data, encoding) => {
         if encoding == solana_transaction_status::TransactionBinaryEncoding::Base64 {
           let bytes = general_purpose::STANDARD.decode(data)?;
-          let discrim: [u8; 8] = bytes[..8].try_into()?;
-
-          let _name = InstructionType::discrim_to_name(discrim).map_err(
+          let _name = InstructionType::discrim_to_name(bytes[..8].try_into()?).map_err(
             |e| anyhow::anyhow!("Failed to get name for instruction: {:?}", e)
           )?;
         }
@@ -67,47 +65,40 @@ async fn main() -> anyhow::Result<()> {
                   let data: Vec<u8> = bs58::decode(ui_decoded_ix.data.clone()).into_vec()?;
                   if data.len() >= 8 {
                     if let Ok(discrim) = data[..8].try_into() {
-                      match InstructionType::discrim_to_name(discrim).map_err(
+                      let ix = InstructionType::decode(&data[..]).map_err(
                         |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
-                      ) {
-                        Err(_e) => log::debug!("unknown ix for {}: {:?}", ui_decoded_ix.program_id, discrim),
-                        Ok(name) => {
-                          let name = name.to_pascal_case();
-                          let ix = InstructionType::decode(&name, &data[..]).map_err(
-                            |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
-                          )?;
-                          match ix {
-                            InstructionType::PlacePerpOrder(ix) => {
-                              let params = ix._params;
-                              let dir = match params.direction {
-                                PositionDirection::Long => "long",
-                                PositionDirection::Short => "short"
-                              };
-                              let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                              println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
-                            }
-                            InstructionType::PlaceAndTakePerpOrder(ix) => {
-                              let params = ix._params;
-                              let dir = match params.direction {
-                                PositionDirection::Long => "long",
-                                PositionDirection::Short => "short"
-                              };
-                              let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                              println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
-                            }
-                            InstructionType::PlaceOrders(ix) => {
-                              for params in ix._params {
-                                let dir = match params.direction {
-                                  PositionDirection::Long => "long",
-                                  PositionDirection::Short => "short"
-                                };
-                                let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                                println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
-                              }
-                            }
-                            _ => {}
+                      )?;
+                      let name = InstructionType::discrim_to_name(discrim).unwrap();
+                      match ix {
+                        InstructionType::PlacePerpOrder(ix) => {
+                          let params = ix._params;
+                          let dir = match params.direction {
+                            PositionDirection::Long => "long",
+                            PositionDirection::Short => "short"
+                          };
+                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                        }
+                        InstructionType::PlaceAndTakePerpOrder(ix) => {
+                          let params = ix._params;
+                          let dir = match params.direction {
+                            PositionDirection::Long => "long",
+                            PositionDirection::Short => "short"
+                          };
+                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                        }
+                        InstructionType::PlaceOrders(ix) => {
+                          for params in ix._params {
+                            let dir = match params.direction {
+                              PositionDirection::Long => "long",
+                              PositionDirection::Short => "short"
+                            };
+                            let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                            println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
                           }
-                        },
+                        }
+                        _ => {}
                       }
                     }
                   }

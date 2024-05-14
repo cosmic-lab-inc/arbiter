@@ -63,12 +63,11 @@ impl Nexus {
 
   pub fn decode_program_account(
     program_id: &Pubkey,
-    account_name: &str,
     data: &[u8],
   ) -> anyhow::Result<ProgramDecoder> {
     match *program_id {
       _ if *program_id == drift_cpi::id() => Ok(ProgramDecoder::Drift(
-        drift_cpi::AccountType::decode(account_name, data).map_err(
+        drift_cpi::AccountType::decode(data).map_err(
           |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
         )?
       )),

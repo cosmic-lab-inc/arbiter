@@ -13,7 +13,7 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use crate::drift_client::trader::*;
 use common::{KeyedAccount, Time, trunc};
-use drift_cpi::{AccountType, DiscrimToName, get_oracle_price, PerpMarket, PRICE_PRECISION, SpotBalanceType, SpotMarket, User, UserStats};
+use drift_cpi::{AccountType, get_oracle_price, PerpMarket, PRICE_PRECISION, SpotBalanceType, SpotMarket, User, UserStats};
 use crate::{HistoricalPerformance, HistoricalSettlePnl, MarketInfo, Nexus, ProgramDecoder};
 
 pub const DRIFT_API_PREFIX: &str = "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com/program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH/";
@@ -164,16 +164,12 @@ impl DriftClient {
       .flat_map(|k| Self::user_stats_pda(k))
       .collect::<Vec<Pubkey>>();
 
-    let name = AccountType::discrim_to_name(UserStats::discriminator()).map_err(
-      |e| anyhow::anyhow!("Failed to get name for UserStats discrim: {:?}", e)
-    )?;
     let account_infos = nexus.accounts(&pdas).await?;
     let user_stats: Vec<KeyedAccount<UserStats>> = account_infos
       .into_par_iter()
       .flat_map(|k| {
         match Nexus::decode_program_account(
           &drift_cpi::id(),
-          &name,
           k.account.data.as_slice()
         ) {
           Ok(ProgramDecoder::Drift(account)) => match account {
@@ -210,16 +206,12 @@ impl DriftClient {
       user_accounts.par_chunks(1_000).collect();
 
     // par iter over chunked accounts
-    let name = AccountType::discrim_to_name(UserStats::discriminator()).map_err(
-      |e| anyhow::anyhow!("Failed to get name for UserStats discrim: {:?}", e)
-    )?;
     let mut users: Vec<KeyedAccount<User>> = chunked_accounts
       .into_par_iter()
       .flat_map(|chunk| {
         chunk.par_iter().map(|u| {
           match Nexus::decode_program_account(
             &drift_cpi::id(),
-            &name,
             u.1.data.as_slice()
           ) {
             Ok(ProgramDecoder::Drift(account)) => match account {

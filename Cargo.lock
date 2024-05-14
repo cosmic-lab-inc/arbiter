@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "anchor-gen"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#6a0e46fde621b66357d9397befa450599bc0908e"
 dependencies = [
  "anchor-generate-cpi-crate",
  "anchor-generate-cpi-interface",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-crate"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#6a0e46fde621b66357d9397befa450599bc0908e"
 dependencies = [
  "anchor-idl",
  "proc-macro2",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-interface"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#6a0e46fde621b66357d9397befa450599bc0908e"
 dependencies = [
  "anchor-idl",
  "darling 0.14.4",
@@ -250,7 +250,7 @@ dependencies = [
 [[package]]
 name = "anchor-idl"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#6a0e46fde621b66357d9397befa450599bc0908e"
 dependencies = [
  "anchor-lang",
  "anchor-syn 0.24.2",
@@ -2559,7 +2559,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.5",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -2976,7 +2976,7 @@ version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "681030a937600a36906c185595136d26abfebb4aa9c65701cefcaf8578bb982b"
 dependencies = [
- "proc-macro-crate 3.1.0",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 2.0.62",
