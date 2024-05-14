@@ -1,16 +1,12 @@
 use anchor_lang::prelude::*;
-use borsh::BorshDeserialize;
-
+use borsh::{BorshSerialize, BorshDeserialize};
 use switchboard::{AggregatorAccountData, SwitchboardDecimal};
-
-use crate::casting::Cast;
-use crate::math::{PRICE_PRECISION, PRICE_PRECISION_I64};
+use crate::utils::casting::Cast;
+use crate::utils::math::{PRICE_PRECISION, PRICE_PRECISION_I64};
 use crate::OracleSource;
-use crate::safe_math::SafeMath;
+use crate::utils::safe_math::SafeMath;
 
-// use crate::switchboard::AggregatorAccountData;
-
-#[derive(BorshDeserialize, Default, Clone, Copy, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Debug)]
 pub struct OraclePriceData {
   pub price: i64,
   pub confidence: u64,
@@ -18,35 +14,34 @@ pub struct OraclePriceData {
   pub has_sufficient_number_of_data_points: bool,
 }
 
-#[derive(BorshDeserialize, Debug, Clone, Copy)]
-pub struct HistoricalOracleData {
-  /// precision: PRICE_PRECISION
-  pub last_oracle_price: i64,
-  /// precision: PRICE_PRECISION
-  pub last_oracle_conf: u64,
-  pub last_oracle_delay: i64,
-  /// precision: PRICE_PRECISION
-  pub last_oracle_price_twap: i64,
-  /// precision: PRICE_PRECISION
-  pub last_oracle_price_twap_5min: i64,
-  pub last_oracle_price_twap_ts: i64,
-}
-
-
-#[derive(BorshDeserialize, Default, Clone, Copy, Eq, PartialEq, Debug)]
-#[repr(C, packed)]
-pub struct HistoricalIndexData {
-  /// precision: PRICE_PRECISION
-  pub last_index_bid_price: u64,
-  /// precision: PRICE_PRECISION
-  pub last_index_ask_price: u64,
-  /// precision: PRICE_PRECISION
-  pub last_index_price_twap: u64,
-  /// precision: PRICE_PRECISION
-  pub last_index_price_twap_5min: u64,
-  /// unix_timestamp of last snapshot
-  pub last_index_price_twap_ts: i64,
-}
+// #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, Copy)]
+// pub struct _HistoricalOracleData {
+//   /// precision: PRICE_PRECISION
+//   pub last_oracle_price: i64,
+//   /// precision: PRICE_PRECISION
+//   pub last_oracle_conf: u64,
+//   pub last_oracle_delay: i64,
+//   /// precision: PRICE_PRECISION
+//   pub last_oracle_price_twap: i64,
+//   /// precision: PRICE_PRECISION
+//   pub last_oracle_price_twap_5min: i64,
+//   pub last_oracle_price_twap_ts: i64,
+// }
+// 
+// 
+// #[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Eq, PartialEq, Debug)]
+// pub struct _HistoricalIndexData {
+//   /// precision: PRICE_PRECISION
+//   pub last_index_bid_price: u64,
+//   /// precision: PRICE_PRECISION
+//   pub last_index_ask_price: u64,
+//   /// precision: PRICE_PRECISION
+//   pub last_index_price_twap: u64,
+//   /// precision: PRICE_PRECISION
+//   pub last_index_price_twap_5min: u64,
+//   /// unix_timestamp of last snapshot
+//   pub last_index_price_twap_ts: i64,
+// }
 
 pub fn get_oracle_price(
   oracle_source: &OracleSource,
@@ -207,9 +202,8 @@ fn convert_switchboard_decimal(switchboard_decimal: &SwitchboardDecimal) -> anyh
 
 pub fn get_prelaunch_price(price_oracle: &AccountInfo, slot: u64) -> anyhow::Result<OraclePriceData> {
   let acc = price_oracle.clone();
-  let oracle_account_loader: AccountLoader<PrelaunchOracle> =
+  let oracle_account_loader: AccountLoader<_PrelaunchOracle> =
     AccountLoader::try_from(Box::leak(Box::new(acc)))?;
-
   let oracle = oracle_account_loader.load().map_err(|_| anyhow::Error::msg("Unable to load oracle"))?;
 
   Ok(OraclePriceData {
@@ -249,10 +243,10 @@ impl StrictOraclePrice {
   }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 #[account(zero_copy(unsafe))]
-#[derive(Eq, PartialEq, Debug)]
 #[repr(C)]
-pub struct PrelaunchOracle {
+pub struct _PrelaunchOracle {
   pub price: i64,
   pub max_price: i64,
   pub confidence: u64,
@@ -265,7 +259,7 @@ pub struct PrelaunchOracle {
 }
 
 #[derive(Debug, Clone, Copy, AnchorSerialize, AnchorDeserialize, PartialEq, Eq)]
-pub struct PrelaunchOracleParams {
+pub struct _PrelaunchOracleParams {
   pub perp_market_index: u16,
   pub price: Option<i64>,
   pub max_price: Option<i64>,

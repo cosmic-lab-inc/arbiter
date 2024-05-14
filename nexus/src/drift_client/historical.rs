@@ -72,3 +72,8 @@ pub struct PnlStub {
   pub user: String,
   pub avg_quote_pnl: f64
 }
+
+pub struct MarketInfo {
+  pub price: f64,
+  pub name: String
+}

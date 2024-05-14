@@ -4,28 +4,31 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use anchor_lang::Discriminator;
+use anchor_lang::{account, Discriminator};
 use anchor_lang::prelude::AccountInfo;
 use base64::Engine;
 use base64::engine::general_purpose;
+use borsh::BorshDeserialize;
 use futures::StreamExt;
 use rayon::prelude::*;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey;
+use solana_sdk::{bs58, pubkey};
 use solana_sdk::pubkey::Pubkey;
-use solana_transaction_status::EncodedTransaction;
+use solana_transaction_status::{EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction};
 
 pub use client::*;
 use common::*;
-use decoder::{Decoder, PnlStub, TradeRecord};
-use decoder::drift::DriftClient;
-use decoder::drift::math::PRICE_PRECISION;
-use decoder::drift::oracle::{get_oracle_price, OraclePriceData};
-use decoder::drift::{OracleSource, User};
+use nexus::drift_cpi::{
+  Decode, InstructionType, PositionDirection,
+  PRICE_PRECISION, get_oracle_price, OraclePriceData,
+  OracleSource, User, PerpMarket, DiscrimToName, NameToDiscrim
+};
+use nexus::{PnlStub, TradeRecord, DriftClient};
 pub use trader::*;
 pub use time::*;
 use nexus::Nexus;
+use heck::ToPascalCase;
 
 mod client;
 mod trader;
@@ -35,25 +38,84 @@ async fn main() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let wss = std::env::var("WSS")?;
-  let mut nexus = Nexus::new(&wss).await?;
-  let decoder = Decoder::new()?;
+  let arbiter = Arbiter::new_from_env().await?;
+
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-  let mut stream = nexus.transactions(&key).await?;
+  let (mut stream, _unsub) = arbiter.nexus.stream_transactions(&key).await?;
+
   while let Some(event) = stream.next().await {
     match event.transaction.transaction {
       EncodedTransaction::Binary(data, encoding) => {
         if encoding == solana_transaction_status::TransactionBinaryEncoding::Base64 {
           let bytes = general_purpose::STANDARD.decode(data)?;
           let discrim: [u8; 8] = bytes[..8].try_into()?;
-          match decoder.instruction_discrim_to_name(&decoder::drift::id(), &discrim)? {
-            Some(name) => println!("ix name: {}", name),
-            None => println!("unknown ix: {:?}", discrim)
-          }
+
+          let _name = InstructionType::discrim_to_name(discrim).map_err(
+            |e| anyhow::anyhow!("Failed to get name for instruction: {:?}", e)
+          )?;
         }
       }
-      EncodedTransaction::Json(data) => {
-        println!("json: {:#?}", data);
+      EncodedTransaction::Json(tx) => {
+        if let UiMessage::Parsed(msg) = tx.message {
+          for ui_ix in msg.instructions {
+            if let UiInstruction::Parsed(ui_parsed_ix) = ui_ix {
+              match ui_parsed_ix {
+                UiParsedInstruction::Parsed(parsed_ix) => {
+                  log::debug!("parsed ix for program \"{}\": {:#?}", parsed_ix.program, parsed_ix.parsed)
+                }
+                UiParsedInstruction::PartiallyDecoded(ui_decoded_ix) => {
+                  let data: Vec<u8> = bs58::decode(ui_decoded_ix.data.clone()).into_vec()?;
+                  if data.len() >= 8 {
+                    if let Ok(discrim) = data[..8].try_into() {
+                      match InstructionType::discrim_to_name(discrim).map_err(
+                        |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
+                      ) {
+                        Err(_e) => log::debug!("unknown ix for {}: {:?}", ui_decoded_ix.program_id, discrim),
+                        Ok(name) => {
+                          let name = name.to_pascal_case();
+                          let ix = InstructionType::decode(&name, &data[..]).map_err(
+                            |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
+                          )?;
+                          match ix {
+                            InstructionType::PlacePerpOrder(ix) => {
+                              let params = ix._params;
+                              let dir = match params.direction {
+                                PositionDirection::Long => "long",
+                                PositionDirection::Short => "short"
+                              };
+                              let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                              println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                            }
+                            InstructionType::PlaceAndTakePerpOrder(ix) => {
+                              let params = ix._params;
+                              let dir = match params.direction {
+                                PositionDirection::Long => "long",
+                                PositionDirection::Short => "short"
+                              };
+                              let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                              println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                            }
+                            InstructionType::PlaceOrders(ix) => {
+                              for params in ix._params {
+                                let dir = match params.direction {
+                                  PositionDirection::Long => "long",
+                                  PositionDirection::Short => "short"
+                                };
+                                let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                                println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                              }
+                            }
+                            _ => {}
+                          }
+                        },
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
       _ => {}
     }
@@ -75,9 +137,8 @@ async fn main() -> anyhow::Result<()> {
 async fn drift_perp_markets() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  let rpc_url = std::env::var("RPC_URL")?;
-  let signer = Arbiter::read_keypair_from_env("WALLET")?;
-  let client = Arbiter::new(signer, rpc_url).await?;
+
+  let arbiter = Arbiter::new_from_env().await?;
 
   struct MarketInfo {
     perp_oracle: Pubkey,
@@ -91,8 +152,8 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
     spot_market_index: u16,
   }
 
-  let perp_markets = DriftClient::perp_markets(client.rpc()).await?;
-  let spot_markets = DriftClient::spot_markets(client.rpc()).await?;
+  let perp_markets = DriftClient::perp_markets(arbiter.rpc()).await?;
+  let spot_markets = DriftClient::spot_markets(arbiter.rpc()).await?;
   let mut oracles: HashMap<String, MarketInfo> = HashMap::new();
   for market in perp_markets {
     let perp_name = DriftClient::decode_name(&market.name);
@@ -127,7 +188,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   let names: Vec<String> = oracles.keys().cloned().collect();
 
 
-  let res = client.rpc().get_multiple_accounts_with_commitment(oracle_keys.as_slice(), CommitmentConfig::default()).await?;
+  let res = arbiter.rpc().get_multiple_accounts_with_commitment(oracle_keys.as_slice(), CommitmentConfig::default()).await?;
   let slot = res.context.slot;
 
   for (i, v) in res.value.into_iter().enumerate() {
@@ -162,21 +223,18 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   Ok(())
 }
 
-
 /// cargo test --package arbiter --bin arbiter top_users -- --exact --show-output
 #[tokio::test]
 async fn top_users() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
-  let rpc_url = std::env::var("RPC_URL")?;
-  let signer = Arbiter::read_keypair_from_env("WALLET")?;
-  let client = Arbiter::new(signer, rpc_url).await?;
-  let decoder = Decoder::new()?;
 
-  let users = DriftClient::top_traders_by_pnl(client.rpc(), &decoder).await?;
+  let arbiter = Arbiter::new_from_env().await?;
+
+  let users = DriftClient::top_traders_by_pnl(arbiter.nexus()).await?;
   println!("users: {}", users.len());
-  let stats: Vec<decoder::TraderStub> = users.into_iter().map(|u| {
-    decoder::TraderStub {
+  let stats: Vec<nexus::TraderStub> = users.into_iter().map(|u| {
+    nexus::TraderStub {
       authority: u.authority.to_string(),
       pnl: u.settled_perp_pnl(),
       best_user: u.best_user().key.to_string(),
@@ -194,23 +252,22 @@ async fn historical_pnl() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let rpc_url = std::env::var("RPC_URL")?;
-  let signer = Arbiter::read_keypair_from_env("WALLET")?;
-  let client = Arbiter::new(signer, rpc_url).await?;
+  let arbiter = Arbiter::new_from_env().await?;
 
   let prefix = env!("CARGO_MANIFEST_DIR").to_string();
 
   let path = format!("{}/traders.json", prefix);
-  let top_traders: Vec<decoder::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+  let top_traders: Vec<nexus::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
   // ordered least to greatest profit, so reverse order and take the best performers
-  let top_traders: Vec<decoder::TraderStub> = top_traders.into_iter().rev().take(100).collect();
+  let top_traders: Vec<nexus::TraderStub> = top_traders.into_iter().rev().take(100).collect();
   let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
     Pubkey::from_str(&t.best_user)
   }).collect();
 
   let mut top_dogs = vec![];
   for user in users {
-    let data = client.drift_historical_pnl(
+    let data = DriftClient::drift_historical_pnl(
+      arbiter.nexus(),
       &user,
       100
     ).await?;

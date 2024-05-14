@@ -53,7 +53,7 @@ async fn epoch_demo() -> anyhow::Result<()> {
       QueryDecodedAccounts {
         key: None,                        // Do not filter for a specific account address
         slot: Some(max), // Only fetch accounts at this slot (point in time)
-        owner: drift_cpi::ID, // Accounts belong to the Drift program
+        owner: drift_cpi::id(), // Accounts belong to the Drift program
         discriminant: "User".to_string(), // Only fetch accounts with discriminant "User"
         limit: users_to_fetch, // There are about 150,000 user accounts on Drift, so this is plenty for a specific slot
         offset: 0, // This is used for pagination. If the limit you need is >1M you can use this to fetch in chunks
@@ -101,7 +101,7 @@ async fn epoch_demo() -> anyhow::Result<()> {
       QueryDecodedAccounts {
         key: Some(top_dog_key), // Filters specifically for the top dog's account
         slot: None, // Slot doesn't matter here, we want all slots to reconstruct the user's history
-        owner: drift_cpi::ID, // Account belongs to the Drift program
+        owner: drift_cpi::id(), // Account belongs to the Drift program
         discriminant: "User".to_string(), // Account is a "User" account
         limit: 50_000_000, // 50M accounts at unique slots is roughly 9 months of history (78M slots per year) assuming the database has it
         offset: 0, // This is used for pagination. If the limit you need is >1M you can use this to fetch in chunks

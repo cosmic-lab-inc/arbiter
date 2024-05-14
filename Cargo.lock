@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "anchor-gen"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
 dependencies = [
  "anchor-generate-cpi-crate",
  "anchor-generate-cpi-interface",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-crate"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
 dependencies = [
  "anchor-idl",
  "proc-macro2",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "anchor-generate-cpi-interface"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
 dependencies = [
  "anchor-idl",
  "darling 0.14.4",
@@ -250,8 +250,9 @@ dependencies = [
 [[package]]
 name = "anchor-idl"
 version = "0.3.1"
-source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#822e8e0bff1099742efc3cb0b6dfc320e8269611"
+source = "git+https://github.com/cosmic-lab-inc/anchor-gen.git?branch=main#8229a92f73d7a68a17eb48e15d8e8f73c6604d64"
 dependencies = [
+ "anchor-lang",
  "anchor-syn 0.24.2",
  "darling 0.14.4",
  "heck 0.4.1",
@@ -365,11 +366,11 @@ dependencies = [
  "chrono",
  "common",
  "csv",
- "decoder",
  "derive_more",
  "dotenv",
  "flate2",
  "futures",
+ "heck 0.5.0",
  "lazy_static",
  "log",
  "nexus",
@@ -1444,35 +1445,6 @@ name = "data-encoding"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8566979429cf69b49a5c740c60791108e86440e8be149bbea4fe54d2c32d6e2"
-
-[[package]]
-name = "decoder"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anyhow",
- "base64 0.22.1",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "common",
- "drift-cpi",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "once_cell",
- "rayon",
- "serde",
- "serde_bytes",
- "serde_json",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "switchboard-cpi",
- "tokio",
-]
 
 [[package]]
 name = "der"
@@ -2790,14 +2762,22 @@ dependencies = [
  "chrono",
  "common",
  "crossbeam",
- "decoder",
+ "csv",
+ "drift-cpi",
+ "flate2",
  "futures",
  "futures-util",
+ "heck 0.5.0",
+ "lazy_static",
  "log",
+ "once_cell",
+ "rayon",
  "reqwest 0.12.4",
  "semver",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "simplelog",
  "solana-account-decoder",
  "solana-client",
  "solana-rpc-client-api",
@@ -2805,6 +2785,7 @@ dependencies = [
  "solana-transaction-status",
  "spl-associated-token-account 3.0.2",
  "spl-token",
+ "switchboard-cpi",
  "thiserror",
  "tokio",
  "tokio-stream",

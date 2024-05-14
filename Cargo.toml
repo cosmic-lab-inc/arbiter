@@ -3,9 +3,8 @@ resolver = "2"
 members = [
     "arbiter",
     "common",
-    "decoder",
-    "idls/*",
-    "nexus"
+    "nexus",
+    "programs/*",
 ]
 
 [workspace.package]
@@ -54,3 +53,4 @@ time = "0.3.14"
 thiserror = "1.0.44"
 tokio = { version = "1.34.0", features = ["full"] }
 rand = "0.8.5"
+heck = "0.5.0"

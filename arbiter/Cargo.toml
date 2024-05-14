@@ -12,7 +12,7 @@ bytemuck = { workspace = true }
 csv = { workspace = true }
 chrono = { workspace = true }
 common = { path = "../common" }
-decoder = { path = "../decoder" }
+nexus = { path = "../nexus" }
 derive_more = "0.99.17"
 dotenv = { workspace = true }
 futures = { workspace = true }
@@ -40,4 +40,4 @@ uuid = { version = "1.3.0", features = [
 ] }
 flate2 = "1.0"
 solana-account-decoder = { workspace = true }
-nexus = { path = "../nexus" }
+heck = { workspace = true }

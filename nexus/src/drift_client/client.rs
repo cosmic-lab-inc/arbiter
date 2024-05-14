@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::time::Instant;
-
 use anchor_lang::Discriminator;
 use borsh::BorshDeserialize;
 use rayon::prelude::*;
@@ -9,13 +8,15 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_client::rpc_filter::{Memcmp, RpcFilterType};
 use solana_sdk::account::Account;
+use solana_sdk::account_info::AccountInfo;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
-use crate::drift::trader::*;
+use crate::drift_client::trader::*;
+use common::{KeyedAccount, Time, trunc};
+use drift_cpi::{AccountType, DiscrimToName, get_oracle_price, PerpMarket, PRICE_PRECISION, SpotBalanceType, SpotMarket, User, UserStats};
+use crate::{HistoricalPerformance, HistoricalSettlePnl, MarketInfo, Nexus, ProgramDecoder};
 
-use common::{KeyedAccount, trunc};
-use drift_cpi::{AccountType, PerpMarket, SpotBalanceType, SpotMarket, User, UserStats};
-
-use crate::{Decoder, ProgramDecoder};
+pub const DRIFT_API_PREFIX: &str = "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com/program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH/";
 
 pub struct DriftClient;
 
@@ -30,22 +31,22 @@ impl DriftClient {
       &authority.to_bytes()[..],
       &sub_account_id.to_le_bytes(),
     ];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift_cpi::id()).0)
   }
 
   pub fn user_stats_pda(authority: &Pubkey) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"user_stats", &authority.to_bytes()[..]];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift_cpi::id()).0)
   }
 
   pub fn spot_market_pda(market_index: u16) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"spot_market", &market_index.to_le_bytes()];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift_cpi::id()).0)
   }
 
   pub fn perp_market_pda(market_index: u16) -> anyhow::Result<Pubkey> {
     let seeds: &[&[u8]] = &[b"perp_market", &market_index.to_le_bytes()];
-    Ok(Pubkey::find_program_address(seeds, &drift_cpi::ID).0)
+    Ok(Pubkey::find_program_address(seeds, &drift_cpi::id()).0)
   }
 
   /// token_amount = SpotPosition.scaled_balance as u128
@@ -130,7 +131,7 @@ impl DriftClient {
     Ok(markets)
   }
 
-  pub async fn users(client: &RpcClient) -> anyhow::Result<Vec<(Pubkey, Account)>> {
+  pub async fn users(nexus: &Nexus) -> anyhow::Result<Vec<(Pubkey, Account)>> {
     let discrim = User::discriminator();
     let memcmp = Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice());
 
@@ -141,22 +142,21 @@ impl DriftClient {
       ..Default::default()
     };
 
-    let accounts = client
-      .get_program_accounts_with_config(
-        &drift_cpi::ID,
-        RpcProgramAccountsConfig {
-          filters: Some(filters),
-          account_config,
-          ..Default::default()
-        },
-      )
-      .await?;
+    let accounts = nexus.rpc
+                        .get_program_accounts_with_config(
+                          &drift_cpi::id(),
+                          RpcProgramAccountsConfig {
+                            filters: Some(filters),
+                            account_config,
+                            ..Default::default()
+                          },
+                        )
+                        .await?;
     Ok(accounts)
   }
 
   pub async fn user_stats(
-    client: &RpcClient,
-    decoder: &Decoder,
+    nexus: &Nexus,
     user_auths: &[&Authority],
   ) -> anyhow::Result<Vec<KeyedAccount<UserStats>>> {
     let pdas = user_auths
@@ -164,13 +164,15 @@ impl DriftClient {
       .flat_map(|k| Self::user_stats_pda(k))
       .collect::<Vec<Pubkey>>();
 
-    let name = decoder.account_discrim_to_name(&drift_cpi::ID, &UserStats::discriminator())?.ok_or(anyhow::anyhow!("No name found for UserStats discrim"))?;
-    let account_infos = Decoder::accounts(client, &pdas).await?;
+    let name = AccountType::discrim_to_name(UserStats::discriminator()).map_err(
+      |e| anyhow::anyhow!("Failed to get name for UserStats discrim: {:?}", e)
+    )?;
+    let account_infos = nexus.accounts(&pdas).await?;
     let user_stats: Vec<KeyedAccount<UserStats>> = account_infos
       .into_par_iter()
       .flat_map(|k| {
-        match Decoder::de(
-          &drift_cpi::ID,
+        match Nexus::decode_program_account(
+          &drift_cpi::id(),
           &name,
           k.account.data.as_slice()
         ) {
@@ -193,9 +195,9 @@ impl DriftClient {
   /// Fetches those 1,000 users' [`UserStats`] accounts to derive "PnL to volume ratio",
   /// and filters out users who have not traded in the last 30 days.
   /// Since one authority can have many User accounts, we map all User accounts to each authority and return.
-  pub async fn top_traders(client: &RpcClient, decoder: &Decoder) -> anyhow::Result<HashMap<Authority, DriftTrader>> {
+  pub async fn top_traders(nexus: &Nexus) -> anyhow::Result<HashMap<Authority, DriftTrader>> {
     let start = Instant::now();
-    let user_accounts: Vec<(Pubkey, Account)> = Self::users(client).await?;
+    let user_accounts: Vec<(Pubkey, Account)> = Self::users(nexus).await?;
     let end = Instant::now();
     log::info!(
         "Fetched Drift {} users in {}s",
@@ -208,17 +210,15 @@ impl DriftClient {
       user_accounts.par_chunks(1_000).collect();
 
     // par iter over chunked accounts
-    let name = decoder.account_discrim_to_name(
-      &drift_cpi::ID,
-      &User::discriminator()
-    )?.ok_or(anyhow::anyhow!("No name found for User discrim"))?;
-
+    let name = AccountType::discrim_to_name(UserStats::discriminator()).map_err(
+      |e| anyhow::anyhow!("Failed to get name for UserStats discrim: {:?}", e)
+    )?;
     let mut users: Vec<KeyedAccount<User>> = chunked_accounts
       .into_par_iter()
       .flat_map(|chunk| {
         chunk.par_iter().map(|u| {
-          match Decoder::de(
-            &drift_cpi::ID,
+          match Nexus::decode_program_account(
+            &drift_cpi::id(),
             &name,
             u.1.data.as_slice()
           ) {
@@ -255,7 +255,7 @@ impl DriftClient {
 
     // get UserStats account for each authority
     let auths = user_auths.keys().collect::<Vec<&Authority>>();
-    let user_stats = Self::user_stats(client, decoder, auths.as_slice()).await?;
+    let user_stats = Self::user_stats(nexus, auths.as_slice()).await?;
 
     // UserStat account is PDA of authority pubkey, so there's only ever 1:1.
     // There is never a case when traders HashMap has an existing entry that needs to be updated.
@@ -280,8 +280,8 @@ impl DriftClient {
   }
 
   /// Top perp traders, sorted by ROI as a ratio of settled perp pnl to total deposits.
-  pub async fn top_traders_by_pnl(client: &RpcClient, decoder: &Decoder) -> anyhow::Result<Vec<DriftTrader>> {
-    let traders_map = Self::top_traders(client, decoder).await?;
+  pub async fn top_traders_by_pnl(nexus: &Nexus) -> anyhow::Result<Vec<DriftTrader>> {
+    let traders_map = Self::top_traders(nexus).await?;
     let mut traders = traders_map.into_values().collect::<Vec<DriftTrader>>();
     traders.retain(|t| t.settled_perp_pnl() > 0_f64);
     traders.sort_by_key(|a| a.settled_perp_pnl() as i64);
@@ -289,11 +289,106 @@ impl DriftClient {
   }
 
   /// Formatted into [`TraderStats`] struct for easy display and less memory usage.
-  pub async fn top_trader_stats_by_pnl(client: &RpcClient, decoder: &Decoder) -> anyhow::Result<Vec<TraderStats>> {
-    let best_traders = Self::top_traders_by_pnl(client, decoder).await?;
+  pub async fn top_trader_stats_by_pnl(nexus: &Nexus) -> anyhow::Result<Vec<TraderStats>> {
+    let best_traders = Self::top_traders_by_pnl(nexus).await?;
     let mut trader_stats: Vec<TraderStats> =
       best_traders.into_iter().map(TraderStats::from).collect();
     trader_stats.sort_by_key(|a| a.settled_perp_pnl as i64);
     Ok(trader_stats)
+  }
+
+  pub async fn drift_historical_pnl(
+    nexus: &Nexus,
+    user: &Pubkey,
+    days_back: i64
+  ) -> anyhow::Result<HistoricalPerformance> {
+    let end = Time::now();
+    // drift doesn't have anything more recent than 2 days ago
+    let end = end.delta_date(-2);
+
+    let mut data = vec![];
+    for i in 0..days_back {
+      let date = end.delta_date(-i);
+
+      let url = format!(
+        "{}user/{}/settlePnlRecords/{}/{}{}{}",
+        DRIFT_API_PREFIX,
+        user,
+        date.year,
+        date.year,
+        date.month.to_mm(),
+        date.day.to_dd()
+      );
+
+      let res = nexus.client
+                     .get(url.clone())
+        // gzip header
+                     .header("Accept-Encoding", "gzip")
+                     .send()
+                     .await?;
+      if res.status().is_success() {
+        let bytes = res.bytes().await?;
+        let decoder = flate2::read::GzDecoder::new(bytes.as_ref());
+        let mut rdr = csv::ReaderBuilder::new().from_reader(decoder);
+
+        for result in rdr.records() {
+          let record = result?;
+          let datum = record.deserialize::<HistoricalSettlePnl>(None)?;
+          data.push(datum);
+        }
+      } else if res.status() != 403 {
+        log::error!(
+          "Failed to get historical Drift data with status: {}, for user {} and date: {}/{}/{}",
+          res.status(),
+          user,
+          date.year,
+          date.month.to_mm(),
+          date.day.to_dd()
+        );
+      }
+    }
+    // sort data so latest `ts` field (timestamp) is last index
+    data.sort_by_key(|a| a.ts);
+
+    Ok(HistoricalPerformance(data))
+  }
+
+  pub async fn perp_market_info(rpc: &RpcClient, perp_market_index: u16) -> anyhow::Result<MarketInfo> {
+    let market_pda = DriftClient::perp_market_pda(perp_market_index)?;
+    let market_acct = rpc.get_account(&market_pda).await?;
+    let mut bytes = &market_acct.data.as_slice()[8..];
+    let perp_market = match PerpMarket::deserialize(&mut bytes) {
+      Ok(market) => Some(market),
+      Err(_) => None,
+    }.ok_or(anyhow::anyhow!("Failed to deserialize perp market"))?;
+
+    let oracle = perp_market.amm.oracle;
+    let res = rpc.get_account_with_commitment(&oracle, CommitmentConfig::default()).await?;
+    let oracle_acct = res.value.ok_or(anyhow::anyhow!("Oracle account not found"))?;
+    let slot = res.context.slot;
+    let oracle_source = perp_market.amm.oracle_source;
+    let mut data = oracle_acct.data;
+    let mut lamports = oracle_acct.lamports;
+    let oracle_acct_info = AccountInfo::new(
+      &oracle,
+      false,
+      false,
+      &mut lamports,
+      &mut data,
+      &oracle_acct.owner,
+      oracle_acct.executable,
+      oracle_acct.rent_epoch,
+    );
+    let price_data = get_oracle_price(
+      &oracle_source,
+      &oracle_acct_info,
+      slot
+    ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let price = price_data.price as f64 / PRICE_PRECISION as f64;
+
+    Ok(MarketInfo {
+      price,
+      name: DriftClient::decode_name(&perp_market.name),
+    })
   }
 }

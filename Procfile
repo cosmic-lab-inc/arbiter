@@ -1,1 +1,1 @@
-web: ./target/release/epoch_server
+web: ./target/release/arbiter
