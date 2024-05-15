@@ -49,6 +49,11 @@ impl DriftClient {
     Ok(Pubkey::find_program_address(seeds, &drift_cpi::id()).0)
   }
 
+  pub fn state_pda() -> Pubkey {
+    let seeds: &[&[u8]] = &[b"drift_state"];
+    Pubkey::find_program_address(seeds, &drift_cpi::id()).0
+  }
+
   /// token_amount = SpotPosition.scaled_balance as u128
   ///
   /// SpotMarket = fetch SpotMarkets from Epoch and find where

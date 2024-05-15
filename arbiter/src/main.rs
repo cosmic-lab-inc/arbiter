@@ -19,19 +19,13 @@ use solana_transaction_status::{EncodedTransaction, UiInstruction, UiMessage, Ui
 
 pub use client::*;
 use common::*;
-use nexus::drift_cpi::{
-  Decode, InstructionType, PositionDirection,
-  PRICE_PRECISION, get_oracle_price, OraclePriceData,
-  OracleSource, User, PerpMarket, DiscrimToName, NameToDiscrim
-};
+use nexus::drift_cpi::{Decode, InstructionType, PositionDirection, PRICE_PRECISION, get_oracle_price, OraclePriceData, OracleSource, User, PerpMarket, DiscrimToName, NameToDiscrim, OrderType, BASE_PRECISION};
 use nexus::{PnlStub, TradeRecord, DriftClient};
-pub use trader::*;
 pub use time::*;
 use nexus::Nexus;
 use heck::ToPascalCase;
 
 mod client;
-mod trader;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
         }
       }
       EncodedTransaction::Json(tx) => {
+        println!("{:#?}", tx);
         if let UiMessage::Parsed(msg) = tx.message {
           for ui_ix in msg.instructions {
             if let UiInstruction::Parsed(ui_parsed_ix) = ui_ix {
@@ -63,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 UiParsedInstruction::PartiallyDecoded(ui_decoded_ix) => {
                   let data: Vec<u8> = bs58::decode(ui_decoded_ix.data.clone()).into_vec()?;
-                  if data.len() >= 8 {
+                  if data.len() >= 8 && ui_decoded_ix.program_id == nexus::drift_cpi::id().to_string() {
                     if let Ok(discrim) = data[..8].try_into() {
                       let ix = InstructionType::decode(&data[..]).map_err(
                         |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
@@ -72,30 +67,21 @@ async fn main() -> anyhow::Result<()> {
                       match ix {
                         InstructionType::PlacePerpOrder(ix) => {
                           let params = ix._params;
-                          let dir = match params.direction {
-                            PositionDirection::Long => "long",
-                            PositionDirection::Short => "short"
-                          };
                           let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                          println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                          arbiter.log_order(&name, &params, &market_info);
+                          log::debug!("params: {:#?}", params);
                         }
                         InstructionType::PlaceAndTakePerpOrder(ix) => {
                           let params = ix._params;
-                          let dir = match params.direction {
-                            PositionDirection::Long => "long",
-                            PositionDirection::Short => "short"
-                          };
                           let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                          println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                          arbiter.log_order(&name, &params, &market_info);
+                          log::debug!("params: {:#?}", params);
                         }
                         InstructionType::PlaceOrders(ix) => {
                           for params in ix._params {
-                            let dir = match params.direction {
-                              PositionDirection::Long => "long",
-                              PositionDirection::Short => "short"
-                            };
                             let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                            println!("{}, {} {} @ {}", name, dir, market_info.name, market_info.price);
+                            arbiter.log_order(&name, &params, &market_info);
+                            log::debug!("params: {:#?}", params);
                           }
                         }
                         _ => {}
@@ -208,6 +194,88 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
       let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
       println!("{}: {}", name, price);
+    }
+  }
+
+  Ok(())
+}
+
+
+/// USDC (0): 1
+/// SOL (1): 143.599232
+/// mSOL (2): 170.579627
+/// wBTC (3): 62396.338088
+/// wETH (4): 2895.419999
+/// USDT (5): 0.999875
+/// jitoSOL (6): 159.469222
+/// PYTH (7): 0.403046
+/// bSOL (8): 162.417456
+/// JTO (9): 3.831502
+/// WIF (10): 2.91042
+/// JUP (11): 1.020744
+/// RNDR (12): 10.024211
+/// W (13): 0.527371
+/// TNSR (14): 0.767838
+#[tokio::test]
+async fn drift_spot_markets() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+
+  let arbiter = Arbiter::new_from_env().await?;
+
+  struct MarketInfo {
+    name: String,
+    oracle: Pubkey,
+    oracle_source: OracleSource,
+    oracle_price_data: Option<OraclePriceData>,
+    market_index: u16,
+  }
+
+  let spot_markets = DriftClient::spot_markets(arbiter.rpc()).await?;
+  let mut oracles: Vec<MarketInfo> = vec![];
+  for spot_market in spot_markets {
+    let name = DriftClient::decode_name(&spot_market.name);
+    let oracle = spot_market.oracle;
+    let oracle_source = spot_market.oracle_source;
+
+    oracles.push(MarketInfo {
+      name,
+      oracle,
+      oracle_source,
+      oracle_price_data: None,
+      market_index: spot_market.market_index,
+    });
+  }
+
+  let oracle_keys: Vec<Pubkey> = oracles.iter().map(|v| {
+    v.oracle
+  }).collect();
+
+  let res = arbiter.rpc().get_multiple_accounts_with_commitment(oracle_keys.as_slice(), CommitmentConfig::default()).await?;
+  let slot = res.context.slot;
+
+  for (oracle_acct, market_info) in res.value.into_iter().zip(oracles.iter()) {
+    if let Some(raw) = oracle_acct {
+      let mut data = raw.data;
+      let mut lamports = raw.lamports;
+      let oracle_acct_info = AccountInfo::new(
+        &market_info.oracle,
+        false,
+        false,
+        &mut lamports,
+        &mut data,
+        &raw.owner,
+        raw.executable,
+        raw.rent_epoch,
+      );
+      let price_data = get_oracle_price(
+        &market_info.oracle_source,
+        &oracle_acct_info,
+        slot
+      ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+      let price = price_data.price as f64 / PRICE_PRECISION as f64;
+
+      println!("{} ({}): {}", market_info.name, market_info.market_index, price);
     }
   }
 
