@@ -46,18 +46,17 @@ pub struct Arbiter {
 }
 
 impl Arbiter {
-  pub async fn new(signer: Keypair, rpc: &str, geyser_ws: &str, pubsub_ws: &str) -> anyhow::Result<Self> {
+  pub async fn new(signer: Keypair, rpc: &str, geyser_ws: &str) -> anyhow::Result<Self> {
     Ok(Self {
       signer,
-      nexus: Arc::new(Nexus::new(rpc, geyser_ws, pubsub_ws).await?),
+      nexus: Arc::new(Nexus::new(rpc, geyser_ws).await?),
       cache: Arc::new(RwLock::new(AccountCache::new()))
     })
   }
 
   /// Assumes .env contains key "WALLET" with keypair byte array. Example: `WALLET=[1,2,3,4,5]`
   /// Assumes .env contains key "RPC_URL" with HTTP endpoint.
-  /// Assumes .env contains key "PUBSUB_WS_URL" with WSS endpoint.
-  /// Assumes .env contains key "GEYSER_WS_URL" with WSS endpoint.
+  /// Assumes .env contains key "WS_URL" with WSS endpoint.
   pub async fn new_from_env() -> anyhow::Result<Self> {
     Ok(Self {
       signer: read_keypair_from_env("WALLET")?,
@@ -86,189 +85,154 @@ impl Arbiter {
     // accounts to subscribe to
     let perps = DriftClient::perp_markets(self.rpc()).await?;
     let spots = DriftClient::spot_markets(self.rpc()).await?;
-    let perp_markets: Vec<Pubkey> = perps.iter().map(|p| p.key).collect();
-    let spot_markets: Vec<Pubkey> = spots.iter().map(|s| s.key).collect();
+    let perp_markets: Arc<Vec<Pubkey>> = Arc::new(perps.iter().map(|p| p.key).collect());
+    let spot_markets: Arc<Vec<Pubkey>> = Arc::new(spots.iter().map(|s| s.key).collect());
     let user = DriftClient::user_pda(&self.signer.pubkey(), 0)?;
-    let users = [user, solana_sdk::pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi")];
+    let users = [user];
+    let perp_oracles: Arc<Vec<Pubkey>> = Arc::new(perps.iter().map(|p| p.decoded.amm.oracle).collect());
+    let spot_oracles: Arc<Vec<Pubkey>> = Arc::new(spots.iter().map(|s| s.decoded.oracle).collect());
 
-    //
-    // Drift program account updates
-    //
-    let keys = perp_markets.iter().chain(spot_markets.iter()).chain(users.iter()).cloned().collect::<Vec<Pubkey>>();
-    let config = RpcProgramAccountsConfig {
-      filters: Some(vec![
-        RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &User::discriminator())),
-        RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &PerpMarket::discriminator())),
-        RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &SpotMarket::discriminator()))
-      ]),
-      account_config: RpcAccountInfoConfig {
-        encoding: Some(UiAccountEncoding::Base64),
-        commitment: Some(CommitmentConfig::processed()),
-        ..Default::default()
-      },
-      ..Default::default()
-    };
-    let nexus = self.nexus.clone();
-    let cache = self.cache.clone();
-    tokio::task::spawn(async move {
-      let (mut stream, _unsub) = nexus.stream_program(&id(), Some(config)).await?;
-      while let Some(event) = stream.next().await {
-        println!(".");
-        let RpcKeyedAccount {
-          pubkey,
-          account
-        } = event.value;
-        let key = Pubkey::from_str(&pubkey)?;
+    let keys = perp_markets.iter()
+                           .chain(spot_markets.iter())
+                           .chain(users.iter())
+                           .chain(perp_oracles.iter())
+                           .chain(spot_oracles.iter())
+                           .cloned().collect::<Vec<Pubkey>>();
+    for key in keys {
+      let nexus = self.nexus.clone();
+      let cache = self.cache.clone();
+      let perp_markets = perp_markets.clone();
+      let spot_markets = spot_markets.clone();
+      let perp_oracles = perp_oracles.clone();
+      let spot_oracles = spot_oracles.clone();
+      tokio::task::spawn(async move {
+        let (mut stream, _unsub) = nexus.stream_account(&key).await?;
+        while let Some(event) = stream.next().await {
+          let account = event.value;
 
-        if keys.contains(&key) {
           if let UiAccountData::Binary(data, UiAccountEncoding::Base64) = account.data {
             let data = general_purpose::STANDARD.decode(data)?;
-            let acct = AccountType::decode(&data[..]).map_err(
-              |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
-            )?;
-            match acct {
-              AccountType::PerpMarket(decoded) => {
-                if perp_markets.contains(&key) {
-                  println!("PerpMarket, {}", DriftClient::decode_name(&decoded.name));
-                  let mut cache = cache.write().await;
-                  let account = Account {
-                    lamports: account.lamports,
-                    data,
-                    owner: Pubkey::from_str(&account.owner)?,
-                    executable: account.executable,
-                    rent_epoch: account.rent_epoch
-                  };
-                  cache.perp_markets.insert(key, DecodedAccountContext {
-                    key,
-                    account,
-                    decoded,
-                    slot: event.context.slot
-                  });
+
+            //
+            // Drift program account updates
+            //
+            if Pubkey::from_str(&account.owner)? == id() {
+              let acct = AccountType::decode(&data[..]).map_err(
+                |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
+              )?;
+              match acct {
+                AccountType::PerpMarket(decoded) => {
+                  if perp_markets.contains(&key) {
+                    println!("PerpMarket, {}", DriftClient::decode_name(&decoded.name));
+                    let mut cache = cache.write().await;
+                    let account = Account {
+                      lamports: account.lamports,
+                      data,
+                      owner: Pubkey::from_str(&account.owner)?,
+                      executable: account.executable,
+                      rent_epoch: account.rent_epoch
+                    };
+                    cache.perp_markets.insert(key, DecodedAccountContext {
+                      key,
+                      account,
+                      decoded,
+                      slot: event.context.slot
+                    });
+                  }
                 }
-              }
-              AccountType::SpotMarket(decoded) => {
-                if spot_markets.contains(&key) {
-                  println!("SpotMarket, {}", DriftClient::decode_name(&decoded.name));
-                  let mut cache = cache.write().await;
-                  let account = Account {
-                    lamports: account.lamports,
-                    data,
-                    owner: Pubkey::from_str(&account.owner)?,
-                    executable: account.executable,
-                    rent_epoch: account.rent_epoch
-                  };
-                  cache.spot_markets.insert(key, DecodedAccountContext {
-                    key,
-                    account,
-                    slot: event.context.slot,
-                    decoded,
-                  });
+                AccountType::SpotMarket(decoded) => {
+                  if spot_markets.contains(&key) {
+                    println!("SpotMarket, {}", DriftClient::decode_name(&decoded.name));
+                    let mut cache = cache.write().await;
+                    let account = Account {
+                      lamports: account.lamports,
+                      data,
+                      owner: Pubkey::from_str(&account.owner)?,
+                      executable: account.executable,
+                      rent_epoch: account.rent_epoch
+                    };
+                    cache.spot_markets.insert(key, DecodedAccountContext {
+                      key,
+                      account,
+                      slot: event.context.slot,
+                      decoded,
+                    });
+                  }
                 }
-              }
-              AccountType::User(decoded) => {
-                if users.contains(&key) {
-                  println!("User, {}", DriftClient::decode_name(&decoded.name));
-                  let mut cache = cache.write().await;
-                  let account = Account {
-                    lamports: account.lamports,
-                    data,
-                    owner: Pubkey::from_str(&account.owner)?,
-                    executable: account.executable,
-                    rent_epoch: account.rent_epoch
-                  };
-                  cache.users.insert(key, DecodedAccountContext {
-                    key,
-                    account,
-                    slot: event.context.slot,
-                    decoded,
-                  });
+                AccountType::User(decoded) => {
+                  if users.contains(&key) {
+                    println!("User, {}", DriftClient::decode_name(&decoded.name));
+                    let mut cache = cache.write().await;
+                    let account = Account {
+                      lamports: account.lamports,
+                      data,
+                      owner: Pubkey::from_str(&account.owner)?,
+                      executable: account.executable,
+                      rent_epoch: account.rent_epoch
+                    };
+                    cache.users.insert(key, DecodedAccountContext {
+                      key,
+                      account,
+                      slot: event.context.slot,
+                      decoded,
+                    });
+                  }
                 }
+                _ => {}
               }
-              _ => {}
+            }
+            //
+            // Pyth oracle account updates
+            //
+            else if perp_oracles.contains(&key) {
+              // perp oracle account
+              let account = Account {
+                lamports: account.lamports,
+                data: general_purpose::STANDARD.decode(&data[..])?,
+                owner: Pubkey::from_str(&account.owner)?,
+                executable: account.executable,
+                rent_epoch: account.rent_epoch
+              };
+
+              let read_cache = cache.read().await;
+              let decoded = read_cache.perp_oracle(&key)?.decoded.clone();
+              drop(read_cache);
+              let mut cache = cache.write().await;
+              println!("PerpOracle, market: {}, src: {:?}", DriftClient::decode_name(&decoded.market.name), decoded.source);
+              cache.perp_oracles.insert(key, DecodedAccountContext {
+                key,
+                account: account.clone(),
+                slot: event.context.slot,
+                decoded
+              });
+            } else if spot_oracles.contains(&key) {
+              // spot oracle account
+              let account = Account {
+                lamports: account.lamports,
+                data: general_purpose::STANDARD.decode(&data[..])?,
+                owner: Pubkey::from_str(&account.owner)?,
+                executable: account.executable,
+                rent_epoch: account.rent_epoch
+              };
+
+              let read_cache = cache.read().await;
+              let decoded = read_cache.spot_oracle(&key)?.decoded.clone();
+              drop(read_cache);
+              let mut cache = cache.write().await;
+              println!("SpotOracle, market: {}, src: {:?}", DriftClient::decode_name(&decoded.market.name), decoded.source);
+              cache.spot_oracles.insert(key, DecodedAccountContext {
+                key,
+                account: account.clone(),
+                slot: event.context.slot,
+                decoded
+              });
             }
           }
         }
-      }
 
-      Result::<_, anyhow::Error>::Ok(())
-    });
-
-    //
-    // Pyth program account updates
-    //
-    let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
-    let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
-
-    // for perp_oracle in perp_oracles {
-    //   let nexus = self.nexus.clone();
-    //   let cache = self.cache.clone();
-    //   tokio::task::spawn(async move {
-    //     let (mut stream, _unsub) = nexus.stream_accounts(&perp_oracle).await?;
-    //
-    //     while let Some(event) = stream.next().await {
-    //       let account = event.value;
-    //
-    //       if let UiAccountData::Binary(data, UiAccountEncoding::Base64) = &account.data {
-    //         let account = Account {
-    //           lamports: account.lamports,
-    //           data: general_purpose::STANDARD.decode(&data[..])?,
-    //           owner: Pubkey::from_str(&account.owner)?,
-    //           executable: account.executable,
-    //           rent_epoch: account.rent_epoch
-    //         };
-    //
-    //         let read_cache = cache.read().await;
-    //         let decoded = read_cache.perp_oracle(&perp_oracle)?.decoded.clone();
-    //         drop(read_cache);
-    //         let mut cache = cache.write().await;
-    //         println!("PerpOracle, market: {}, src: {:?}", DriftClient::decode_name(&decoded.market.name), decoded.source);
-    //         cache.perp_oracles.insert(perp_oracle, DecodedAccountContext {
-    //           key: perp_oracle,
-    //           account: account.clone(),
-    //           slot: event.context.slot,
-    //           decoded
-    //         });
-    //       }
-    //     }
-    //     Result::<_, anyhow::Error>::Ok(())
-    //   });
-    // }
-    //
-    // for spot_oracle in spot_oracles {
-    //   let nexus = self.nexus.clone();
-    //   let cache = self.cache.clone();
-    //   tokio::task::spawn(async move {
-    //     let (mut stream, _unsub) = nexus.stream_accounts(&spot_oracle).await?;
-    //
-    //     while let Some(event) = stream.next().await {
-    //       let account = event.value;
-    //
-    //       if let UiAccountData::Binary(data, UiAccountEncoding::Base64) = &account.data {
-    //         let account = Account {
-    //           lamports: account.lamports,
-    //           data: general_purpose::STANDARD.decode(&data[..])?,
-    //           owner: Pubkey::from_str(&account.owner)?,
-    //           executable: account.executable,
-    //           rent_epoch: account.rent_epoch
-    //         };
-    //
-    //         let read_cache = cache.read().await;
-    //         let decoded = read_cache.spot_oracle(&spot_oracle)?.decoded.clone();
-    //         drop(read_cache);
-    //         let mut cache = cache.write().await;
-    //         println!("SpotOracle, market: {}, src: {:?}", DriftClient::decode_name(&decoded.market.name), decoded.source);
-    //         cache.spot_oracles.insert(spot_oracle, DecodedAccountContext {
-    //           key: spot_oracle,
-    //           account: account.clone(),
-    //           slot: event.context.slot,
-    //           decoded
-    //         });
-    //       }
-    //     }
-    //     Result::<_, anyhow::Error>::Ok(())
-    //   });
-    // }
-
+        Result::<_, anyhow::Error>::Ok(())
+      });
+    }
 
     Ok(())
   }

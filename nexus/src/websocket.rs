@@ -279,7 +279,7 @@ impl NexusClient {
           request_id += 1;
           let method = format!("{operation}Subscribe");
           let body = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params});
-          println!("subscription: {:#}", body);
+          log::debug!("subscription: {:#}", body);
           ws.send(Message::Text(body.to_string())).await?;
           requests_subscribe.insert(request_id, (operation, response_sender));
         },

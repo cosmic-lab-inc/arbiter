@@ -28,34 +28,29 @@ pub enum ProgramDecoder {
 pub struct Nexus {
   pub rpc: RpcClient,
   /// Enhanced websockets provided by Helius (transaction and account subscriptions)
-  pub geyser: NexusClient,
-  /// Default websockets provided by Solana PubsubClient (account, program account, blocks, slots, logs)
-  pub pubsub: NexusClient,
+  pub ws: NexusClient,
   pub client: Client,
 }
 
 impl Nexus {
-  pub async fn new(rpc: &str, geyser_ws: &str, pubsub_ws: &str) -> anyhow::Result<Self> {
+  pub async fn new(rpc: &str, geyser_ws: &str) -> anyhow::Result<Self> {
     Ok(Self {
       rpc: RpcClient::new_with_timeout_and_commitment(
         rpc.to_string(),
         Duration::from_secs(90),
         CommitmentConfig::confirmed(),
       ),
-      geyser: NexusClient::new(geyser_ws).await?,
-      pubsub: NexusClient::new(pubsub_ws).await?,
+      ws: NexusClient::new(geyser_ws).await?,
       client: Client::builder().timeout(Duration::from_secs(90)).build()?,
     })
   }
 
   /// Assumes .env contains key "RPC_URL" with HTTP endpoint.
-  /// Assumes .env contains key "GEYSER_WS_URL" with Geyser enhanced WSS endpoint (Helius).
-  /// Assumes .env contains key "PUBSUB_WS_URL" with default Solana Pubsub WSS endpoint.
+  /// Assumes .env contains key "WS_URL" with Geyser enhanced WSS endpoint (Helius).
   pub async fn new_from_env() -> anyhow::Result<Self> {
     let rpc = std::env::var("RPC_URL")?;
-    let geyser_ws = std::env::var("GEYSER_WS_URL")?;
-    let pubsub_ws = std::env::var("PUBSUB_WS_URL")?;
-    Self::new(&rpc, &geyser_ws, &pubsub_ws).await
+    let wss = std::env::var("WS_URL")?;
+    Self::new(&rpc, &wss).await
   }
 
   // ===================================================================================
@@ -252,7 +247,7 @@ impl Nexus {
       filter: TransactionSubscribeFilter::standard(key),
       options: TransactionSubscribeOptions::default()
     };
-    let (stream, unsub) = self.geyser.transaction_subscribe(config).await?;
+    let (stream, unsub) = self.ws.transaction_subscribe(config).await?;
     Ok((stream, unsub))
   }
 
@@ -262,20 +257,7 @@ impl Nexus {
       commitment: Some(CommitmentConfig::processed()),
       ..Default::default()
     };
-    let (stream, unsub) = self.geyser.account_subscribe(key, Some(config)).await?;
-    Ok((stream, unsub))
-  }
-
-  // ===================================================================================
-  // Solana Pubsub WS API
-  // ===================================================================================
-
-  pub async fn stream_program(
-    &self,
-    program_id: &Pubkey,
-    config: Option<RpcProgramAccountsConfig>
-  ) -> anyhow::Result<(StreamEvent<Response<RpcKeyedAccount>>, StreamUnsub)> {
-    let (stream, unsub) = self.pubsub.program_subscribe(program_id, config).await?;
+    let (stream, unsub) = self.ws.account_subscribe(key, Some(config)).await?;
     Ok((stream, unsub))
   }
 }
