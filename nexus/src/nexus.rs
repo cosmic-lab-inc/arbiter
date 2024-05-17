@@ -1,6 +1,6 @@
 use solana_account_decoder::{UiAccount, UiAccountEncoding};
-use solana_rpc_client_api::config::RpcAccountInfoConfig;
-use solana_rpc_client_api::response::Response;
+use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
+use solana_rpc_client_api::response::{Response, RpcKeyedAccount};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use crate::types::*;
@@ -8,7 +8,6 @@ use crate::websocket::*;
 use std::str::FromStr;
 use std::time::Duration;
 use futures_util::future::try_join_all;
-use once_cell::sync::Lazy;
 use reqwest::Client;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
@@ -16,12 +15,8 @@ use solana_client::rpc_config::RpcTransactionConfig;
 use solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature;
 use solana_sdk::account::Account;
 use solana_sdk::signature::Signature;
-use common::{Chunk, KeyedAccount, TrxData};
+use common::{Chunk, AccountContext, TrxData};
 use crate::drift_cpi::Decode;
-
-/// Master list of supported programs that can provide decoded accounts based on an Anchor IDL.
-pub static PROGRAMS: Lazy<Vec<(String, Pubkey)>> =
-  Lazy::new(|| vec![(drift_cpi::PROGRAM_NAME.clone(), drift_cpi::id())]);
 
 /// Registry of program account decoders that match a discriminant,
 /// such as "User", to a specific account type.
@@ -32,29 +27,35 @@ pub enum ProgramDecoder {
 
 pub struct Nexus {
   pub rpc: RpcClient,
-  pub ws: NexusClient,
+  /// Enhanced websockets provided by Helius (transaction and account subscriptions)
+  pub geyser: NexusClient,
+  /// Default websockets provided by Solana PubsubClient (account, program account, blocks, slots, logs)
+  pub pubsub: NexusClient,
   pub client: Client,
 }
 
 impl Nexus {
-  pub async fn new(rpc: &str, wss: &str) -> anyhow::Result<Self> {
+  pub async fn new(rpc: &str, geyser_ws: &str, pubsub_ws: &str) -> anyhow::Result<Self> {
     Ok(Self {
       rpc: RpcClient::new_with_timeout_and_commitment(
         rpc.to_string(),
         Duration::from_secs(90),
         CommitmentConfig::confirmed(),
       ),
-      ws: NexusClient::new(wss).await?,
+      geyser: NexusClient::new(geyser_ws).await?,
+      pubsub: NexusClient::new(pubsub_ws).await?,
       client: Client::builder().timeout(Duration::from_secs(90)).build()?,
     })
   }
 
   /// Assumes .env contains key "RPC_URL" with HTTP endpoint.
-  /// Assumes .env contains key "WS_URL" with WSS endpoint.
+  /// Assumes .env contains key "GEYSER_WS_URL" with Geyser enhanced WSS endpoint (Helius).
+  /// Assumes .env contains key "PUBSUB_WS_URL" with default Solana Pubsub WSS endpoint.
   pub async fn new_from_env() -> anyhow::Result<Self> {
     let rpc = std::env::var("RPC_URL")?;
-    let wss = std::env::var("WS_URL")?;
-    Self::new(&rpc, &wss).await
+    let geyser_ws = std::env::var("GEYSER_WS_URL")?;
+    let pubsub_ws = std::env::var("PUBSUB_WS_URL")?;
+    Self::new(&rpc, &geyser_ws, &pubsub_ws).await
   }
 
   // ===================================================================================
@@ -190,36 +191,44 @@ impl Nexus {
   pub async fn accounts(
     &self,
     keys: &[Pubkey],
-  ) -> anyhow::Result<Vec<KeyedAccount<Account>>> {
+  ) -> anyhow::Result<Vec<AccountContext<Account>>> {
     // get_multiple_accounts max Pubkeys is 100
     let chunk_size = 100;
 
     if keys.len() <= chunk_size {
-      let pre_filter = self.rpc.get_multiple_accounts(keys).await?;
-      let infos = pre_filter
+      let pre_filter = self.rpc.get_multiple_accounts_with_commitment(keys, CommitmentConfig::confirmed()).await?;
+      let accts = pre_filter.value;
+      let slot = pre_filter.context.slot;
+      let infos = accts
         .into_iter()
         .enumerate()
         .filter_map(|(index, acc)| {
-          acc.map(|acc| KeyedAccount {
+          acc.map(|acc| AccountContext {
             key: keys[index],
             account: acc,
+            slot
           })
         })
-        .collect::<Vec<KeyedAccount<Account>>>();
+        .collect::<Vec<AccountContext<Account>>>();
       Ok(infos)
     } else {
       let chunks = keys.chunks(chunk_size).collect::<Vec<&[Pubkey]>>();
       let infos = try_join_all(chunks.into_iter().enumerate().map(
         move |(_index, chunk)| async move {
-          let accs = self.rpc
-                         .get_multiple_accounts(chunk)
-                         .await?
+          let res = self
+            .rpc
+            .get_multiple_accounts_with_commitment(chunk, CommitmentConfig::confirmed())
+            .await?;
+          let accs = res.value;
+          let slot = res.context.slot;
+          let accs = accs
             .into_iter()
             .enumerate()
-            .filter_map(|(index, acc)| {
-              acc.map(|acc| KeyedAccount {
+            .flat_map(move |(index, acc)| {
+              acc.map(|account| AccountContext {
                 key: chunk[index],
-                account: acc,
+                account,
+                slot
               })
             });
           Result::<_, anyhow::Error>::Ok(accs)
@@ -228,7 +237,7 @@ impl Nexus {
         .await?
         .into_iter()
         .flatten()
-        .collect::<Vec<KeyedAccount<Account>>>();
+        .collect::<Vec<AccountContext<Account>>>();
 
       Ok(infos)
     }
@@ -238,22 +247,35 @@ impl Nexus {
   // Geyser WS API
   // ===================================================================================
 
-  pub async fn stream_transactions(&self, key: &Pubkey) -> anyhow::Result<(EventStream<TransactionNotification>, StreamUnsub)> {
+  pub async fn stream_transactions(&self, key: &Pubkey) -> anyhow::Result<(StreamEvent<TransactionNotification>, StreamUnsub)> {
     let config = RpcTransactionsConfig {
       filter: TransactionSubscribeFilter::standard(key),
       options: TransactionSubscribeOptions::default()
     };
-    let (stream, unsub) = self.ws.transaction_subscribe(config).await?;
+    let (stream, unsub) = self.geyser.transaction_subscribe(config).await?;
     Ok((stream, unsub))
   }
 
-  pub async fn stream_accounts(&self, key: &Pubkey) -> anyhow::Result<(EventStream<Response<UiAccount>>, StreamUnsub)> {
+  pub async fn stream_accounts(&self, key: &Pubkey) -> anyhow::Result<(StreamEvent<Response<UiAccount>>, StreamUnsub)> {
     let config = RpcAccountInfoConfig {
       encoding: Some(UiAccountEncoding::Base64),
-      commitment: Some(CommitmentConfig::confirmed()),
+      commitment: Some(CommitmentConfig::processed()),
       ..Default::default()
     };
-    let (stream, unsub) = self.ws.account_subscribe(key, Some(config)).await?;
+    let (stream, unsub) = self.geyser.account_subscribe(key, Some(config)).await?;
+    Ok((stream, unsub))
+  }
+
+  // ===================================================================================
+  // Solana Pubsub WS API
+  // ===================================================================================
+
+  pub async fn stream_program(
+    &self,
+    program_id: &Pubkey,
+    config: Option<RpcProgramAccountsConfig>
+  ) -> anyhow::Result<(StreamEvent<Response<RpcKeyedAccount>>, StreamUnsub)> {
+    let (stream, unsub) = self.pubsub.program_subscribe(program_id, config).await?;
     Ok((stream, unsub))
   }
 }

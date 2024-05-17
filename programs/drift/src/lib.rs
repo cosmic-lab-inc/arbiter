@@ -5,15 +5,10 @@ pub mod utils;
 
 pub use utils::*;
 
-use once_cell::sync::Lazy;
 pub use anchor_gen::prelude::*;
 
 generate_cpi_crate!("idl.json");
 declare_id!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
-
-pub static PATH: Lazy<String> = Lazy::new(|| env!("CARGO_MANIFEST_DIR").to_string());
-pub static PROGRAM_NAME: Lazy<String> = Lazy::new(|| PATH.split('/').last().unwrap().to_string());
-pub static PROGRAM_ID: Lazy<Pubkey> = Lazy::new(|| ID);
 
 /// cargo test --package drift-cpi --lib accounts -- --exact --show-output
 #[test]

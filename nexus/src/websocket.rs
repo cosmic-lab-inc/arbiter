@@ -105,8 +105,8 @@ pub struct NexusClient {
 }
 
 impl NexusClient {
-  pub async fn new(url: &str) -> NexusClientResult<Self> {
-    let url = Url::parse(url)?;
+  pub async fn new(wss: &str) -> NexusClientResult<Self> {
+    let url = Url::parse(wss)?;
     let (ws, _response) = connect_async(url)
       .await
       .map_err(NexusClientError::ConnectionError)?;
@@ -140,7 +140,7 @@ impl NexusClient {
     Ok(())
   }
 
-  async fn get_node_version(&self) -> NexusClientResult<semver::Version> {
+  pub async fn get_node_version(&self) -> NexusClientResult<semver::Version> {
     let r_node_version = self.node_version.read().await;
     if let Some(version) = &*r_node_version {
       Ok(version.clone())
@@ -186,7 +186,7 @@ impl NexusClient {
         .filter_map(|value| {
           match serde_json::from_value::<T>(value.clone()) {
             Err(e) => {
-              log::error!("Failed to parse websocket notification: {:#?} for value: {:#?}", e, value);
+              error!("Failed to parse websocket notification: {:#?} for value: {:#?}", e, value);
               ready(None)
             }
             Ok(res) => {
@@ -198,6 +198,10 @@ impl NexusClient {
       unsubscribe,
     ))
   }
+
+  // =================================================================================
+  // Geyser WS API
+  // =================================================================================
 
   pub async fn transaction_subscribe(
     &self,
@@ -215,6 +219,10 @@ impl NexusClient {
     let params = json!([pubkey.to_string(), config]);
     self.subscribe("account", params).await
   }
+
+  // =================================================================================
+  // Solana Pubsub WS API
+  // =================================================================================
 
   pub async fn program_subscribe(
     &self,

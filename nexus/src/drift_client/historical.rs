@@ -1,4 +1,5 @@
 use common::{Data, trunc};
+use drift_cpi::{OracleSource, PerpMarket, SpotMarket};
 
 /// https://docs.drift.trade/historical-data/historical-data-glossary#settle-pnl
 #[derive(Debug, Clone, borsh::BorshSerialize, borsh::BorshDeserialize, serde::Serialize, serde::Deserialize)]
@@ -73,7 +74,19 @@ pub struct PnlStub {
   pub avg_quote_pnl: f64
 }
 
-pub struct MarketInfo {
+pub struct OraclePrice {
   pub price: f64,
   pub name: String
+}
+
+#[derive(Clone)]
+pub struct PerpOracle {
+  pub market: PerpMarket,
+  pub source: OracleSource
+}
+
+#[derive(Clone)]
+pub struct SpotOracle {
+  pub market: SpotMarket,
+  pub source: OracleSource
 }

@@ -1,6 +1,6 @@
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
-use common::{KeyedAccount, trunc};
+use common::{KeyedAccount, trunc, DecodedAccountContext};
 use drift_cpi::{User, UserStats};
 use drift_cpi::math::QUOTE_PRECISION;
 
@@ -14,7 +14,7 @@ pub type Authority = Pubkey;
 
 pub struct DriftTrader {
   pub authority: Pubkey,
-  pub user_stats: KeyedAccount<UserStats>,
+  pub user_stats: DecodedAccountContext<UserStats>,
   pub users: Vec<KeyedAccount<User>>,
 }
 
@@ -39,13 +39,13 @@ impl DriftTrader {
   }
   pub fn taker_volume_30d(&self) -> f64 {
     trunc!(
-        self.user_stats.account.taker_volume30d as f64 / (QUOTE_PRECISION as f64),
+        self.user_stats.decoded.taker_volume30d as f64 / (QUOTE_PRECISION as f64),
         3
     )
   }
   pub fn maker_volume_30d(&self) -> f64 {
     trunc!(
-        self.user_stats.account.maker_volume30d as f64 / (QUOTE_PRECISION as f64),
+        self.user_stats.decoded.maker_volume30d as f64 / (QUOTE_PRECISION as f64),
         3
     )
   }

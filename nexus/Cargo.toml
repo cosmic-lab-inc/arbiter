@@ -16,7 +16,6 @@ drift-cpi = { path = "../programs/drift" }
 futures = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-once_cell = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
@@ -34,7 +33,6 @@ csv = { workspace = true }
 semver = "1.0.23"
 solana-rpc-client-api = { workspace = true }
 url = "2.2.2"
-crossbeam = "0.8.2"
 futures-util = "0.3.30"
 solana-transaction-status = { workspace = true }
 spl-associated-token-account = { version = "3.0.2", features = ["no-entrypoint"] }
