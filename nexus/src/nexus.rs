@@ -256,7 +256,7 @@ impl Nexus {
     Ok((stream, unsub))
   }
 
-  pub async fn stream_accounts(&self, key: &Pubkey) -> anyhow::Result<(StreamEvent<Response<UiAccount>>, StreamUnsub)> {
+  pub async fn stream_account(&self, key: &Pubkey) -> anyhow::Result<(StreamEvent<Response<UiAccount>>, StreamUnsub)> {
     let config = RpcAccountInfoConfig {
       encoding: Some(UiAccountEncoding::Base64),
       commitment: Some(CommitmentConfig::processed()),
