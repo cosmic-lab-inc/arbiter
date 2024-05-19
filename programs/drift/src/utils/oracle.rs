@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
 use borsh::{BorshSerialize, BorshDeserialize};
 use switchboard::{AggregatorAccountData, SwitchboardDecimal};
+use crate::OracleSource;
 use crate::utils::casting::Cast;
 use crate::utils::math::{PRICE_PRECISION, PRICE_PRECISION_I64};
-use crate::OracleSource;
 use crate::utils::safe_math::SafeMath;
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Debug)]

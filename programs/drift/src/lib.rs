@@ -1,9 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 
+pub use utils::*;
 
 pub mod utils;
-
-pub use utils::*;
 
 pub use anchor_gen::prelude::*;
 

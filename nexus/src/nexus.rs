@@ -1,6 +1,6 @@
 use solana_account_decoder::{UiAccount, UiAccountEncoding};
-use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
-use solana_rpc_client_api::response::{Response, RpcKeyedAccount};
+use solana_rpc_client_api::config::RpcAccountInfoConfig;
+use solana_rpc_client_api::response::Response;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use crate::types::*;
@@ -184,14 +184,14 @@ impl Nexus {
   }
 
   pub async fn accounts(
-    &self,
+    rpc: &RpcClient,
     keys: &[Pubkey],
   ) -> anyhow::Result<Vec<AccountContext<Account>>> {
     // get_multiple_accounts max Pubkeys is 100
     let chunk_size = 100;
 
     if keys.len() <= chunk_size {
-      let pre_filter = self.rpc.get_multiple_accounts_with_commitment(keys, CommitmentConfig::confirmed()).await?;
+      let pre_filter = rpc.get_multiple_accounts_with_commitment(keys, CommitmentConfig::confirmed()).await?;
       let accts = pre_filter.value;
       let slot = pre_filter.context.slot;
       let infos = accts
@@ -210,8 +210,7 @@ impl Nexus {
       let chunks = keys.chunks(chunk_size).collect::<Vec<&[Pubkey]>>();
       let infos = try_join_all(chunks.into_iter().enumerate().map(
         move |(_index, chunk)| async move {
-          let res = self
-            .rpc
+          let res = rpc
             .get_multiple_accounts_with_commitment(chunk, CommitmentConfig::confirmed())
             .await?;
           let accs = res.value;

@@ -1,23 +1,21 @@
-use std::collections::{HashMap, HashSet};
-use crossbeam::channel::Receiver;
-use nexus::drift_cpi::*;
-use futures::StreamExt;
-use solana_account_decoder::UiAccount;
+use std::collections::HashMap;
+use crate::drift_cpi::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use common::{AccountContext, DecodedAccountContext};
-use nexus::{DriftClient, MarketInfo, PerpOracle, SpotOracle};
-use crate::types::ChannelEvent;
+use crate::{DriftClient, PerpOracle, SpotOracle};
 
 #[derive(Default)]
 pub struct AccountCache {
   pub perp_markets: HashMap<Pubkey, DecodedAccountContext<PerpMarket>>,
   pub spot_markets: HashMap<Pubkey, DecodedAccountContext<SpotMarket>>,
   pub users: HashMap<Pubkey, DecodedAccountContext<User>>,
+  pub user_stats: HashMap<Pubkey, DecodedAccountContext<UserStats>>,
   pub perp_oracles: HashMap<Pubkey, DecodedAccountContext<PerpOracle>>,
   pub spot_oracles: HashMap<Pubkey, DecodedAccountContext<SpotOracle>>,
+  pub programs: HashMap<Pubkey, AccountContext<Account>>,
 }
 
 impl AccountCache {
@@ -25,47 +23,63 @@ impl AccountCache {
     Self::default()
   }
 
-  pub fn perp_market(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<PerpMarket>> {
+  pub fn find_perp_market(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<PerpMarket>> {
     self.perp_markets.get(key).ok_or(anyhow::anyhow!("PerpMarket not found for key: {}", key))
   }
   pub fn perp_markets(&self) -> Vec<&DecodedAccountContext<PerpMarket>> {
     self.perp_markets.values().collect()
   }
 
-  pub fn spot_market(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<SpotMarket>> {
+  pub fn find_spot_market(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<SpotMarket>> {
     self.spot_markets.get(key).ok_or(anyhow::anyhow!("SpotMarket not found for key: {}", key))
   }
   pub fn spot_markets(&self) -> Vec<&DecodedAccountContext<SpotMarket>> {
     self.spot_markets.values().collect()
   }
 
-  pub fn user(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<User>> {
+  pub fn find_user(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<User>> {
     self.users.get(key).ok_or(anyhow::anyhow!("User not found for key: {}", key))
   }
   pub fn users(&self) -> Vec<&DecodedAccountContext<User>> {
     self.users.values().collect()
   }
 
-  pub fn perp_oracle(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<PerpOracle>> {
+  pub fn find_user_stats(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<User>> {
+    self.users.get(key).ok_or(anyhow::anyhow!("User not found for key: {}", key))
+  }
+  pub fn users_stats(&self) -> Vec<&DecodedAccountContext<User>> {
+    self.users.values().collect()
+  }
+
+  pub fn find_perp_oracle(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<PerpOracle>> {
     self.perp_oracles.get(key).ok_or(anyhow::anyhow!("PerpOracle not found for key: {}", key))
   }
   pub fn perp_oracles(&self) -> Vec<&DecodedAccountContext<PerpOracle>> {
     self.perp_oracles.values().collect()
   }
 
-  pub fn spot_oracle(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<SpotOracle>> {
+  pub fn find_spot_oracle(&self, key: &Pubkey) -> anyhow::Result<&DecodedAccountContext<SpotOracle>> {
     self.spot_oracles.get(key).ok_or(anyhow::anyhow!("SpotOracle not found for key: {}", key))
   }
   pub fn spot_oracles(&self) -> Vec<&DecodedAccountContext<SpotOracle>> {
     self.spot_oracles.values().collect()
   }
 
+  pub fn find_program(&self, key: &Pubkey) -> anyhow::Result<&AccountContext<Account>> {
+    self.programs.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))
+  }
+  pub fn programs(&self) -> Vec<&AccountContext<Account>> {
+    self.programs.values().collect()
+  }
 
-  pub async fn load_all(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
+
+  pub async fn load_all(&mut self, rpc: &RpcClient, users: &[Pubkey], programs: &[Pubkey], auths: &[Pubkey]) -> anyhow::Result<()> {
     self.load_perp_markets(rpc).await?;
     self.load_spot_markets(rpc).await?;
-    self.load_users(rpc).await?;
+    self.load_users(rpc, users).await?;
+    self.load_user_stats(rpc, auths).await?;
     self.load_oracles(rpc).await?;
+    self.load_programs(rpc, programs).await?;
     Ok(())
   }
 
@@ -85,8 +99,9 @@ impl AccountCache {
     Ok(())
   }
 
-  pub async fn load_users(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
-    let accts = DriftClient::users(rpc).await?;
+  pub async fn load_users(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
+    let mut accts = DriftClient::users(rpc).await?;
+    accts.retain(|(key, _)| filter.contains(key));
     for (key, raw) in accts {
       let acct = AccountType::decode(raw.data.as_slice()).map_err(
         |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
@@ -95,6 +110,24 @@ impl AccountCache {
         self.users.insert(key, DecodedAccountContext {
           key,
           account: raw,
+          slot: 0,
+          decoded,
+        });
+      }
+    }
+    Ok(())
+  }
+
+  pub async fn load_user_stats(&mut self, rpc: &RpcClient, auths: &[Pubkey]) -> anyhow::Result<()> {
+    let accts = DriftClient::user_stats(rpc, auths).await?;
+    for ctx in accts {
+      let acct = AccountType::decode(ctx.account.data.as_slice()).map_err(
+        |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
+      )?;
+      if let AccountType::User(decoded) = acct {
+        self.users.insert(ctx.key, DecodedAccountContext {
+          key: ctx.key,
+          account: ctx.account,
           slot: 0,
           decoded,
         });
@@ -181,6 +214,26 @@ impl AccountCache {
       self.spot_oracles.insert(oracle.key, oracle);
     }
 
+    Ok(())
+  }
+
+  pub async fn load_programs(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
+    let res = rpc.get_multiple_accounts_with_commitment(
+      filter,
+      CommitmentConfig::confirmed()
+    ).await?;
+    let accts = res.value;
+    let slot = res.context.slot;
+    for (i, acct) in accts.into_iter().enumerate() {
+      let key = filter[i];
+      if let Some(account) = acct {
+        self.programs.insert(key, AccountContext {
+          key,
+          account,
+          slot
+        });
+      }
+    }
     Ok(())
   }
 }

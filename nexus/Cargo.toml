@@ -40,3 +40,4 @@ spl-token = { version = "4", features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tokio-tungstenite = { version = "0.21.0", features = ["native-tls", "handshake"] }
 tokio-stream = "0.1.15"
+crossbeam = { workspace = true }

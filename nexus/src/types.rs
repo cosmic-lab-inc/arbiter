@@ -4,6 +4,18 @@ use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 use solana_transaction_status::EncodedTransactionWithStatusMeta;
 
+use crate::drift_cpi::{PerpMarket, SpotMarket, User};
+use solana_account_decoder::UiAccount;
+use common::AccountContext;
+
+#[allow(clippy::large_enum_variant)]
+pub enum ChannelEvent {
+  PerpMarket(AccountContext<PerpMarket>),
+  SpotMarket(AccountContext<SpotMarket>),
+  User(AccountContext<User>),
+  Oracle(AccountContext<UiAccount>)
+}
+
 pub type StreamUnsub = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 pub type StreamEvent<'a, T> = BoxStream<'a, T>;
 

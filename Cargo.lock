@@ -2761,6 +2761,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "common",
+ "crossbeam",
  "csv",
  "drift-cpi",
  "flate2",

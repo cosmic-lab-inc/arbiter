@@ -1,7 +1,8 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
-use anchor_lang::prelude::AccountInfo;
+use anchor_lang::prelude::{AccountInfo, AccountMeta};
 use solana_sdk::pubkey::Pubkey;
-use drift_cpi::{OraclePriceData, OracleSource, User};
+use drift_cpi::{MarketType, OracleSource, User, OraclePriceData};
 
 #[derive(Clone)]
 pub struct RemainingAccountParams {
@@ -31,4 +32,108 @@ pub struct MarketInfo {
   pub perp_name: String,
   pub perp_market_index: u16,
   pub spot_market_index: u16,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct MarketId {
+  pub index: u16,
+  pub kind: MarketType,
+}
+
+impl MarketId {
+  /// Id of a perp market
+  pub const fn perp(index: u16) -> Self {
+    Self {
+      index,
+      kind: MarketType::Perp,
+    }
+  }
+  /// Id of a spot market
+  pub const fn spot(index: u16) -> Self {
+    Self {
+      index,
+      kind: MarketType::Spot,
+    }
+  }
+
+  /// `MarketId` for the USDC Spot Market
+  pub const QUOTE_SPOT: Self = Self {
+    index: 0,
+    kind: MarketType::Spot,
+  };
+}
+
+impl From<(u16, MarketType)> for MarketId {
+  fn from(value: (u16, MarketType)) -> Self {
+    Self {
+      index: value.0,
+      kind: value.1,
+    }
+  }
+}
+
+/// Helper type for Accounts included in drift instructions
+///
+/// Provides sorting implementation matching drift program
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RemainingAccount {
+  Oracle { pubkey: Pubkey },
+  Spot { pubkey: Pubkey, writable: bool },
+  Perp { pubkey: Pubkey, writable: bool },
+}
+
+impl Ord for RemainingAccount {
+  fn cmp(&self, other: &Self) -> Ordering {
+    let type_order = self.discriminant().cmp(&other.discriminant());
+    if let Ordering::Equal = type_order {
+      self.pubkey().cmp(other.pubkey())
+    } else {
+      type_order
+    }
+  }
+}
+
+impl RemainingAccount {
+  fn pubkey(&self) -> &Pubkey {
+    match self {
+      Self::Oracle { pubkey } => pubkey,
+      Self::Spot { pubkey, .. } => pubkey,
+      Self::Perp { pubkey, .. } => pubkey,
+    }
+  }
+  fn parts(self) -> (Pubkey, bool) {
+    match self {
+      Self::Oracle { pubkey } => (pubkey, false),
+      Self::Spot {
+        pubkey, writable, ..
+      } => (pubkey, writable),
+      Self::Perp {
+        pubkey, writable, ..
+      } => (pubkey, writable),
+    }
+  }
+  fn discriminant(&self) -> u8 {
+    // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
+    // between `repr(C)` structs, each of which has the `u8` discriminant as its first
+    // field, so we can read the discriminant without offsetting the pointer.
+    unsafe { *<*const _>::from(self).cast::<u8>() }
+  }
+}
+
+impl PartialOrd for RemainingAccount {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl From<RemainingAccount> for AccountMeta {
+  fn from(value: RemainingAccount) -> Self {
+    let (pubkey, is_writable) = value.parts();
+    AccountMeta {
+      pubkey,
+      is_writable,
+      is_signer: false,
+    }
+  }
 }

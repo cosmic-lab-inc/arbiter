@@ -1,16 +1,12 @@
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
 use common::{KeyedAccount, trunc, DecodedAccountContext};
-use drift_cpi::{User, UserStats};
-use drift_cpi::math::QUOTE_PRECISION;
+use drift_cpi::{User, UserStats, QUOTE_PRECISION};
 
 pub struct TokenBalance {
   pub balance: u128,
   pub mint: Pubkey,
 }
-
-/// User authority pubkey
-pub type Authority = Pubkey;
 
 pub struct DriftTrader {
   pub authority: Pubkey,

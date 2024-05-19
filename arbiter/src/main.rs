@@ -19,17 +19,15 @@ use solana_transaction_status::{EncodedTransaction, UiInstruction, UiMessage, Ui
 
 pub use client::*;
 use common::*;
-use nexus::drift_cpi::{Decode, InstructionType, PositionDirection, PRICE_PRECISION, get_oracle_price, OraclePriceData, OracleSource, User, PerpMarket, DiscrimToName, NameToDiscrim, OrderType, BASE_PRECISION};
+use nexus::drift_cpi::*;
 use nexus::{PnlStub, TradeRecord, DriftClient, MarketInfo};
 pub use time::*;
 use nexus::Nexus;
 use heck::ToPascalCase;
-use crate::cache::AccountCache;
-use crate::types::ChannelEvent;
+use solana_sdk::signer::Signer;
+use nexus::{ChannelEvent, AccountCache};
 
 mod client;
-mod types;
-mod cache;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,72 +36,71 @@ async fn main() -> anyhow::Result<()> {
 
   let arbiter = Arbiter::new_from_env().await?;
 
-  arbiter.stream_accounts().await?;
+  arbiter.subscribe().await?;
 
-  loop {}
+  let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
+  let (mut stream, _unsub) = arbiter.nexus.stream_transactions(&key).await?;
 
-  // let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-  // let (mut stream, _unsub) = arbiter.nexus.stream_transactions(&key).await?;
-  //
-  // while let Some(event) = stream.next().await {
-  //   match event.transaction.transaction {
-  //     EncodedTransaction::Binary(data, encoding) => {
-  //       if encoding == solana_transaction_status::TransactionBinaryEncoding::Base64 {
-  //         let bytes = general_purpose::STANDARD.decode(data)?;
-  //         let _name = InstructionType::discrim_to_name(bytes[..8].try_into()?).map_err(
-  //           |e| anyhow::anyhow!("Failed to get name for instruction: {:?}", e)
-  //         )?;
-  //       }
-  //     }
-  //     EncodedTransaction::Json(tx) => {
-  //       if let UiMessage::Parsed(msg) = tx.message {
-  //         for ui_ix in msg.instructions {
-  //           if let UiInstruction::Parsed(ui_parsed_ix) = ui_ix {
-  //             match ui_parsed_ix {
-  //               UiParsedInstruction::Parsed(parsed_ix) => {
-  //                 log::debug!("parsed ix for program \"{}\": {:#?}", parsed_ix.program, parsed_ix.parsed)
-  //               }
-  //               UiParsedInstruction::PartiallyDecoded(ui_decoded_ix) => {
-  //                 let data: Vec<u8> = bs58::decode(ui_decoded_ix.data.clone()).into_vec()?;
-  //                 if data.len() >= 8 && ui_decoded_ix.program_id == nexus::drift_cpi::id().to_string() {
-  //                   if let Ok(discrim) = data[..8].try_into() {
-  //                     let ix = InstructionType::decode(&data[..]).map_err(
-  //                       |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
-  //                     )?;
-  //                     let name = InstructionType::discrim_to_name(discrim).unwrap();
-  //                     match ix {
-  //                       InstructionType::PlacePerpOrder(ix) => {
-  //                         let params = ix._params;
-  //                         let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-  //                         arbiter.log_order(&name, &params, &market_info);
-  //                         log::debug!("params: {:#?}", params);
-  //                       }
-  //                       InstructionType::PlaceAndTakePerpOrder(ix) => {
-  //                         let params = ix._params;
-  //                         let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-  //                         arbiter.log_order(&name, &params, &market_info);
-  //                         log::debug!("params: {:#?}", params);
-  //                       }
-  //                       InstructionType::PlaceOrders(ix) => {
-  //                         for params in ix._params {
-  //                           let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-  //                           arbiter.log_order(&name, &params, &market_info);
-  //                           log::debug!("params: {:#?}", params);
-  //                         }
-  //                       }
-  //                       _ => {}
-  //                     }
-  //                   }
-  //                 }
-  //               }
-  //             }
-  //           }
-  //         }
-  //       }
-  //     }
-  //     _ => {}
-  //   }
-  // }
+  while let Some(event) = stream.next().await {
+    match event.transaction.transaction {
+      EncodedTransaction::Binary(data, encoding) => {
+        if encoding == solana_transaction_status::TransactionBinaryEncoding::Base64 {
+          let bytes = general_purpose::STANDARD.decode(data)?;
+          let _name = InstructionType::discrim_to_name(bytes[..8].try_into()?).map_err(
+            |e| anyhow::anyhow!("Failed to get name for instruction: {:?}", e)
+          )?;
+        }
+      }
+      EncodedTransaction::Json(tx) => {
+        if let UiMessage::Parsed(msg) = tx.message {
+          for ui_ix in msg.instructions {
+            if let UiInstruction::Parsed(ui_parsed_ix) = ui_ix {
+              match ui_parsed_ix {
+                UiParsedInstruction::Parsed(parsed_ix) => {
+                  log::debug!("parsed ix for program \"{}\": {:#?}", parsed_ix.program, parsed_ix.parsed)
+                }
+                UiParsedInstruction::PartiallyDecoded(ui_decoded_ix) => {
+                  let data: Vec<u8> = bs58::decode(ui_decoded_ix.data.clone()).into_vec()?;
+                  if data.len() >= 8 && ui_decoded_ix.program_id == id().to_string() {
+                    if let Ok(discrim) = data[..8].try_into() {
+                      let ix = InstructionType::decode(&data[..]).map_err(
+                        |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
+                      )?;
+                      let name = InstructionType::discrim_to_name(discrim).unwrap();
+                      match ix {
+                        InstructionType::PlacePerpOrder(ix) => {
+                          let params = ix._params;
+                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          arbiter.log_order(&name, &params, &market_info);
+                          log::debug!("params: {:#?}", params);
+                        }
+                        InstructionType::PlaceAndTakePerpOrder(ix) => {
+                          let params = ix._params;
+                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          arbiter.log_order(&name, &params, &market_info);
+                          log::debug!("params: {:#?}", params);
+                        }
+                        InstructionType::PlaceOrders(ix) => {
+                          for params in ix._params.iter() {
+                            let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                            arbiter.log_order(&name, params, &market_info);
+                            log::debug!("params: {:#?}", params);
+                          }
+                          // arbiter.place_orders(ix._params).await?;
+                        }
+                        _ => {}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      _ => {}
+    }
+  }
 
   Ok(())
 }
@@ -124,7 +121,6 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   let mut oracles: HashMap<String, MarketInfo> = HashMap::new();
   for acct in perp_markets {
     let DecodedAccountContext {
-      key,
       decoded: market,
       ..
     } = acct;
@@ -271,7 +267,7 @@ async fn top_users() -> anyhow::Result<()> {
 
   let arbiter = Arbiter::new_from_env().await?;
 
-  let users = DriftClient::top_traders_by_pnl(&arbiter.nexus()).await?;
+  let users = DriftClient::top_traders_by_pnl(&arbiter.rpc()).await?;
   println!("users: {}", users.len());
   let stats: Vec<nexus::TraderStub> = users.into_iter().map(|u| {
     nexus::TraderStub {
@@ -335,6 +331,19 @@ async fn historical_pnl() -> anyhow::Result<()> {
   }).collect();
   let json = serde_json::to_string(&best)?;
   std::fs::write("top_traders.json", json)?;
+
+  Ok(())
+}
+
+
+#[tokio::test]
+async fn auth() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+
+  let arbiter = Arbiter::new_from_env().await?;
+  let user = DriftClient::user_pda(&arbiter.signer.pubkey(), 0)?;
+  println!("user: {}", user);
 
   Ok(())
 }
