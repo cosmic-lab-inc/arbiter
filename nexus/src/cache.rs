@@ -1,24 +1,27 @@
 use std::collections::HashMap;
-use crate::drift_cpi::*;
+
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
-use common::{AccountContext, DecodedAccountContext};
-use crate::{DriftClient, PerpOracle, SpotOracle};
+
+use crate::{AccountContext, DecodedAccountContext};
+use crate::{DriftUtils, PerpOracle, SpotOracle};
+use crate::drift_cpi::*;
 
 #[derive(Default)]
-pub struct AccountCache {
+pub struct Cache {
   pub perp_markets: HashMap<Pubkey, DecodedAccountContext<PerpMarket>>,
   pub spot_markets: HashMap<Pubkey, DecodedAccountContext<SpotMarket>>,
   pub users: HashMap<Pubkey, DecodedAccountContext<User>>,
   pub user_stats: HashMap<Pubkey, DecodedAccountContext<UserStats>>,
   pub perp_oracles: HashMap<Pubkey, DecodedAccountContext<PerpOracle>>,
   pub spot_oracles: HashMap<Pubkey, DecodedAccountContext<SpotOracle>>,
-  pub programs: HashMap<Pubkey, AccountContext<Account>>,
+  pub accounts: HashMap<Pubkey, AccountContext<Account>>,
+  pub slot: u64
 }
 
-impl AccountCache {
+impl Cache {
   pub fn new() -> Self {
     Self::default()
   }
@@ -65,26 +68,37 @@ impl AccountCache {
     self.spot_oracles.values().collect()
   }
 
-  pub fn find_program(&self, key: &Pubkey) -> anyhow::Result<&AccountContext<Account>> {
-    self.programs.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))
+  pub fn find_account(&self, key: &Pubkey) -> anyhow::Result<&AccountContext<Account>> {
+    self.accounts.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))
   }
-  pub fn programs(&self) -> Vec<&AccountContext<Account>> {
-    self.programs.values().collect()
+  pub fn accounts(&self) -> Vec<&AccountContext<Account>> {
+    self.accounts.values().collect()
+  }
+
+  pub fn slot(&self) -> u64 {
+    self.slot
   }
 
 
-  pub async fn load_all(&mut self, rpc: &RpcClient, users: &[Pubkey], programs: &[Pubkey], auths: &[Pubkey]) -> anyhow::Result<()> {
+  pub async fn load_all(
+    &mut self,
+    rpc: &RpcClient,
+    users: &[Pubkey],
+    accounts: &[Pubkey],
+    auths: &[Pubkey]
+  ) -> anyhow::Result<()> {
     self.load_perp_markets(rpc).await?;
     self.load_spot_markets(rpc).await?;
     self.load_users(rpc, users).await?;
     self.load_user_stats(rpc, auths).await?;
     self.load_oracles(rpc).await?;
-    self.load_programs(rpc, programs).await?;
+    self.load_accounts(rpc, accounts).await?;
+    self.load_slot(rpc).await?;
     Ok(())
   }
 
   pub async fn load_perp_markets(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
-    let perps = DriftClient::perp_markets(rpc).await?;
+    let perps = DriftUtils::perp_markets(rpc).await?;
     for perp in perps {
       self.perp_markets.insert(perp.key, perp);
     }
@@ -92,7 +106,7 @@ impl AccountCache {
   }
 
   pub async fn load_spot_markets(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
-    let spots = DriftClient::spot_markets(rpc).await?;
+    let spots = DriftUtils::spot_markets(rpc).await?;
     for spot in spots {
       self.spot_markets.insert(spot.key, spot);
     }
@@ -100,16 +114,16 @@ impl AccountCache {
   }
 
   pub async fn load_users(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
-    let mut accts = DriftClient::users(rpc).await?;
-    accts.retain(|(key, _)| filter.contains(key));
-    for (key, raw) in accts {
-      let acct = AccountType::decode(raw.data.as_slice()).map_err(
+    let mut accts = DriftUtils::users(rpc).await?;
+    accts.retain(|a| filter.contains(&a.key));
+    for acct in accts {
+      let raw = AccountType::decode(acct.account.data.as_slice()).map_err(
         |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
       )?;
-      if let AccountType::User(decoded) = acct {
-        self.users.insert(key, DecodedAccountContext {
-          key,
-          account: raw,
+      if let AccountType::User(decoded) = raw {
+        self.users.insert(acct.key, DecodedAccountContext {
+          key: acct.key,
+          account: acct.account,
           slot: 0,
           decoded,
         });
@@ -119,7 +133,7 @@ impl AccountCache {
   }
 
   pub async fn load_user_stats(&mut self, rpc: &RpcClient, auths: &[Pubkey]) -> anyhow::Result<()> {
-    let accts = DriftClient::user_stats(rpc, auths).await?;
+    let accts = DriftUtils::user_stats(rpc, auths).await?;
     for ctx in accts {
       let acct = AccountType::decode(ctx.account.data.as_slice()).map_err(
         |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
@@ -137,8 +151,8 @@ impl AccountCache {
   }
 
   pub async fn load_oracles(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
-    let perp_markets = DriftClient::perp_markets(rpc).await?;
-    let spot_markets = DriftClient::spot_markets(rpc).await?;
+    let perp_markets = DriftUtils::perp_markets(rpc).await?;
+    let spot_markets = DriftUtils::spot_markets(rpc).await?;
     let mut perp_oracles = HashMap::new();
     let mut spot_oracles = HashMap::new();
 
@@ -217,7 +231,7 @@ impl AccountCache {
     Ok(())
   }
 
-  pub async fn load_programs(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
+  pub async fn load_accounts(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
     let res = rpc.get_multiple_accounts_with_commitment(
       filter,
       CommitmentConfig::confirmed()
@@ -227,13 +241,19 @@ impl AccountCache {
     for (i, acct) in accts.into_iter().enumerate() {
       let key = filter[i];
       if let Some(account) = acct {
-        self.programs.insert(key, AccountContext {
+        self.accounts.insert(key, AccountContext {
           key,
           account,
           slot
         });
       }
     }
+    Ok(())
+  }
+
+  pub async fn load_slot(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
+    let slot = rpc.get_slot().await?;
+    self.slot = slot;
     Ok(())
   }
 }

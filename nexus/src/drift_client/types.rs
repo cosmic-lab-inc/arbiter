@@ -1,8 +1,10 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+
 use anchor_lang::prelude::{AccountInfo, AccountMeta};
 use solana_sdk::pubkey::Pubkey;
-use drift_cpi::{MarketType, OracleSource, User, OraclePriceData};
+
+use drift_cpi::{MarketType, OraclePriceData, OracleSource, User};
 
 #[derive(Clone)]
 pub struct RemainingAccountParams {
@@ -38,6 +40,14 @@ pub struct MarketInfo {
 pub struct MarketId {
   pub index: u16,
   pub kind: MarketType,
+}
+
+impl PartialEq<Self> for MarketId {
+  fn eq(&self, other: &Self) -> bool {
+    let index_eq = self.index == other.index;
+    let kind_eq = matches!((self.kind, other.kind), (MarketType::Spot, MarketType::Spot) | (MarketType::Perp, MarketType::Perp));
+    index_eq && kind_eq
+  }
 }
 
 impl MarketId {

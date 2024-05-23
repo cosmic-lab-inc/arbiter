@@ -1,17 +1,22 @@
 #![allow(dead_code)]
 
 use std::fmt::Debug;
+
 use solana_account_decoder::UiAccount;
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_rpc_client_api::filter::maybe_map_filters;
-use solana_rpc_client_api::response::RpcKeyedAccount;
+use solana_rpc_client_api::response::{RpcKeyedAccount, SlotInfo};
 use solana_sdk::pubkey::Pubkey;
+
 use {
   futures_util::{
-    future::{ready, BoxFuture, FutureExt},
+    future::{BoxFuture, FutureExt, ready},
     sink::SinkExt,
     stream::{BoxStream, StreamExt},
   },
+  log::*,
+  serde::de::DeserializeOwned,
+  serde_json::{json, Map, Value},
   solana_rpc_client_api::{
     error_object::RpcErrorObject,
     response::{
@@ -19,28 +24,26 @@ use {
       RpcVersionInfo,
     },
   },
-  log::*,
-  serde::de::DeserializeOwned,
-  serde_json::{json, Map, Value},
   std::collections::BTreeMap,
   thiserror::Error,
   tokio::{
     net::TcpStream,
     sync::{mpsc, oneshot, RwLock},
     task::JoinHandle,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
   },
   tokio_stream::wrappers::UnboundedReceiverStream,
   tokio_tungstenite::{
     connect_async,
+    MaybeTlsStream,
     tungstenite::{
-      protocol::frame::{coding::CloseCode, CloseFrame},
       Message,
-    },
-    MaybeTlsStream, WebSocketStream,
+      protocol::frame::{CloseFrame, coding::CloseCode},
+    }, WebSocketStream,
   },
   url::Url,
 };
+
 use crate::{RpcTransactionsConfig, TransactionNotification};
 
 pub type NexusClientResult<T = ()> = Result<T, NexusClientError>;
@@ -92,21 +95,31 @@ type RequestMsg = (
   oneshot::Sender<Result<Value, NexusClientError>>,
 );
 
+const HELIUS_GEYSER_PREFIX: &str = "wss://atlas-mainnet.helius-rpc.com?api-key=";
+const HELIUS_PUBSUB_PREFIX: &str = "wss://mainnet.helius-rpc.com?api-key=";
+
 /// A client for subscribing to messages from the RPC server.
 ///
 /// See the [module documentation][self].
 #[derive(Debug)]
-pub struct NexusClient {
+pub struct HeliusClient {
   subscribe_sender: mpsc::UnboundedSender<SubscribeRequestMsg>,
   request_sender: mpsc::UnboundedSender<RequestMsg>,
   shutdown_sender: oneshot::Sender<()>,
   node_version: RwLock<Option<semver::Version>>,
   ws: JoinHandle<NexusClientResult>,
+  geyser: bool
 }
 
-impl NexusClient {
-  pub async fn new(wss: &str) -> NexusClientResult<Self> {
-    let url = Url::parse(wss)?;
+impl HeliusClient {
+  pub async fn new(api_key: &str, geyser: bool) -> NexusClientResult<Self> {
+    let prefix = match geyser {
+      true => HELIUS_GEYSER_PREFIX,
+      false => HELIUS_PUBSUB_PREFIX,
+    };
+    let wss = format!("{}{}", prefix, api_key);
+
+    let url = Url::parse(&wss)?;
     let (ws, _response) = connect_async(url)
       .await
       .map_err(NexusClientError::ConnectionError)?;
@@ -120,12 +133,13 @@ impl NexusClient {
       request_sender,
       shutdown_sender,
       node_version: RwLock::new(None),
-      ws: tokio::spawn(NexusClient::run_ws(
+      ws: tokio::spawn(HeliusClient::run_ws(
         ws,
         subscribe_receiver,
         request_receiver,
         shutdown_receiver,
       )),
+      geyser
     })
   }
 
@@ -207,6 +221,9 @@ impl NexusClient {
     &self,
     config: RpcTransactionsConfig
   ) -> SubscribeResult<'_, TransactionNotification> {
+    if !self.geyser {
+      return Err(NexusClientError::RequestError("Default PubsubClient does not support Geyser endpoints".to_string()));
+    }
     let params = json!([config.filter, config.options]);
     self.subscribe("transaction", params).await
   }
@@ -216,6 +233,9 @@ impl NexusClient {
     pubkey: &Pubkey,
     config: Option<RpcAccountInfoConfig>,
   ) -> SubscribeResult<'_, RpcResponse<UiAccount>> {
+    if !self.geyser {
+      return Err(NexusClientError::RequestError("Default PubsubClient does not support Geyser endpoints".to_string()));
+    }
     let params = json!([pubkey.to_string(), config]);
     self.subscribe("account", params).await
   }
@@ -229,6 +249,9 @@ impl NexusClient {
     pubkey: &Pubkey,
     mut config: Option<RpcProgramAccountsConfig>,
   ) -> SubscribeResult<'_, RpcResponse<RpcKeyedAccount>> {
+    if self.geyser {
+      return Err(NexusClientError::RequestError("Geyser is not enabled for this endpoint".to_string()));
+    }
     if let Some(ref mut config) = config {
       if let Some(ref mut filters) = config.filters {
         let node_version = self.get_node_version().await.ok();
@@ -246,6 +269,17 @@ impl NexusClient {
     let params = json!([pubkey.to_string(), config]);
     self.subscribe("program", params).await
   }
+
+  pub async fn slot_subscribe(&self) -> SubscribeResult<'_, SlotInfo> {
+    if self.geyser {
+      return Err(NexusClientError::RequestError("Geyser is not enabled for this endpoint".to_string()));
+    }
+    self.subscribe("slot", json!([])).await
+  }
+
+  // =================================================================================
+  // Handle websocket messages
+  // =================================================================================
 
   async fn run_ws(
     mut ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
@@ -279,7 +313,7 @@ impl NexusClient {
           request_id += 1;
           let method = format!("{operation}Subscribe");
           let body = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params});
-          log::debug!("subscription: {:#}", body);
+          debug!("subscription: {:#}", body);
           ws.send(Message::Text(body.to_string())).await?;
           requests_subscribe.insert(request_id, (operation, response_sender));
         },

@@ -1,6 +1,6 @@
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
-use common::{KeyedAccount, trunc, DecodedAccountContext};
+use crate::{trunc, DecodedAccountContext};
 use drift_cpi::{User, UserStats, QUOTE_PRECISION};
 
 pub struct TokenBalance {
@@ -11,7 +11,7 @@ pub struct TokenBalance {
 pub struct DriftTrader {
   pub authority: Pubkey,
   pub user_stats: DecodedAccountContext<UserStats>,
-  pub users: Vec<KeyedAccount<User>>,
+  pub users: Vec<DecodedAccountContext<User>>,
 }
 
 impl DriftTrader {
@@ -20,7 +20,7 @@ impl DriftTrader {
     let sum: f64 = self
       .users
       .iter()
-      .map(|u| (u.account.settled_perp_pnl as f64) / (QUOTE_PRECISION as f64))
+      .map(|u| (u.decoded.settled_perp_pnl as f64) / (QUOTE_PRECISION as f64))
       .sum();
     trunc!(sum, 3)
   }
@@ -29,7 +29,7 @@ impl DriftTrader {
     let sum: f64 = self
       .users
       .iter()
-      .map(|u| (u.account.total_deposits as f64) / (QUOTE_PRECISION as f64))
+      .map(|u| (u.decoded.total_deposits as f64) / (QUOTE_PRECISION as f64))
       .sum();
     trunc!(sum, 3)
   }
@@ -57,10 +57,10 @@ impl DriftTrader {
         3
     )
   }
-  pub fn best_user(&self) -> &KeyedAccount<User> {
+  pub fn best_user(&self) -> &DecodedAccountContext<User> {
     self.users
         .iter()
-        .max_by_key(|u| u.account.settled_perp_pnl)
+        .max_by_key(|u| u.decoded.settled_perp_pnl)
         .unwrap()
   }
 }

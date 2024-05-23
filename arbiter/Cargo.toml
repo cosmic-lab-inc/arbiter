@@ -11,14 +11,13 @@ borsh = { workspace = true }
 bytemuck = { workspace = true }
 csv = { workspace = true }
 chrono = { workspace = true }
-common = { path = "../common" }
+
 nexus = { path = "../nexus" }
 derive_more = "0.99.17"
 dotenv = { workspace = true }
 futures = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-plotters = "0.3.5"
 rayon = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -28,8 +27,8 @@ serde_yaml = { workspace = true }
 simplelog = { workspace = true }
 solana-client = { workspace = true }
 solana-sdk = { workspace = true }
-spl-associated-token-account = { version = "3.0.2", features = ["no-entrypoint"] }
-spl-token = { version = "4", features = ["no-entrypoint"] }
+spl-associated-token-account = { workspace = true }
+spl-token = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tungstenite = { version = "0.21.0", features = ["native-tls"] }

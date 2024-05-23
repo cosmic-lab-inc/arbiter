@@ -11,7 +11,6 @@ base64 = { workspace = true }
 borsh = { workspace = true }
 bytemuck = { workspace = true }
 chrono = { workspace = true }
-common = { path = "../common" }
 drift-cpi = { path = "../programs/drift" }
 futures = { workspace = true }
 lazy_static = { workspace = true }
@@ -35,9 +34,11 @@ solana-rpc-client-api = { workspace = true }
 url = "2.2.2"
 futures-util = "0.3.30"
 solana-transaction-status = { workspace = true }
-spl-associated-token-account = { version = "3.0.2", features = ["no-entrypoint"] }
-spl-token = { version = "4", features = ["no-entrypoint"] }
+spl-associated-token-account = { workspace = true }
+spl-token = { workspace = true }
 thiserror = { workspace = true }
 tokio-tungstenite = { version = "0.21.0", features = ["native-tls", "handshake"] }
 tokio-stream = "0.1.15"
 crossbeam = { workspace = true }
+plotters = { version = "0.3.5" }
+rand = { workspace = true }

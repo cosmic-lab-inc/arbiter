@@ -1,22 +1,24 @@
-use solana_account_decoder::{UiAccount, UiAccountEncoding};
-use solana_rpc_client_api::config::RpcAccountInfoConfig;
-use solana_rpc_client_api::response::Response;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey::Pubkey;
-use crate::types::*;
-use crate::websocket::*;
 use std::str::FromStr;
 use std::time::Duration;
+
 use futures_util::future::try_join_all;
 use reqwest::Client;
+use solana_account_decoder::{UiAccount, UiAccountEncoding};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature;
+use solana_rpc_client_api::config::RpcAccountInfoConfig;
+use solana_rpc_client_api::response::{Response, SlotInfo};
 use solana_sdk::account::Account;
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use common::{Chunk, AccountContext, TrxData};
+
+use crate::{AccountContext, Chunk, TrxData};
 use crate::drift_cpi::Decode;
+use crate::types::*;
+use crate::websocket::*;
 
 /// Registry of program account decoders that match a discriminant,
 /// such as "User", to a specific account type.
@@ -28,29 +30,24 @@ pub enum ProgramDecoder {
 pub struct Nexus {
   pub rpc: RpcClient,
   /// Enhanced websockets provided by Helius (transaction and account subscriptions)
-  pub ws: NexusClient,
+  pub geyser: HeliusClient,
+  /// Default PubsubClient provided by Solana RPC validators
+  pub pubsub: HeliusClient,
   pub client: Client,
 }
 
 impl Nexus {
-  pub async fn new(rpc: &str, geyser_ws: &str) -> anyhow::Result<Self> {
+  pub async fn new(rpc: &str, api_key: &str) -> anyhow::Result<Self> {
     Ok(Self {
       rpc: RpcClient::new_with_timeout_and_commitment(
         rpc.to_string(),
         Duration::from_secs(90),
         CommitmentConfig::confirmed(),
       ),
-      ws: NexusClient::new(geyser_ws).await?,
+      geyser: HeliusClient::new(api_key, true).await?,
+      pubsub: HeliusClient::new(api_key, false).await?,
       client: Client::builder().timeout(Duration::from_secs(90)).build()?,
     })
-  }
-
-  /// Assumes .env contains key "RPC_URL" with HTTP endpoint.
-  /// Assumes .env contains key "WS_URL" with Geyser enhanced WSS endpoint (Helius).
-  pub async fn new_from_env() -> anyhow::Result<Self> {
-    let rpc = std::env::var("RPC_URL")?;
-    let wss = std::env::var("WS_URL")?;
-    Self::new(&rpc, &wss).await
   }
 
   // ===================================================================================
@@ -246,7 +243,7 @@ impl Nexus {
       filter: TransactionSubscribeFilter::standard(key),
       options: TransactionSubscribeOptions::default()
     };
-    let (stream, unsub) = self.ws.transaction_subscribe(config).await?;
+    let (stream, unsub) = self.geyser.transaction_subscribe(config).await?;
     Ok((stream, unsub))
   }
 
@@ -256,7 +253,16 @@ impl Nexus {
       commitment: Some(CommitmentConfig::processed()),
       ..Default::default()
     };
-    let (stream, unsub) = self.ws.account_subscribe(key, Some(config)).await?;
+    let (stream, unsub) = self.geyser.account_subscribe(key, Some(config)).await?;
+    Ok((stream, unsub))
+  }
+
+  // ===================================================================================
+  // Default Pubsub WS API
+  // ===================================================================================
+
+  pub async fn stream_slots(&self) -> anyhow::Result<(StreamEvent<SlotInfo>, StreamUnsub)> {
+    let (stream, unsub) = self.pubsub.slot_subscribe().await?;
     Ok((stream, unsub))
   }
 }

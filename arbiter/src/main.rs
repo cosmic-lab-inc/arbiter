@@ -10,22 +10,20 @@ use base64::Engine;
 use base64::engine::general_purpose;
 use borsh::BorshDeserialize;
 use futures::StreamExt;
+use heck::ToPascalCase;
 use rayon::prelude::*;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::{bs58, pubkey};
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signer::Signer;
 use solana_transaction_status::{EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction};
 
-pub use client::*;
-use common::*;
+use client::*;
+use nexus::{DecodedAccountContext, DriftClient, DriftUtils, init_logger, MarketId, MarketInfo, Plot, PnlStub, shorten_address, TradeRecord};
+use nexus::{Cache, ChannelEvent};
 use nexus::drift_cpi::*;
-use nexus::{PnlStub, TradeRecord, DriftClient, MarketInfo};
-pub use time::*;
 use nexus::Nexus;
-use heck::ToPascalCase;
-use solana_sdk::signer::Signer;
-use nexus::{ChannelEvent, AccountCache};
 
 mod client;
 
@@ -34,9 +32,15 @@ async fn main() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
+  let arbiter = Arbiter::new_from_env(0).await?;
 
+  arbiter.setup().await?;
   arbiter.subscribe().await?;
+
+  let market_filter = vec![
+    // SOL-PERP
+    MarketId::perp(0),
+  ];
 
   let key = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
   let (mut stream, _unsub) = arbiter.nexus.stream_transactions(&key).await?;
@@ -70,23 +74,35 @@ async fn main() -> anyhow::Result<()> {
                       match ix {
                         InstructionType::PlacePerpOrder(ix) => {
                           let params = ix._params;
-                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                          arbiter.log_order(&name, &params, &market_info);
-                          log::debug!("params: {:#?}", params);
+                          let market_info = DriftUtils::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          if params.market_index == 0 {
+                            if let MarketType::Perp = params.market_type {
+                              arbiter.log_order(&name, &params, &market_info);
+                            }
+                          }
                         }
                         InstructionType::PlaceAndTakePerpOrder(ix) => {
                           let params = ix._params;
-                          let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                          arbiter.log_order(&name, &params, &market_info);
-                          log::debug!("params: {:#?}", params);
+                          let market_info = DriftUtils::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                          if params.market_index == 0 {
+                            if let MarketType::Perp = params.market_type {
+                              arbiter.log_order(&name, &params, &market_info);
+                            }
+                          }
                         }
                         InstructionType::PlaceOrders(ix) => {
+                          let mut orders = vec![];
                           for params in ix._params.iter() {
-                            let market_info = DriftClient::perp_market_info(arbiter.rpc(), params.market_index).await?;
-                            arbiter.log_order(&name, params, &market_info);
-                            log::debug!("params: {:#?}", params);
+                            let market_info = DriftUtils::perp_market_info(arbiter.rpc(), params.market_index).await?;
+                            // SOL perp market index
+                            if params.market_index == 0 {
+                              if let MarketType::Perp = params.market_type {
+                                arbiter.log_order(&name, params, &market_info);
+                                orders.push(*params);
+                              }
+                            }
                           }
-                          // arbiter.place_orders(ix._params).await?;
+                          arbiter.place_orders(orders, Some(&market_filter)).await?;
                         }
                         _ => {}
                       }
@@ -105,7 +121,6 @@ async fn main() -> anyhow::Result<()> {
   Ok(())
 }
 
-/// NodeJS websocket: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/sdk/src/accounts/webSocketAccountSubscriber.ts#L174
 /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs
 /// Rust oracle type: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/programs/drift/src/state/oracle.rs#L126
 /// Pyth deser: https://github.com/pyth-network/pyth-sdk-rs/blob/main/pyth-sdk-solana/examples/get_accounts.rs#L67
@@ -114,17 +129,17 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
+  let arbiter = Arbiter::new_from_env(0).await?;
 
-  let perp_markets = DriftClient::perp_markets(arbiter.rpc()).await?;
-  let spot_markets = DriftClient::spot_markets(arbiter.rpc()).await?;
+  let perp_markets = DriftUtils::perp_markets(arbiter.rpc()).await?;
+  let spot_markets = DriftUtils::spot_markets(arbiter.rpc()).await?;
   let mut oracles: HashMap<String, MarketInfo> = HashMap::new();
   for acct in perp_markets {
     let DecodedAccountContext {
       decoded: market,
       ..
     } = acct;
-    let perp_name = DriftClient::decode_name(&market.name);
+    let perp_name = DriftUtils::decode_name(&market.name);
     let spot_market = spot_markets
       .iter()
       .find(|spot| spot.decoded.market_index == market.quote_spot_market_index)
@@ -154,7 +169,9 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
     v.perp_oracle_source
   }).collect();
   let names: Vec<String> = oracles.keys().cloned().collect();
-
+  let perp_indexes: Vec<u16> = oracles.values().map(|v| {
+    v.perp_market_index
+  }).collect();
 
   let res = arbiter.rpc().get_multiple_accounts_with_commitment(oracle_keys.as_slice(), CommitmentConfig::default()).await?;
   let slot = res.context.slot;
@@ -164,6 +181,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
       let name = names[i].clone();
       let oracle = oracle_keys[i];
       let oracle_source = oracle_sources[i];
+      let perp_index = perp_indexes[i];
       let mut data = raw.data;
       let mut lamports = raw.lamports;
       let oracle_acct_info = AccountInfo::new(
@@ -176,7 +194,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
         raw.executable,
         raw.rent_epoch,
       );
-      println!("perp oracle program: {}", raw.owner);
+      // println!("perp oracle program: {}", raw.owner);
       let price_data = get_oracle_price(
         &oracle_source,
         &oracle_acct_info,
@@ -185,7 +203,7 @@ async fn drift_perp_markets() -> anyhow::Result<()> {
       oracles.get_mut(&name).unwrap().perp_oracle_price_data = Some(price_data);
       let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
-      println!("{}: {}", name, price);
+      println!("{} ({}): {}", name, perp_index, price);
     }
   }
 
@@ -197,7 +215,7 @@ async fn drift_spot_markets() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
+  let arbiter = Arbiter::new_from_env(0).await?;
 
   struct MarketInfo {
     name: String,
@@ -205,12 +223,13 @@ async fn drift_spot_markets() -> anyhow::Result<()> {
     oracle_source: OracleSource,
     oracle_price_data: Option<OraclePriceData>,
     market_index: u16,
+    mint: Pubkey
   }
 
-  let spot_markets = DriftClient::spot_markets(arbiter.rpc()).await?;
+  let spot_markets = DriftUtils::spot_markets(arbiter.rpc()).await?;
   let mut oracles: Vec<MarketInfo> = vec![];
   for spot_market in spot_markets {
-    let name = DriftClient::decode_name(&spot_market.decoded.name);
+    let name = DriftUtils::decode_name(&spot_market.decoded.name);
     let oracle = spot_market.decoded.oracle;
     let oracle_source = spot_market.decoded.oracle_source;
 
@@ -220,6 +239,7 @@ async fn drift_spot_markets() -> anyhow::Result<()> {
       oracle_source,
       oracle_price_data: None,
       market_index: spot_market.decoded.market_index,
+      mint: spot_market.decoded.mint,
     });
   }
 
@@ -252,7 +272,7 @@ async fn drift_spot_markets() -> anyhow::Result<()> {
       ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
       let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
-      println!("{} ({}): {}", market_info.name, market_info.market_index, price);
+      println!("{} ({}): {}, mint: {}", market_info.name, market_info.market_index, price, market_info.mint);
     }
   }
 
@@ -265,9 +285,9 @@ async fn top_users() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
+  let arbiter = Arbiter::new_from_env(0).await?;
 
-  let users = DriftClient::top_traders_by_pnl(&arbiter.rpc()).await?;
+  let users = DriftUtils::top_traders_by_pnl(arbiter.rpc()).await?;
   println!("users: {}", users.len());
   let stats: Vec<nexus::TraderStub> = users.into_iter().map(|u| {
     nexus::TraderStub {
@@ -288,21 +308,21 @@ async fn historical_pnl() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
+  let arbiter = Arbiter::new_from_env(0).await?;
 
   let prefix = env!("CARGO_MANIFEST_DIR").to_string();
 
   let path = format!("{}/traders.json", prefix);
   let top_traders: Vec<nexus::TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
   // ordered least to greatest profit, so reverse order and take the best performers
-  let top_traders: Vec<nexus::TraderStub> = top_traders.into_iter().rev().take(100).collect();
+  let top_traders: Vec<nexus::TraderStub> = top_traders.into_iter().rev().take(15).collect();
   let users: Vec<Pubkey> = top_traders.into_iter().flat_map(|t| {
     Pubkey::from_str(&t.best_user)
   }).collect();
 
   let mut top_dogs = vec![];
   for user in users {
-    let data = DriftClient::drift_historical_pnl(
+    let data = DriftUtils::drift_historical_pnl(
       &arbiter.nexus(),
       &user,
       100
@@ -335,15 +355,49 @@ async fn historical_pnl() -> anyhow::Result<()> {
   Ok(())
 }
 
-
 #[tokio::test]
-async fn auth() -> anyhow::Result<()> {
+async fn account() -> anyhow::Result<()> {
   init_logger();
   dotenv::dotenv().ok();
 
-  let arbiter = Arbiter::new_from_env().await?;
-  let user = DriftClient::user_pda(&arbiter.signer.pubkey(), 0)?;
-  println!("user: {}", user);
+  let arbiter = Arbiter::new_from_env(0).await?;
+  let key = arbiter.signer.pubkey();
+  let acct = arbiter.rpc().get_account(&key).await?;
+  println!("{:#?}", acct);
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn spot_balance() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+
+  let arbiter = Arbiter::new_from_env(0).await?;
+  let user_key = DriftUtils::user_pda(&arbiter.signer.pubkey(), 0);
+  let user_acct = arbiter.rpc().get_account(&user_key).await?;
+  let user = User::deserialize(&mut &user_acct.data.as_slice()[8..])?;
+
+  let pm_key = DriftUtils::perp_market_pda(SOL_PERP_MARKET_INDEX);
+  let pm_acct = arbiter.rpc().get_account(&pm_key).await?;
+  let pm = PerpMarket::deserialize(&mut &pm_acct.data.as_slice()[8..])?;
+
+  let sm_key = DriftUtils::spot_market_pda(pm.quote_spot_market_index);
+  let sm_acct = arbiter.rpc().get_account(&sm_key).await?;
+  let sm = SpotMarket::deserialize(&mut &sm_acct.data.as_slice()[8..])?;
+
+  let spot_pos = user.spot_positions
+                     .iter()
+                     .find(|p| p.market_index == sm.market_index)
+                     .ok_or(anyhow::anyhow!("User has no position in spot market"))?;
+  let quote_amt = DriftUtils::spot_balance(
+    spot_pos.cumulative_deposits as u128,
+    &sm,
+    &spot_pos.balance_type,
+    false
+  )?.balance;
+  println!("cum deposits: {}", spot_pos.cumulative_deposits);
+  println!("quote amount: {}", quote_amt);
 
   Ok(())
 }

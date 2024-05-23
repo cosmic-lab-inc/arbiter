@@ -1,9 +1,11 @@
 use anchor_lang::prelude::*;
-use borsh::{BorshSerialize, BorshDeserialize};
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use switchboard::{AggregatorAccountData, SwitchboardDecimal};
+
 use crate::OracleSource;
 use crate::utils::casting::Cast;
-use crate::utils::math::{PRICE_PRECISION, PRICE_PRECISION_I64};
+use crate::utils::constants::{PRICE_PRECISION, PRICE_PRECISION_I64};
 use crate::utils::safe_math::SafeMath;
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Debug)]
@@ -27,8 +29,8 @@ pub struct OraclePriceData {
 //   pub last_oracle_price_twap_5min: i64,
 //   pub last_oracle_price_twap_ts: i64,
 // }
-// 
-// 
+//
+//
 // #[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Eq, PartialEq, Debug)]
 // pub struct _HistoricalIndexData {
 //   /// precision: PRICE_PRECISION

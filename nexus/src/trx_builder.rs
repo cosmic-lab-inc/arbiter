@@ -1,458 +1,87 @@
-use std::borrow::Cow;
-use crate::*;
-use crate::drift_cpi::*;
+#![allow(dead_code)]
+
 use std::collections::HashMap;
-use anchor_lang::prelude::{AccountInfo, AccountMeta};
-use solana_sdk::commitment_config::CommitmentConfig;
-use anchor_lang::{InstructionData, ToAccountMetas};
+use std::sync::Arc;
+
+use anchor_lang::solana_program::address_lookup_table::AddressLookupTableAccount;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_client::rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig};
+use solana_rpc_client_api::config::{RpcSendTransactionConfig, RpcTransactionConfig};
+use solana_rpc_client_api::response::{Response, RpcSimulateTransactionResult};
+use solana_sdk::clock::Slot;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::sysvar::SysvarId;
-use solana_sdk::transaction::Transaction;
-use solana_transaction_status::UiTransactionEncoding;
-use solana_sdk::address_lookup_table::AddressLookupTableAccount;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::message::{Message, v0, VersionedMessage};
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signature;
 use solana_sdk::signer::Signer;
-use tokio::sync::RwLock;
+use solana_sdk::signers::Signers;
+use solana_sdk::transaction::VersionedTransaction;
+use solana_transaction_status::{TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding};
+use spl_token::solana_program::native_token::LAMPORTS_PER_SOL;
+use tokio::time::MissedTickBehavior;
 
-pub struct TrxBuilder<'a> {
-  rpc: &'a RpcClient,
-  /// contextual on-chain program data
-  program_data: &'a ProgramData,
-  /// sub-account data
-  account_data: Cow<'a, User>,
-  /// the drift subaccount address
-  sub_account: Pubkey,
-  /// either account authority or account delegate
-  authority: Pubkey,
+use crate::ConfirmTransactionConfig;
+
+/// Error received when confirming a transaction
+#[derive(Debug, thiserror::Error)]
+pub enum TxError {
+  /// The transaction was confirmed with an error
+  #[error("Transaction confirmed in slot `{slot}` with error: {error}.\nLogs: {logs:#?}")]
+  TxError {
+    /// The slot we confirmed the transaction in
+    slot: Slot,
+    /// The error that occurred
+    error: solana_sdk::transaction::TransactionError,
+    /// The transaction logs.
+    logs: Option<Vec<String>>,
+  },
+  /// The transaction was dropped
+  #[error("Transaction was dropped")]
+  Dropped,
+}
+
+/// The result of a transaction
+pub type TransactionResult<T> = Result<T, TxError>;
+
+pub struct TrxBuilder {
+  rpc: Arc<RpcClient>,
   /// ordered list of instructions
   ixs: Vec<Instruction>,
   /// use legacy transaction mode
   legacy: bool,
   /// add additional lookup tables (v0 only)
   lookup_tables: Vec<AddressLookupTableAccount>,
+  pub prior_fee_added: bool
 }
 
-impl<'a> TrxBuilder<'a> {
-  /// Initialize a new [`TrxBuilder`] for default signer
-  ///
-  /// `program_data` program data from chain
-  /// `sub_account` drift sub-account address
-  /// `account_data` drift sub-account data
-  /// `delegated` set true to build tx for delegated signing
-  pub fn new<'b>(
-    rpc: &'b RpcClient,
-    program_data: &'b ProgramData,
-    sub_account_id: u16,
-    account_data: Cow<'b, User>,
-    delegated: bool,
-  ) -> anyhow::Result<Self>
-    where
-      'b: 'a,
-  {
-    let authority = if delegated {
-      account_data.delegate
-    } else {
-      account_data.authority
-    };
-    let sub_account = DriftClient::user_pda(&authority, sub_account_id)?;
-    Ok(Self {
+impl TrxBuilder {
+  pub fn new(rpc: Arc<RpcClient>, legacy: bool, lookup_tables: Vec<AddressLookupTableAccount>) -> Self {
+    Self {
       rpc,
-      authority,
-      program_data,
-      account_data,
-      sub_account,
-      ixs: Default::default(),
-      lookup_tables: vec![program_data.lookup_table.clone()],
-      legacy: false,
-    })
+      ixs: vec![],
+      legacy,
+      lookup_tables,
+      prior_fee_added: false
+    }
+  }
+  
+  pub fn ixs(&self) -> &[Instruction] {
+    &self.ixs
   }
 
-  /// Use legacy tx mode
-  pub fn legacy(mut self) -> Self {
-    self.legacy = true;
+  pub fn with_ixs(mut self, ixs: Vec<Instruction>) -> Self {
+    self.ixs = ixs;
     self
-  }
-
-  /// Set the tx lookup tables
-  pub fn lookup_tables(mut self, lookup_tables: &[AddressLookupTableAccount]) -> Self {
-    self.lookup_tables = lookup_tables.to_vec();
-    self.lookup_tables
-        .push(self.program_data.lookup_table.clone());
-    self
-  }
-
-  pub fn add_ix(&mut self, ixs: Vec<Instruction>) {
-    self.ixs.extend(ixs);
-  }
-
-  /// Build the transaction message ready for signing and sending
-  pub fn build(self) -> VersionedMessage {
-    if self.legacy {
-      let message = Message::new(self.ixs.as_ref(), Some(&self.authority));
-      VersionedMessage::Legacy(message)
-    } else {
-      let message = v0::Message::try_compile(
-        &self.authority,
-        self.ixs.as_slice(),
-        self.lookup_tables.as_slice(),
-        Default::default(),
-      )
-        .expect("ok");
-      VersionedMessage::V0(message)
-    }
-  }
-
-  pub async fn add_spot_market_to_remaining_accounts_map(
-    &self,
-    cache: &RwLock<AccountCache>,
-    market_index: u16,
-    writable: bool,
-    oracle_account_map: &mut HashMap<String, AccountInfo<'static>>,
-    spot_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
-  ) -> anyhow::Result<()> {
-    let spot_market_key = DriftClient::spot_market_pda(market_index);
-    let spot_market = cache.read().await.find_spot_market(&spot_market_key)?.clone();
-    let oracle = cache.read().await.find_spot_oracle(&spot_market.decoded.oracle)?.clone();
-    let spot_market_acct = spot_market.account;
-
-    let acct_info = to_account_info(
-      spot_market_key,
-      false,
-      writable,
-      false,
-      spot_market_acct
-    );
-    spot_market_account_map.insert(spot_market.decoded.market_index, acct_info);
-
-    if spot_market.decoded.oracle != Pubkey::default() {
-      let acct_info = to_account_info(
-        spot_market.decoded.oracle,
-        false,
-        false,
-        false,
-        oracle.account
-      );
-      oracle_account_map.insert(spot_market.decoded.oracle.to_string(), acct_info);
-    }
-
-    Ok(())
-  }
-
-  pub async fn add_perp_market_to_remaining_accounts_map(
-    &self,
-    cache: &RwLock<AccountCache>,
-    market_index: u16,
-    writable: bool,
-    oracle_account_map: &mut HashMap<String, AccountInfo<'static>>,
-    spot_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
-    perp_market_account_map: &mut HashMap<u16, AccountInfo<'static>>
-  ) -> anyhow::Result<()> {
-    let perp_market_key = DriftClient::perp_market_pda(market_index);
-    let perp_market = cache.read().await.find_perp_market(&perp_market_key)?.clone();
-    let oracle = cache.read().await.find_perp_oracle(&perp_market.decoded.amm.oracle)?.clone();
-
-    let acct_info = to_account_info(
-      perp_market_key,
-      false,
-      writable,
-      false,
-      perp_market.account
-    );
-    perp_market_account_map.insert(market_index, acct_info);
-
-    let oracle_writable = matches!(perp_market.decoded.amm.oracle_source, OracleSource::Prelaunch) && writable;
-    let oracle_acct_info = to_account_info(
-      perp_market.decoded.amm.oracle,
-      false,
-      oracle_writable,
-      false,
-      oracle.account
-    );
-    oracle_account_map.insert(perp_market.decoded.amm.oracle.to_string(), oracle_acct_info);
-
-    self.add_spot_market_to_remaining_accounts_map(
-      cache,
-      perp_market.decoded.quote_spot_market_index,
-      false,
-      oracle_account_map,
-      spot_market_account_map
-    ).await?;
-
-    Ok(())
-  }
-
-
-  /// https://github.com/drift-labs/protocol-v2/blob/6808189602a5f255905018f769ca01bc0344a4bc/sdk/src/driftClient.ts#L1689
-  pub async fn remaining_account_maps_for_users(
-    &self,
-    cache: &RwLock<AccountCache>,
-    users: &[User]
-  ) -> anyhow::Result<RemainingAccountMaps> {
-    let mut oracle_account_map: HashMap<String, AccountInfo> = HashMap::new();
-    let mut spot_market_account_map: HashMap<u16, AccountInfo> = HashMap::new();
-    let mut perp_market_account_map: HashMap<u16, AccountInfo> = HashMap::new();
-
-    for user in users.iter() {
-      for spot_position in user.spot_positions {
-        if DriftClient::spot_position_available(&spot_position) {
-          self.add_spot_market_to_remaining_accounts_map(
-            cache,
-            spot_position.market_index,
-            false,
-            &mut oracle_account_map,
-            &mut spot_market_account_map
-          ).await?;
-
-          if spot_position.open_asks != 0 || spot_position.open_bids != 0 {
-            self.add_spot_market_to_remaining_accounts_map(
-              cache,
-              QUOTE_SPOT_MARKET_INDEX,
-              false,
-              &mut oracle_account_map,
-              &mut spot_market_account_map
-            ).await?;
-          }
-        }
-      }
-
-      for perp_position in user.perp_positions {
-        if !DriftClient::perp_position_available(&perp_position) {
-          self.add_perp_market_to_remaining_accounts_map(
-            cache,
-            perp_position.market_index,
-            false,
-            &mut oracle_account_map,
-            &mut spot_market_account_map,
-            &mut perp_market_account_map
-          ).await?;
-        }
-      }
-    }
-
-    Ok(RemainingAccountMaps {
-      oracle_account_map,
-      spot_market_account_map,
-      perp_market_account_map
-    })
-  }
-
-  /// https://github.com/drift-labs/protocol-v2/blob/6808189602a5f255905018f769ca01bc0344a4bc/sdk/src/driftClient.ts#L1519
-  pub async fn remaining_accounts(
-    &self,
-    cache: &RwLock<AccountCache>,
-    params: RemainingAccountParams
-  ) -> anyhow::Result<Vec<AccountInfo<'static>>> {
-    let RemainingAccountMaps {
-      mut oracle_account_map,
-      mut spot_market_account_map,
-      mut perp_market_account_map
-    } = self.remaining_account_maps_for_users(cache, params.user_accounts.as_slice()).await?;
-
-    let user_key = DriftClient::user_pda(&self.authority, 0)?;
-    if params.use_market_last_slot_cache {
-      let read_guard = cache.read().await;
-      let last_user_slot = read_guard.find_user(&user_key)?.slot;
-      for perp_market in read_guard.perp_markets() {
-        // if cache has more recent slot than user positions account slot, add market to remaining accounts
-        // otherwise remove from slot
-        if perp_market.slot > last_user_slot {
-          self.add_perp_market_to_remaining_accounts_map(
-            cache,
-            perp_market.decoded.market_index,
-            false,
-            &mut oracle_account_map,
-            &mut spot_market_account_map,
-            &mut perp_market_account_map
-          ).await?;
-        }
-      }
-
-      for spot_market in read_guard.spot_markets() {
-        // if cache has more recent slot than user positions account slot, add market to remaining accounts
-        // otherwise remove from slot
-        if spot_market.slot > last_user_slot {
-          self.add_spot_market_to_remaining_accounts_map(
-            cache,
-            spot_market.decoded.market_index,
-            false,
-            &mut oracle_account_map,
-            &mut spot_market_account_map
-          ).await?;
-        }
-      }
-    }
-
-    if let Some(readable_perp_market_indexes) = params.readable_perp_market_indexes {
-      for market_index in readable_perp_market_indexes {
-        self.add_perp_market_to_remaining_accounts_map(
-          cache,
-          market_index,
-          false,
-          &mut oracle_account_map,
-          &mut spot_market_account_map,
-          &mut perp_market_account_map
-        ).await?;
-      }
-    }
-    // skipping mustIncludePerpMarketIndexes that typescript client does
-
-    if let Some(readable_spot_market_indexes) = params.readable_spot_market_indexes {
-      for market_index in readable_spot_market_indexes {
-        self.add_spot_market_to_remaining_accounts_map(
-          cache,
-          market_index,
-          false,
-          &mut oracle_account_map,
-          &mut spot_market_account_map
-        ).await?;
-      }
-    }
-    // skipping mustIncludeSpotMarketIndexes that typescript client does
-
-    if let Some(writable_perp_market_indexes) = params.writable_perp_market_indexes {
-      for market_index in writable_perp_market_indexes {
-        self.add_perp_market_to_remaining_accounts_map(
-          cache,
-          market_index,
-          true,
-          &mut oracle_account_map,
-          &mut spot_market_account_map,
-          &mut perp_market_account_map
-        ).await?;
-      }
-    }
-
-    if let Some(writable_spot_market_indexes) = params.writable_spot_market_indexes {
-      for market_index in writable_spot_market_indexes {
-        self.add_spot_market_to_remaining_accounts_map(
-          cache,
-          market_index,
-          true,
-          &mut oracle_account_map,
-          &mut spot_market_account_map
-        ).await?;
-      }
-    }
-
-    let mut metas: Vec<AccountInfo<'static>> = vec![];
-    metas.extend(oracle_account_map.into_values().collect::<Vec<_>>());
-    metas.extend(spot_market_account_map.into_values().collect::<Vec<_>>());
-    metas.extend(perp_market_account_map.into_values().collect::<Vec<_>>());
-
-    Ok(metas)
-  }
-
-  pub async fn initialize_user_stats(&self) -> anyhow::Result<()> {
-    let accounts = accounts::InitializeUserStats {
-      user_stats: DriftClient::user_stats_pda(&self.authority)?,
-      state: DriftClient::state_pda(),
-      authority: self.authority,
-      payer: self.authority,
-      rent: solana_sdk::rent::Rent::id(),
-      system_program: solana_sdk::system_program::id(),
-    };
-
-    let data = instruction::InitializeUserStats;
-
-    let mut ixs = vec![];
-    self.with_priority_fee(&mut ixs, self.get_recent_priority_fee(id(), None).await?, None)?;
-    ixs.push(Instruction {
-      program_id: id(),
-      accounts: accounts.to_account_metas(None),
-      data: data.data()
-    });
-
-    Ok(())
-  }
-
-  pub async fn initialize_user(&mut self, sub_acct_id: u16, name: &str) -> anyhow::Result<()> {
-    let accounts = accounts::InitializeUser {
-      user: DriftClient::user_pda(&self.authority, sub_acct_id)?,
-      user_stats: DriftClient::user_stats_pda(&self.authority)?,
-      state: DriftClient::state_pda(),
-      authority: self.authority,
-      payer: self.authority,
-      rent: solana_sdk::rent::Rent::id(),
-      system_program: solana_sdk::system_program::id(),
-    };
-
-    let data = instruction::InitializeUser {
-      _sub_account_id: sub_acct_id,
-      _name: name.as_bytes().try_into()?
-    };
-
-    let mut ixs = vec![];
-    self.with_priority_fee(&mut ixs, self.get_recent_priority_fee(id(), None).await?, None)?;
-
-    ixs.push(Instruction {
-      program_id: id(),
-      accounts: accounts.to_account_metas(None),
-      data: data.data()
-    });
-    self.ixs.extend(ixs);
-
-    Ok(())
-  }
-
-  /// https://github.com/drift-labs/drift-rs/blob/main/src/lib.rs#L1208
-  pub async fn place_orders(&mut self, params: Vec<OrderParams>) -> anyhow::Result<()> {
-    let state = DriftClient::state_pda();
-    let readable_accounts: Vec<MarketId> = params
-      .iter()
-      .map(|o| (o.market_index, o.market_type).into())
-      .collect();
-
-    let accounts = accounts::PlaceOrders {
-      state,
-      user: self.sub_account,
-      authority: self.authority,
-    };
-
-    let accounts = Self::build_accounts(
-      self.program_data,
-      accounts,
-      &[self.account_data.as_ref()],
-      readable_accounts.as_ref(),
-      &[],
-    );
-
-    // todo: calc available balances for markets
-    let base_asset_amount = 0;
-    let mut order_params: Vec<OrderParams> = vec![];
-    for mut param in params {
-      param.base_asset_amount = base_asset_amount;
-      order_params.push(param);
-    }
-    let data = instruction::PlaceOrders {
-      _params: order_params
-    };
-
-    let program_id = id();
-
-    let mut ixs = vec![];
-
-    let prior_fee = self.get_recent_priority_fee(program_id, None).await?;
-    self.with_priority_fee(&mut ixs, prior_fee, None)?;
-
-    ixs.push(Instruction {
-      program_id,
-      accounts: accounts.to_account_metas(None),
-      data: data.data()
-    });
-    self.ixs.extend(ixs);
-
-    Ok(())
   }
 
   /// Get recent priority fee
   ///
   /// - `window` # of slots to include in the fee calculation
-  async fn get_recent_priority_fee(
+  async fn recent_priority_fee(
     &self,
     key: Pubkey,
     window: Option<usize>,
@@ -461,7 +90,7 @@ impl<'a> TrxBuilder<'a> {
       .rpc
       .get_recent_prioritization_fees(&[key])
       .await?;
-    let window = window.unwrap_or(50);
+    let window = window.unwrap_or(100);
     let fees: Vec<u64> = response
       .iter()
       .take(window)
@@ -473,151 +102,259 @@ impl<'a> TrxBuilder<'a> {
   /// Set the priority fee of the tx
   ///
   /// `microlamports_per_cu` the price per unit of compute in µ-lamports
-  pub fn with_priority_fee(&self, ixs: &mut Vec<Instruction>, microlamports_per_cu: u64, cu_limit: Option<u32>) -> anyhow::Result<()> {
-    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_price(microlamports_per_cu);
-    ixs.insert(0, cu_limit_ix);
+  pub async fn with_priority_fee(&mut self, key: Pubkey, window: Option<usize>, cu_limit: Option<u32>) -> anyhow::Result<()> {
+    let ul_per_cu = self.recent_priority_fee(key, window).await?.max(10_000);
+    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_price(ul_per_cu);
+    self.ixs.insert(0, cu_limit_ix);
     if let Some(cu_limit) = cu_limit {
       let cu_price_ix = ComputeBudgetInstruction::set_compute_unit_limit(cu_limit);
-      ixs.insert(1, cu_price_ix);
+      self.ixs.insert(1, cu_price_ix);
     }
+    Self::log_priority_fee(ul_per_cu, cu_limit);
+    self.prior_fee_added = true;
     Ok(())
   }
 
-  /// Builds a set of required accounts from a user's open positions and additional given accounts
-  ///
-  /// `base_accounts` base anchor accounts
-  ///
-  /// `user` Drift user account data
-  ///
-  /// `markets_readable` IDs of markets to include as readable
-  ///
-  /// `markets_writable` IDs of markets to include as writable (takes priority over readable)
-  ///
-  /// # Panics
-  ///  if the user has positions in an unknown market (i.e unsupported by the SDK)
-  pub fn build_accounts(
-    program_data: &ProgramData,
-    base_accounts: impl ToAccountMetas,
-    users: &[&User],
-    markets_readable: &[MarketId],
-    markets_writable: &[MarketId],
-  ) -> Vec<AccountMeta> {
-    // the order of accounts returned must be instruction, oracles, spot, perps see (https://github.com/drift-labs/protocol-v2/blob/master/programs/drift/src/instructions/optional_accounts.rs#L28)
-    let mut seen = [0_u64; 2]; // [spot, perp]
-    let mut accounts = Vec::<RemainingAccount>::default();
-
-    // add accounts to the ordered list
-    let mut include_market = |market_index: u16, market_type: MarketType, writable: bool| {
-      let index_bit = 1_u64 << market_index as u8;
-      // always safe since market type is 0 or 1
-      let seen_by_type = unsafe { seen.get_unchecked_mut(market_type as usize % 2) };
-      if *seen_by_type & index_bit > 0 {
-        return;
-      }
-      *seen_by_type |= index_bit;
-
-      let (account, oracle) = match market_type {
-        MarketType::Spot => {
-          let SpotMarket { pubkey, oracle, .. } = program_data
-            .spot_market_config_by_index(market_index)
-            .expect("exists");
-          (
-            RemainingAccount::Spot {
-              pubkey: *pubkey,
-              writable,
-            },
-            oracle,
-          )
-        }
-        MarketType::Perp => {
-          let PerpMarket { pubkey, amm, .. } = program_data
-            .perp_market_config_by_index(market_index)
-            .expect("exists");
-          (
-            RemainingAccount::Perp {
-              pubkey: *pubkey,
-              writable,
-            },
-            &amm.oracle,
-          )
-        }
-      };
-      if let Err(idx) = accounts.binary_search(&account) {
-        accounts.insert(idx, account);
-      }
-      let oracle = RemainingAccount::Oracle { pubkey: *oracle };
-      if let Err(idx) = accounts.binary_search(&oracle) {
-        accounts.insert(idx, oracle);
-      }
-    };
-
-    for MarketId { index, kind } in markets_writable {
-      include_market(*index, *kind, true);
-    }
-
-    for MarketId { index, kind } in markets_readable {
-      include_market(*index, *kind, false);
-    }
-
-    for user in users {
-      // Drift program performs margin checks which requires reading user positions
-      for p in user.spot_positions.iter().filter(|p| !DriftClient::spot_position_available(p)) {
-        include_market(p.market_index, MarketType::Spot, false);
-      }
-      for p in user.perp_positions.iter().filter(|p| !DriftClient::perp_position_available(p)) {
-        include_market(p.market_index, MarketType::Perp, false);
-      }
-    }
-    // always manually try to include the quote (USDC) market
-    // TODO: this is not exactly the same semantics as the TS sdk
-    include_market(MarketId::QUOTE_SPOT.index, MarketType::Spot, false);
-
-    let mut account_metas = base_accounts.to_account_metas(None);
-    account_metas.extend(accounts.into_iter().map(Into::into));
-    account_metas
+  pub fn reset_ixs(&mut self) {
+    self.ixs.clear();
   }
 
-  pub async fn simulate<T: Signer + Sized>(&self, payer: &T) -> anyhow::Result<()> {
-    let tx = Transaction::new_signed_with_payer(
-      &self.ixs,
-      Some(&self.authority),
-      &[payer],
-      self.rpc.get_latest_blockhash().await?
-    );
+  /// Use legacy tx mode
+  pub fn legacy(mut self) -> Self {
+    self.legacy = true;
+    self
+  }
 
+  pub fn add_ixs(&mut self, ixs: Vec<Instruction>) {
+    self.ixs.extend(ixs);
+  }
+
+  pub fn log_tx(sig: &Signature) {
+    let url = "https://solana.fm/tx/";
+    log::info!("Signature: {}{}", url, sig)
+  }
+
+  /// Build the transaction message ready for signing and sending
+  pub async fn build<S: Signer + Sized, T: Signers>(&self, payer: &S, signers: &T) -> anyhow::Result<VersionedTransaction> {
+    let bh = self.rpc.get_latest_blockhash().await?;
+    let msg = if self.legacy {
+      VersionedMessage::Legacy(Message::new_with_blockhash(
+        self.ixs.as_ref(),
+        Some(&payer.pubkey()),
+        &bh
+      ))
+    } else {
+      VersionedMessage::V0(v0::Message::try_compile(
+        &payer.pubkey(),
+        self.ixs.as_slice(),
+        self.lookup_tables.as_slice(),
+        bh
+      )?)
+    };
+    let tx = VersionedTransaction::try_new(
+      msg,
+      signers,
+    )?;
+    Ok(tx)
+  }
+
+  pub async fn compute_units<S: Signer + Sized, T: Signers>(&mut self, payer: &S, signers: &T) -> anyhow::Result<u32> {
+    let tx = self.build(payer, signers).await?;
+    let sim = self.rpc.simulate_transaction(&tx).await?;
+    Ok(sim.value.units_consumed.ok_or(anyhow::anyhow!("No compute units found"))? as u32)
+  }
+
+  fn log_priority_fee(ul_per_cu: u64, cu_limit: Option<u32>) {
+    match cu_limit {
+      Some(cu_limit) => {
+        let ul_cost = ul_per_cu * cu_limit as u64;
+        let lamport_cost = ul_cost / 1_000_000;
+        let sol_cost = lamport_cost as f64 / LAMPORTS_PER_SOL as f64;
+        log::debug!("Priority fee: {} SOL", sol_cost);
+      }
+      None => {
+        log::debug!("Priority fee: {} u-lamports per compute unit", ul_per_cu);
+      }
+    }
+  }
+
+  pub async fn simulate<S: Signer + Sized, T: Signers>(
+    &mut self,
+    payer: &S,
+    signers: &T,
+    prior_fee_key: Pubkey
+  ) -> anyhow::Result<Response<RpcSimulateTransactionResult>> {
+    if !self.prior_fee_added {
+      self.with_priority_fee(prior_fee_key, None, None).await?;
+    }
+
+    let tx = self.build(payer, signers).await?;
     let config = RpcSimulateTransactionConfig {
       commitment: Some(CommitmentConfig::processed()),
-      encoding: Some(UiTransactionEncoding::JsonParsed),
+      encoding: Some(UiTransactionEncoding::Base64),
       accounts: Some(RpcSimulateTransactionAccountsConfig {
         encoding: Some(UiAccountEncoding::Base64),
         addresses: vec![]
       }),
       ..Default::default()
     };
-    let res = self.rpc.simulate_transaction_with_config(&tx, config).await?;
-    log::info!("simulation: {:#?}", res.value);
-    Ok(())
+    let sim = self.rpc.simulate_transaction_with_config(&tx, config).await?;
+    log::debug!("Simulated transaction: {:#?}", sim.value);
+    Ok(sim)
   }
 
-  pub async fn send<T: Signer + Sized>(&self, payer: &T) -> anyhow::Result<()> {
-    let tx = Transaction::new_signed_with_payer(
-      &self.ixs,
-      Some(&self.authority),
-      &[payer],
-      self.rpc.get_latest_blockhash().await?
-    );
+  pub async fn send<S: Signer + Sized, T: Signers>(&mut self, payer: &S, signers: &T, prior_fee_key: Pubkey) -> anyhow::Result<Signature> {
+    if !self.prior_fee_added {
+      self.with_priority_fee(prior_fee_key, None, None).await?;
+    }
 
-    let config = RpcSimulateTransactionConfig {
-      commitment: Some(CommitmentConfig::processed()),
-      encoding: Some(UiTransactionEncoding::JsonParsed),
-      accounts: Some(RpcSimulateTransactionAccountsConfig {
-        encoding: Some(UiAccountEncoding::Base64),
-        addresses: vec![]
-      }),
+    let config = RpcSendTransactionConfig {
+      skip_preflight: false,
       ..Default::default()
     };
-    let res = self.rpc.simulate_transaction_with_config(&tx, config).await?;
-    log::info!("simulation: {:#?}", res.value);
-    Ok(())
+
+    const SEND_RETRIES: usize = 1;
+    const GET_STATUS_RETRIES: usize = 10; // 10 * 500 millis = 5 seconds
+    let tx = self.build(payer, signers).await?;
+    'sending: for _ in 0..SEND_RETRIES {
+      let sig = match self.rpc.send_transaction_with_config(&tx, config).await {
+        Ok(sig) => Ok(sig),
+        Err(e) => {
+          log::error!("Failed to send transaction: {:#?}", e);
+          Err(anyhow::anyhow!(e))
+        }
+      }?;
+      Self::log_tx(&sig);
+      let rbh = *tx.get_recent_blockhash();
+      for status_retry in 0..GET_STATUS_RETRIES {
+        match self.rpc.get_signature_status(&sig).await? {
+          Some(Ok(_)) => return Ok(sig),
+          Some(Err(e)) => {
+            log::error!("Failed transaction: {:#?}", e);
+            return Err(e.into())
+          },
+          None => {
+            if !self.rpc
+                    .is_blockhash_valid(&rbh, CommitmentConfig::processed())
+                    .await?
+            {
+              // Block hash is not found by some reason
+              break 'sending;
+            } else if cfg!(not(test))
+              // Ignore sleep at last step.
+              && status_retry < GET_STATUS_RETRIES
+            {
+              // Retry twice a second
+              tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+              continue;
+            }
+          }
+        }
+      }
+    }
+    Err(anyhow::anyhow!("Transaction dropped"))
+  }
+
+  fn confirmation_at_least(
+    control: &TransactionConfirmationStatus,
+    test: &TransactionConfirmationStatus,
+  ) -> bool {
+    matches!(
+        (control, test),
+        (TransactionConfirmationStatus::Processed, _)
+            | (
+                TransactionConfirmationStatus::Confirmed,
+                TransactionConfirmationStatus::Confirmed | TransactionConfirmationStatus::Finalized,
+            )
+            | (
+                TransactionConfirmationStatus::Finalized,
+                TransactionConfirmationStatus::Finalized
+            )
+    )
+  }
+
+  /// Convert a [`TransactionConfirmationStatus`] into a [`CommitmentConfig`]
+  #[must_use]
+  pub fn tc_into_commitment(confirmation: &TransactionConfirmationStatus) -> CommitmentConfig {
+    match confirmation {
+      TransactionConfirmationStatus::Processed => CommitmentConfig::processed(),
+      TransactionConfirmationStatus::Confirmed => CommitmentConfig::confirmed(),
+      TransactionConfirmationStatus::Finalized => CommitmentConfig::finalized(),
+    }
+  }
+
+  async fn confirm(
+    &self,
+    sig_and_block_height: impl IntoIterator<Item=(Signature, u64)> + Send,
+    config: ConfirmTransactionConfig,
+  ) -> anyhow::Result<HashMap<Signature, TransactionResult<Slot>>> {
+    let mut sigs = Vec::new();
+    let mut block_heights = Vec::new();
+    for (sig, block_height) in sig_and_block_height {
+      sigs.push(sig);
+      block_heights.push(block_height);
+    }
+    let mut out = HashMap::new();
+    let mut interval = tokio::time::interval(config.loop_rate);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    while !sigs.is_empty() {
+      interval.tick().await;
+      let block_height = self.rpc
+                             .get_block_height_with_commitment(Self::tc_into_commitment(&config.min_confirmation))
+                             .await?;
+      let statues = self.rpc.get_signature_statuses(&sigs).await?;
+      for (index, status) in statues.value.into_iter().enumerate().rev() {
+        match status {
+          Some(TransactionStatus {
+                 slot,
+                 err,
+                 confirmation_status: Some(confirmation_status),
+                 ..
+               }) if Self::confirmation_at_least(&config.min_confirmation, &confirmation_status) => {
+            let sig = sigs[index];
+            out.insert(
+              sig,
+              match err {
+                None => Ok(slot),
+                Some(error) => {
+                  let tx = self.rpc
+                               .get_transaction_with_config(
+                                 &sig,
+                                 RpcTransactionConfig {
+                                   encoding: None,
+                                   commitment: Some(Self::tc_into_commitment(
+                                     &config.min_confirmation,
+                                   )),
+                                   max_supported_transaction_version: None,
+                                 },
+                               )
+                               .await?;
+                  Err(TxError::TxError {
+                    slot,
+                    error,
+                    logs: tx
+                      .transaction
+                      .meta
+                      .and_then(|meta| meta.log_messages.into()),
+                  })
+                }
+              },
+            );
+            sigs.swap_remove(index);
+            block_heights.swap_remove(index);
+          }
+          _ => {}
+        }
+      }
+
+      for (index, last_block_height) in block_heights.clone().into_iter().enumerate().rev() {
+        if last_block_height < block_height {
+          out.insert(sigs[index], Err(TxError::Dropped));
+          sigs.swap_remove(index);
+          block_heights.swap_remove(index);
+        }
+      }
+    }
+    Ok(out)
   }
 }
