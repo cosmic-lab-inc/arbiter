@@ -1,7 +1,9 @@
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
-use crate::{trunc, DecodedAccountContext};
-use drift_cpi::{User, UserStats, QUOTE_PRECISION};
+
+use drift_cpi::{QUOTE_PRECISION, User, UserStats};
+
+use crate::{DecodedAcctCtx, trunc};
 
 pub struct TokenBalance {
   pub balance: u128,
@@ -10,8 +12,8 @@ pub struct TokenBalance {
 
 pub struct DriftTrader {
   pub authority: Pubkey,
-  pub user_stats: DecodedAccountContext<UserStats>,
-  pub users: Vec<DecodedAccountContext<User>>,
+  pub user_stats: DecodedAcctCtx<UserStats>,
+  pub users: Vec<DecodedAcctCtx<User>>,
 }
 
 impl DriftTrader {
@@ -57,7 +59,7 @@ impl DriftTrader {
         3
     )
   }
-  pub fn best_user(&self) -> &DecodedAccountContext<User> {
+  pub fn best_user(&self) -> &DecodedAcctCtx<User> {
     self.users
         .iter()
         .max_by_key(|u| u.decoded.settled_perp_pnl)

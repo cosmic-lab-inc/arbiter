@@ -21,6 +21,10 @@ impl<T> RingBuffer<T> {
     self.vec.push_front(t);
   }
 
+  pub fn front(&self) -> Option<&T> {
+    self.vec.front()
+  }
+
   pub fn full(&self) -> bool {
     self.vec.len() == self.capacity
   }

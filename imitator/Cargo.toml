@@ -1,5 +1,5 @@
 [package]
-name = "arbiter"
+name = "imitator"
 version = { workspace = true }
 edition = { workspace = true }
 

@@ -16,35 +16,6 @@ pub struct OraclePriceData {
   pub has_sufficient_number_of_data_points: bool,
 }
 
-// #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, Copy)]
-// pub struct _HistoricalOracleData {
-//   /// precision: PRICE_PRECISION
-//   pub last_oracle_price: i64,
-//   /// precision: PRICE_PRECISION
-//   pub last_oracle_conf: u64,
-//   pub last_oracle_delay: i64,
-//   /// precision: PRICE_PRECISION
-//   pub last_oracle_price_twap: i64,
-//   /// precision: PRICE_PRECISION
-//   pub last_oracle_price_twap_5min: i64,
-//   pub last_oracle_price_twap_ts: i64,
-// }
-//
-//
-// #[derive(BorshSerialize, BorshDeserialize, Default, Clone, Copy, Eq, PartialEq, Debug)]
-// pub struct _HistoricalIndexData {
-//   /// precision: PRICE_PRECISION
-//   pub last_index_bid_price: u64,
-//   /// precision: PRICE_PRECISION
-//   pub last_index_ask_price: u64,
-//   /// precision: PRICE_PRECISION
-//   pub last_index_price_twap: u64,
-//   /// precision: PRICE_PRECISION
-//   pub last_index_price_twap_5min: u64,
-//   /// unix_timestamp of last snapshot
-//   pub last_index_price_twap_ts: i64,
-// }
-
 pub fn get_oracle_price(
   oracle_source: &OracleSource,
   price_oracle: &AccountInfo,
@@ -71,9 +42,7 @@ pub fn get_pyth_price(
   clock_slot: u64,
   multiple: u128,
 ) -> anyhow::Result<OraclePriceData> {
-  let pyth_price_data = price_oracle
-    .try_borrow_data()
-    .or(Err(anyhow::anyhow!("Unable to load oracle")))?;
+  let pyth_price_data = price_oracle.try_borrow_data().or(Err(anyhow::anyhow!("Unable to load oracle")))?;
   let price_data = pyth_client::cast::<pyth_client::Price>(&pyth_price_data);
 
   let oracle_price = price_data.agg.price;
@@ -100,21 +69,11 @@ pub fn get_pyth_price(
     oracle_scale_mult = PRICE_PRECISION.safe_div(oracle_precision)?;
   }
 
-  let oracle_price_scaled = oracle_price
-    .cast::<i128>()?
-    .safe_mul(oracle_scale_mult.cast()?)?
-    .safe_div(oracle_scale_div.cast()?)?
-    .cast::<i64>()?;
+  let oracle_price_scaled = oracle_price.cast::<i128>()?.safe_mul(oracle_scale_mult.cast()?)?.safe_div(oracle_scale_div.cast()?)?.cast::<i64>()?;
 
-  let oracle_conf_scaled = oracle_conf
-    .cast::<u128>()?
-    .safe_mul(oracle_scale_mult)?
-    .safe_div(oracle_scale_div)?
-    .cast::<u64>()?;
+  let oracle_conf_scaled = oracle_conf.cast::<u128>()?.safe_mul(oracle_scale_mult)?.safe_div(oracle_scale_div)?.cast::<u64>()?;
 
-  let oracle_delay: i64 = clock_slot
-    .cast::<i64>()?
-    .safe_sub(price_data.valid_slot.cast()?)?;
+  let oracle_delay: i64 = clock_slot.cast::<i64>()?.safe_sub(price_data.valid_slot.cast()?)?;
 
   let has_sufficient_number_of_data_points = publisher_count >= min_publishers;
 
@@ -148,18 +107,12 @@ pub fn get_switchboard_price(
   clock_slot: u64,
 ) -> anyhow::Result<OraclePriceData> {
   let acc = price_oracle.clone();
-  let aggregator_data_loader =
-    AccountLoader::<AggregatorAccountData>::try_from(Box::leak(Box::new(acc))).or(Err(anyhow::anyhow!("Unable to load oracle")))?;
+  let aggregator_data_loader = AccountLoader::<AggregatorAccountData>::try_from(Box::leak(Box::new(acc))).or(Err(anyhow::anyhow!("Unable to load oracle")))?;
 
-  let aggregator_data = aggregator_data_loader
-    .load()
-    .or(Err(anyhow::anyhow!("Unable to load oracle")))?;
+  let aggregator_data = aggregator_data_loader.load().or(Err(anyhow::anyhow!("Unable to load oracle")))?;
 
-  let price = convert_switchboard_decimal(&aggregator_data.latest_confirmed_round.result)?
-    .cast::<i64>()?;
-  let confidence =
-    convert_switchboard_decimal(&aggregator_data.latest_confirmed_round.std_deviation)?
-      .cast::<i64>()?;
+  let price = convert_switchboard_decimal(&aggregator_data.latest_confirmed_round.result)?.cast::<i64>()?;
+  let confidence = convert_switchboard_decimal(&aggregator_data.latest_confirmed_round.std_deviation)?.cast::<i64>()?;
 
   // std deviation should always be positive, if we get a negative make it u128::MAX so it's flagged as bad value
   let confidence = if confidence < 0 {
@@ -170,14 +123,10 @@ pub fn get_switchboard_price(
   };
 
   let delay = clock_slot.cast::<i64>()?.safe_sub(
-    aggregator_data
-      .latest_confirmed_round
-      .round_open_slot
-      .cast()?,
+    aggregator_data.latest_confirmed_round.round_open_slot.cast()?,
   )?;
 
-  let has_sufficient_number_of_data_points =
-    aggregator_data.latest_confirmed_round.num_success >= aggregator_data.min_oracle_results;
+  let has_sufficient_number_of_data_points = aggregator_data.latest_confirmed_round.num_success >= aggregator_data.min_oracle_results;
   Ok(OraclePriceData {
     price,
     confidence,
@@ -185,27 +134,22 @@ pub fn get_switchboard_price(
     has_sufficient_number_of_data_points,
   })
 }
-
-/// Given a decimal number represented as a mantissa (the digits) plus an
-/// original_precision (10.pow(some number of decimals)), scale the
-/// mantissa/digits to make sense with a new_precision.
+ 
 fn convert_switchboard_decimal(switchboard_decimal: &SwitchboardDecimal) -> anyhow::Result<i128> {
+  // Given a decimal number represented as a mantissa (the digits) plus an
+  // original_precision (10.pow(some number of decimals)), scale the
+  // mantissa/digits to make sense with a new_precision. 
   let switchboard_precision = 10_u128.pow(switchboard_decimal.scale);
   if switchboard_precision > PRICE_PRECISION {
-    switchboard_decimal
-      .mantissa
-      .safe_div((switchboard_precision / PRICE_PRECISION) as i128)
+    switchboard_decimal.mantissa.safe_div((switchboard_precision / PRICE_PRECISION) as i128)
   } else {
-    switchboard_decimal
-      .mantissa
-      .safe_mul((PRICE_PRECISION / switchboard_precision) as i128)
+    switchboard_decimal.mantissa.safe_mul((PRICE_PRECISION / switchboard_precision) as i128)
   }
 }
 
 pub fn get_prelaunch_price(price_oracle: &AccountInfo, slot: u64) -> anyhow::Result<OraclePriceData> {
   let acc = price_oracle.clone();
-  let oracle_account_loader: AccountLoader<_PrelaunchOracle> =
-    AccountLoader::try_from(Box::leak(Box::new(acc)))?;
+  let oracle_account_loader: AccountLoader<_PrelaunchOracle> = AccountLoader::try_from(Box::leak(Box::new(acc)))?;
   let oracle = oracle_account_loader.load().map_err(|_| anyhow::Error::msg("Unable to load oracle"))?;
 
   Ok(OraclePriceData {

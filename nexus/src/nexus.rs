@@ -10,12 +10,11 @@ use solana_client::rpc_config::RpcTransactionConfig;
 use solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature;
 use solana_rpc_client_api::config::RpcAccountInfoConfig;
 use solana_rpc_client_api::response::{Response, SlotInfo};
-use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 
-use crate::{AccountContext, Chunk, TrxData};
+use crate::{AcctCtx, Chunk, TrxData};
 use crate::drift_cpi::Decode;
 use crate::types::*;
 use crate::websocket::*;
@@ -183,7 +182,7 @@ impl Nexus {
   pub async fn accounts(
     rpc: &RpcClient,
     keys: &[Pubkey],
-  ) -> anyhow::Result<Vec<AccountContext<Account>>> {
+  ) -> anyhow::Result<Vec<AcctCtx>> {
     // get_multiple_accounts max Pubkeys is 100
     let chunk_size = 100;
 
@@ -195,13 +194,13 @@ impl Nexus {
         .into_iter()
         .enumerate()
         .filter_map(|(index, acc)| {
-          acc.map(|acc| AccountContext {
+          acc.map(|acc| AcctCtx {
             key: keys[index],
             account: acc,
             slot
           })
         })
-        .collect::<Vec<AccountContext<Account>>>();
+        .collect::<Vec<AcctCtx>>();
       Ok(infos)
     } else {
       let chunks = keys.chunks(chunk_size).collect::<Vec<&[Pubkey]>>();
@@ -216,7 +215,7 @@ impl Nexus {
             .into_iter()
             .enumerate()
             .flat_map(move |(index, acc)| {
-              acc.map(|account| AccountContext {
+              acc.map(|account| AcctCtx {
                 key: chunk[index],
                 account,
                 slot
@@ -228,7 +227,7 @@ impl Nexus {
         .await?
         .into_iter()
         .flatten()
-        .collect::<Vec<AccountContext<Account>>>();
+        .collect::<Vec<AcctCtx>>();
 
       Ok(infos)
     }
