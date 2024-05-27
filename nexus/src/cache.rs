@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use anchor_lang::AccountDeserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_rpc_client_api::config::RpcBlockConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{AcctCtx, DecodedAcctCtx, RingMap};
+use crate::{AcctCtx, BlockInfo, DecodedAcctCtx, RingMap, Time};
 use crate::{DriftUtils, PerpOracle, SpotOracle};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -15,9 +16,11 @@ pub enum CacheKeyRegistry {
 }
 
 pub struct Cache {
-  /// How many iterations back to keep in the cache
-  pub depth: usize,
+  /// How many versions back to keep in the cache
   pub slot: u64,
+  pub depth: usize,
+  /// Key is slot
+  pub blocks: RingMap<u64, BlockInfo>,
   pub accounts: HashMap<Pubkey, RingMap<u64, AcctCtx>>,
   pub key_registry: HashMap<CacheKeyRegistry, Vec<Pubkey>>,
 }
@@ -26,24 +29,77 @@ impl Cache {
   pub fn new(depth: usize) -> Self {
     Self {
       slot: 0,
+      blocks: RingMap::new(depth),
       depth,
       accounts: HashMap::new(),
       key_registry: HashMap::new(),
     }
   }
 
-  pub fn slot(&self) -> u64 {
-    self.slot
+  pub fn block(&self, slot: Option<u64>) -> anyhow::Result<&BlockInfo> {
+    Ok(match slot {
+      Some(slot) => {
+        self.blocks.get(&slot).ok_or(anyhow::anyhow!("Block not found for slot {}", slot))?
+      }
+      None => {
+        self.blocks.newest().ok_or(anyhow::anyhow!("Block not found"))?.1
+      }
+    })
   }
 
-  pub fn account(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<&AcctCtx> {
+  async fn take_closest_slot_for_account(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<&AcctCtx> {
     let ring = self.accounts.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))?;
     Ok(match slot {
       Some(slot) => {
-        ring.get(&slot).ok_or(anyhow::anyhow!("Slot not found for key: {}", key))?
+        match ring.get(&slot) {
+          Some(acct) => acct,
+          None => {
+            log::debug!("Slot {} not found for account {}, use most recent update", slot, key);
+            let recent_updates = ring.values().filter(|a| a.slot <= slot).collect::<Vec<&AcctCtx>>();
+            recent_updates.last().ok_or(anyhow::anyhow!("Failed to get any slot <= {} for key: {}", slot, key))?
+          }
+        }
       }
-      None => ring.front().ok_or(anyhow::anyhow!("Slot not found for key: {}", key))?.1
+      None => ring.newest().ok_or(anyhow::anyhow!("Slot not found for key: {}", key))?.1
     })
+  }
+
+  #[allow(dead_code)]
+  async fn wait_for_account(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<&AcctCtx> {
+    Ok(match slot {
+      Some(slot) => {
+        match self.accounts.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))?.get(&slot) {
+          Some(acct) => acct,
+          None => {
+            let mut not_found = true;
+            let timeout = std::time::Duration::from_secs(5);
+            let start = std::time::Instant::now();
+            let mut acct: Option<&AcctCtx> = None;
+            while not_found && start.elapsed() < timeout {
+              let ring = self.accounts.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))?;
+              tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+              if let Some(a) = ring.get(&slot) {
+                acct = Some(a);
+                not_found = false;
+              }
+            }
+            match acct {
+              None => {
+                log::error!("After waiting slot {} still not found for key: {}", slot, key);
+                Err(anyhow::anyhow!("After waiting slot {} still not found for key: {}", slot, key))?
+              }
+              Some(acct) => acct
+            }
+            // acct.ok_or(anyhow::anyhow!("After waiting slot {} still not found for key: {}", slot, key))?
+          }
+        }
+      }
+      None => self.accounts.get(key).ok_or(anyhow::anyhow!("Program not found for key: {}", key))?.newest().ok_or(anyhow::anyhow!("Slot not found for key: {}", key))?.1
+    })
+  }
+
+  pub async fn account(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<&AcctCtx> {
+    self.take_closest_slot_for_account(key, slot).await
   }
 
   pub fn accounts(&self, slot: Option<u64>) -> anyhow::Result<Vec<&AcctCtx>> {
@@ -54,14 +110,14 @@ impl Cache {
       }
       None => {
         accts.iter().flat_map(|r| {
-          r.front().map(|res| res.1)
+          r.newest().map(|res| res.1)
         }).collect()
       }
     })
   }
 
-  pub fn decoded_account<T: AccountDeserialize + Clone>(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<DecodedAcctCtx<T>> {
-    let acct = self.account(key, slot)?;
+  pub async fn decoded_account<T: AccountDeserialize + Clone>(&self, key: &Pubkey, slot: Option<u64>) -> anyhow::Result<DecodedAcctCtx<T>> {
+    let acct = self.account(key, slot).await?;
     let decoded = T::try_deserialize(&mut acct.account.data.as_slice())?;
     Ok(DecodedAcctCtx {
       key: acct.key,
@@ -116,13 +172,30 @@ impl Cache {
     accounts: &[Pubkey],
     auths: &[Pubkey],
   ) -> anyhow::Result<()> {
+    let now = std::time::Instant::now();
     self.load_perp_markets(rpc).await?;
+    log::debug!("load perp markets in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_spot_markets(rpc).await?;
+    log::debug!("load spot markets in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_users(rpc, users).await?;
+    log::debug!("load users in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_user_stats(rpc, auths).await?;
+    log::debug!("load user stats in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_oracles(rpc).await?;
+    log::debug!("load oracles in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_accounts(rpc, accounts).await?;
+    log::debug!("load accounts in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
+    self.load_block(rpc).await?;
+    log::debug!("load block in {:?}", now.elapsed());
+    let now = std::time::Instant::now();
     self.load_slot(rpc).await?;
+    log::debug!("load slot in {:?}", now.elapsed());
     Ok(())
   }
 
@@ -151,13 +224,14 @@ impl Cache {
   }
 
   pub async fn load_users(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
-    let mut accts = DriftUtils::users(rpc).await?;
-    accts.retain(|a| filter.contains(&a.key));
-    for acct in accts {
-      self.ring_mut(acct.key).insert(acct.slot, AcctCtx {
-        key: acct.key,
-        account: acct.account,
-        slot: 0,
+    let res = rpc.get_multiple_accounts_with_commitment(filter, CommitmentConfig::processed()).await?;
+    for (i, account) in res.value.into_iter().enumerate() {
+      let key = filter[i];
+      let account = account.ok_or(anyhow::anyhow!("Account not found for key: {}", key))?;
+      self.ring_mut(key).insert(res.context.slot, AcctCtx {
+        key,
+        account,
+        slot: res.context.slot,
       });
     }
     Ok(())
@@ -271,8 +345,28 @@ impl Cache {
     Ok(())
   }
 
+  pub async fn load_block(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
+    let slot = rpc.get_slot_with_commitment(CommitmentConfig::finalized()).await?;
+    let config = RpcBlockConfig {
+      encoding: Some(solana_transaction_status::UiTransactionEncoding::JsonParsed),
+      transaction_details: Some(solana_transaction_status::TransactionDetails::None),
+      rewards: Some(false),
+      commitment: Some(CommitmentConfig::confirmed()),
+      max_supported_transaction_version: Some(1),
+    };
+    let block = rpc.get_block_with_config(slot, config).await?;
+    if let Some(timestamp) = block.block_time {
+      self.blocks.insert(slot, BlockInfo {
+        slot,
+        blockhash: block.blockhash,
+        time: Time::from_unix(timestamp),
+      });
+    }
+    Ok(())
+  }
+
   pub async fn load_slot(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
-    let slot = rpc.get_slot().await?;
+    let slot = rpc.get_slot_with_commitment(CommitmentConfig::finalized()).await?;
     self.slot = slot;
     Ok(())
   }

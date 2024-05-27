@@ -47,8 +47,8 @@ impl<K, V> RingMap<K, V>
     self.map.is_empty()
   }
 
-  pub fn front(&self) -> Option<(&K, &V)> {
-    self.map.first()
+  pub fn newest(&self) -> Option<(&K, &V)> {
+    self.map.last()
   }
 
   pub fn values(&self) -> impl Iterator<Item=&V> {

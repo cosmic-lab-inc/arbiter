@@ -55,7 +55,7 @@ pub struct TrxBuilder {
   legacy: bool,
   /// add additional lookup tables (v0 only)
   lookup_tables: Vec<AddressLookupTableAccount>,
-  pub prior_fee_added: bool
+  pub prior_fee_added: bool,
 }
 
 impl TrxBuilder {
@@ -65,10 +65,10 @@ impl TrxBuilder {
       ixs: vec![],
       legacy,
       lookup_tables,
-      prior_fee_added: false
+      prior_fee_added: false,
     }
   }
-  
+
   pub fn ixs(&self) -> &[Instruction] {
     &self.ixs
   }
@@ -78,24 +78,29 @@ impl TrxBuilder {
     self
   }
 
-  /// Get recent priority fee
-  ///
-  /// - `window` # of slots to include in the fee calculation
+  pub fn is_empty(&self) -> bool {
+    if self.ixs().is_empty() {
+      true
+    } else {
+      // only empty if there are instructions besides compute budget program
+      let mut is_empty = true;
+      for ix in self.ixs().iter() {
+        if ix.program_id != solana_sdk::compute_budget::id() {
+          is_empty = false;
+        }
+      }
+      is_empty
+    }
+  }
+
   async fn recent_priority_fee(
     &self,
     key: Pubkey,
     window: Option<usize>,
   ) -> anyhow::Result<u64> {
-    let response = self
-      .rpc
-      .get_recent_prioritization_fees(&[key])
-      .await?;
+    let response = self.rpc.get_recent_prioritization_fees(&[key]).await?;
     let window = window.unwrap_or(100);
-    let fees: Vec<u64> = response
-      .iter()
-      .take(window)
-      .map(|x| x.prioritization_fee)
-      .collect();
+    let fees: Vec<u64> = response.iter().take(window).map(|x| x.prioritization_fee).collect();
     Ok(fees.iter().sum::<u64>() / fees.len() as u64)
   }
 
@@ -141,14 +146,14 @@ impl TrxBuilder {
       VersionedMessage::Legacy(Message::new_with_blockhash(
         self.ixs.as_ref(),
         Some(&payer.pubkey()),
-        &bh
+        &bh,
       ))
     } else {
       VersionedMessage::V0(v0::Message::try_compile(
         &payer.pubkey(),
         self.ixs.as_slice(),
         self.lookup_tables.as_slice(),
-        bh
+        bh,
       )?)
     };
     let tx = VersionedTransaction::try_new(
@@ -182,7 +187,7 @@ impl TrxBuilder {
     &mut self,
     payer: &S,
     signers: &T,
-    prior_fee_key: Pubkey
+    prior_fee_key: Pubkey,
   ) -> anyhow::Result<Response<RpcSimulateTransactionResult>> {
     if !self.prior_fee_added {
       self.with_priority_fee(prior_fee_key, None, None).await?;
@@ -194,7 +199,7 @@ impl TrxBuilder {
       encoding: Some(UiTransactionEncoding::Base64),
       accounts: Some(RpcSimulateTransactionAccountsConfig {
         encoding: Some(UiAccountEncoding::Base64),
-        addresses: vec![]
+        addresses: vec![],
       }),
       ..Default::default()
     };
@@ -226,23 +231,20 @@ impl TrxBuilder {
       }?;
       Self::log_tx(&sig);
       let rbh = *tx.get_recent_blockhash();
-      for status_retry in 0..GET_STATUS_RETRIES {
+      for _status_retry in 0..GET_STATUS_RETRIES {
         match self.rpc.get_signature_status(&sig).await? {
           Some(Ok(_)) => return Ok(sig),
           Some(Err(e)) => {
             log::error!("Failed transaction: {:#?}", e);
-            return Err(e.into())
-          },
+            return Err(e.into());
+          }
           None => {
-            if !self.rpc
-                    .is_blockhash_valid(&rbh, CommitmentConfig::processed())
-                    .await?
+            if !self.rpc.is_blockhash_valid(&rbh, CommitmentConfig::processed()).await?
             {
               // Block hash is not found by some reason
               break 'sending;
             } else if cfg!(not(test))
-              // Ignore sleep at last step.
-              && status_retry < GET_STATUS_RETRIES
+            // Ignore sleep at last step. && status_retry < GET_STATUS_RETRIES
             {
               // Retry twice a second
               tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -299,9 +301,7 @@ impl TrxBuilder {
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     while !sigs.is_empty() {
       interval.tick().await;
-      let block_height = self.rpc
-                             .get_block_height_with_commitment(Self::tc_into_commitment(&config.min_confirmation))
-                             .await?;
+      let block_height = self.rpc.get_block_height_with_commitment(Self::tc_into_commitment(&config.min_confirmation)).await?;
       let statues = self.rpc.get_signature_statuses(&sigs).await?;
       for (index, status) in statues.value.into_iter().enumerate().rev() {
         match status {
@@ -317,25 +317,20 @@ impl TrxBuilder {
               match err {
                 None => Ok(slot),
                 Some(error) => {
-                  let tx = self.rpc
-                               .get_transaction_with_config(
-                                 &sig,
-                                 RpcTransactionConfig {
-                                   encoding: None,
-                                   commitment: Some(Self::tc_into_commitment(
-                                     &config.min_confirmation,
-                                   )),
-                                   max_supported_transaction_version: None,
-                                 },
-                               )
-                               .await?;
+                  let tx = self.rpc.get_transaction_with_config(
+                    &sig,
+                    RpcTransactionConfig {
+                      encoding: None,
+                      commitment: Some(Self::tc_into_commitment(
+                        &config.min_confirmation,
+                      )),
+                      max_supported_transaction_version: None,
+                    },
+                  ).await?;
                   Err(TxError::TxError {
                     slot,
                     error,
-                    logs: tx
-                      .transaction
-                      .meta
-                      .and_then(|meta| meta.log_messages.into()),
+                    logs: tx.transaction.meta.and_then(|meta| meta.log_messages.into()),
                   })
                 }
               },

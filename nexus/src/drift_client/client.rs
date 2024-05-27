@@ -8,6 +8,7 @@ use anchor_lang::{AccountDeserialize, Discriminator, InstructionData, ToAccountM
 use borsh::BorshDeserialize;
 use log::{debug, info};
 use rayon::prelude::*;
+use reqwest::Client;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
@@ -18,7 +19,6 @@ use solana_sdk::account::Account;
 use solana_sdk::account_info::AccountInfo;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
@@ -28,7 +28,6 @@ use tokio::sync::{RwLock, RwLockReadGuard};
 use crate::{DecodedAcctCtx, Time, trunc};
 use crate::*;
 use crate::drift_client::trader::*;
-use crate::drift_cpi::*;
 
 pub struct DriftClient {
   /// either User account authority or delegate
@@ -50,7 +49,7 @@ impl DriftClient {
   ) -> anyhow::Result<Self> {
     let (spot_markets, perp_markets) = DriftUtils::market_accounts(&rpc).await?;
     let lut = rpc.get_account(&MARKET_LOOKUP_TABLE).await?;
-    let lookup_table = crate::utils::deserialize_lookup_table(MARKET_LOOKUP_TABLE, &lut)?;
+    let lookup_table = deserialize_lookup_table(MARKET_LOOKUP_TABLE, &lut)?;
     let program_data = ProgramData::new(
       spot_markets,
       perp_markets,
@@ -87,8 +86,8 @@ impl DriftClient {
     spot_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
   ) -> anyhow::Result<()> {
     let spot_market_key = DriftUtils::spot_market_pda(market_index);
-    let spot_market = cache.decoded_account::<SpotMarket>(&spot_market_key, None)?;
-    let oracle = cache.account(&spot_market.decoded.oracle, None)?.clone();
+    let spot_market = cache.decoded_account::<SpotMarket>(&spot_market_key, None).await?;
+    let oracle = cache.account(&spot_market.decoded.oracle, None).await?.clone();
     let spot_market_acct = spot_market.account;
 
     let acct_info = spot_market_acct.to_account_info(
@@ -122,8 +121,8 @@ impl DriftClient {
     perp_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
   ) -> anyhow::Result<()> {
     let perp_market_key = DriftUtils::perp_market_pda(market_index);
-    let perp_market = cache.decoded_account::<PerpMarket>(&perp_market_key, None)?;
-    let oracle = cache.account(&perp_market.decoded.amm.oracle, None)?.clone();
+    let perp_market = cache.decoded_account::<PerpMarket>(&perp_market_key, None).await?;
+    let oracle = cache.account(&perp_market.decoded.amm.oracle, None).await?.clone();
 
     let acct_info = perp_market.account.to_account_info(
       perp_market_key,
@@ -222,7 +221,7 @@ impl DriftClient {
 
     let user_key = DriftUtils::user_pda(&self.signer.pubkey(), 0);
     if params.use_market_last_slot_cache {
-      let last_user_slot = cache.account(&user_key, None)?.slot;
+      let last_user_slot = cache.account(&user_key, None).await?.slot;
       for perp_market in cache.registry_accounts::<PerpMarket>(&CacheKeyRegistry::PerpMarkets, None)? {
         // if cache has more recent slot than user positions account slot, add market to remaining accounts
         // otherwise remove from slot
@@ -349,10 +348,6 @@ impl DriftClient {
     let usdc_amount = usdc_ta_acct.token_amount.amount.parse::<u64>()?;
     info!("USDC token amount: {}", usdc_amount as f64 / QUOTE_PRECISION as f64);
 
-    let lamports = self.rpc.get_balance(&self.signer.pubkey()).await?;
-    let sol_amount = lamports as f64 / LAMPORTS_PER_SOL as f64;
-    info!("SOL token amount: {}", sol_amount);
-
     let user_acct = self.rpc.get_account_with_commitment(&self.sub_account, CommitmentConfig::confirmed()).await?.value;
     if user_acct.is_none() {
       let mut create_user_trx = TrxBuilder::new(
@@ -383,6 +378,10 @@ impl DriftClient {
     }
     Ok(())
   }
+
+  // ======================================================================
+  // Instructions
+  // ======================================================================
 
   pub async fn initialize_user_stats_ix(&self, trx: &mut TrxBuilder) -> anyhow::Result<()> {
     let accounts = accounts::InitializeUserStats {
@@ -474,16 +473,14 @@ impl DriftClient {
   /// https://github.com/drift-labs/drift-rs/blob/main/src/lib.rs#L1208
   pub async fn copy_place_orders_ix(
     &self,
+    tx_slot: u64,
     cache: &RwLock<Cache>,
-    copy_user: &Pubkey,
     params: Vec<OrderParams>,
     market_filter: Option<&[MarketId]>,
     trx: &mut TrxBuilder,
   ) -> anyhow::Result<()> {
     let cache = cache.read().await;
-    let user = cache.decoded_account::<User>(&self.sub_account, None)?.decoded;
-    // todo
-    let _copy_user = cache.decoded_account::<User>(copy_user, None)?.decoded;
+    let user = cache.decoded_account::<User>(&self.sub_account, None).await?.decoded;
 
     let state = DriftUtils::state_pda();
     let readable_accounts: Vec<MarketId> = params.iter().map(|o| (o.market_index, o.market_type).into()).collect();
@@ -519,31 +516,42 @@ impl DriftClient {
 
     for v in orders_by_market.values_mut() {
       let total = v.iter().map(|o| o.base_asset_amount).sum::<u64>();
-      debug!("total: {}, across {} orders", trunc!(total as f64 / BASE_PRECISION as f64, 2), v.len());
+      info!("total: {}, across {} orders", trunc!(total as f64 / BASE_PRECISION as f64, 2), v.len());
 
       // there might be a bracket of multiple orders for the same market mint
       // to copy a trade accurately we must replicate the ratio of balances in each order
       // but relative to our available assets
       for o in v {
+        // todo: remove after debug
+        let market_id = MarketId::from((o.market_index, o.market_type));
+        let oracle_price_name = self.oracle_price(
+          market_id,
+          &cache,
+          tx_slot,
+          o.oracle_price_offset,
+        ).await?;
+        DriftUtils::log_order(o, &oracle_price_name);
+
         let ratio = o.base_asset_amount as f64 / total as f64;
         let (sm, price) = match o.market_type {
           MarketType::Perp => {
-            let pm = cache.decoded_account::<PerpMarket>(&DriftUtils::perp_market_pda(o.market_index), None)?.decoded;
-            let sm = cache.decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(pm.quote_spot_market_index), None)?;
-            let price = self.perp_market_price(&cache, pm.market_index)?;
+            let pm = cache.decoded_account::<PerpMarket>(&DriftUtils::perp_market_pda(o.market_index), None).await?.decoded;
+            let sm = cache.decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(pm.quote_spot_market_index), None).await?;
+            let price = self.perp_market_price(&cache, pm.market_index).await?;
             (sm, price)
           }
           MarketType::Spot => {
-            let sm = cache.decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(o.market_index), None)?;
-            let price = self.spot_market_price(&cache, sm.decoded.market_index)?;
+            let sm = cache.decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(o.market_index), None).await?;
+            let price = self.spot_market_price(&cache, sm.decoded.market_index).await?;
             (sm, price)
           }
         };
         let spot_pos = user.spot_positions.iter().find(|p| p.market_index == sm.decoded.market_index).ok_or(anyhow::anyhow!("User has no position in spot market {}", sm.key))?;
         let quote_balance = spot_pos.cumulative_deposits as f64 / QUOTE_PRECISION as f64;
         let scaled_quote_balance = quote_balance * ratio;
-        info!("quote amt: {}", trunc!(scaled_quote_balance, 2));
         let scaled_base_amount = scaled_quote_balance / price.price;
+        let original_base_amount = trunc!(o.base_asset_amount as f64 / BASE_PRECISION as f64, 2);
+        info!("copy base: {}, ratio: {}, new base: {}", original_base_amount, trunc!(ratio, 2), trunc!(scaled_base_amount, 2));
         let base_amount = (scaled_base_amount * BASE_PRECISION as f64).round() as u64;
         o.base_asset_amount = base_amount;
       }
@@ -563,17 +571,80 @@ impl DriftClient {
     Ok(())
   }
 
-  pub fn perp_market_price(
+  pub async fn cancel_orders_ix(
+    &self,
+    cache: &RwLock<Cache>,
+    market_filter: Option<&[MarketId]>,
+    market: Option<MarketId>,
+    direction: Option<PositionDirection>,
+    trx: &mut TrxBuilder,
+  ) -> anyhow::Result<()> {
+    if let (Some(filter), Some(market)) = (market_filter, market) {
+      if !filter.contains(&market) {
+        return Ok(());
+      }
+    }
+
+    let cache = cache.read().await;
+    let user = cache.decoded_account::<User>(&self.sub_account, None).await?.decoded;
+
+    let accounts = accounts::CancelOrder {
+      state: DriftUtils::state_pda(),
+      user: self.sub_account,
+      authority: self.signer.pubkey(),
+    };
+    let markets_readable = match market {
+      Some(market) => vec![market],
+      None => vec![]
+    };
+    let accounts = self.build_accounts(
+      accounts,
+      &[&user],
+      markets_readable.as_slice(),
+      &[],
+    );
+
+    let ix = match market {
+      Some(market) => {
+        instruction::CancelOrders {
+          _market_index: Some(market.index),
+          _market_type: Some(market.kind),
+          _direction: direction,
+        }
+      }
+      None => {
+        instruction::CancelOrders {
+          _market_index: None,
+          _market_type: None,
+          _direction: None,
+        }
+      }
+    };
+
+    trx.add_ixs(vec![Instruction {
+      program_id: id(),
+      accounts: accounts.clone(),
+      data: ix.data(),
+    }]);
+
+    Ok(())
+  }
+
+  // ======================================================================
+  // Utilities
+  // ======================================================================
+
+  pub async fn perp_market_price(
     &self,
     cache: &RwLockReadGuard<'_, Cache>,
     perp_market_index: u16,
   ) -> anyhow::Result<OraclePrice> {
     // let cache = cache.read().await;
     let pm_key = DriftUtils::perp_market_pda(perp_market_index);
-    let pm = cache.decoded_account::<PerpMarket>(&pm_key, None)?.decoded;
+    let pm = cache.decoded_account::<PerpMarket>(&pm_key, None).await?.decoded;
     let oracle_key = pm.amm.oracle;
     let oracle_source = pm.amm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
+    let oracle_acct = cache.account(&oracle_key, None).await?.account.clone();
 
     let oracle_acct_info = oracle_acct.to_account_info(
       oracle_key,
@@ -585,7 +656,7 @@ impl DriftClient {
     let price_data = get_oracle_price(
       &oracle_source,
       &oracle_acct_info,
-      cache.slot(),
+      cache.block(None)?.slot,
     ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
@@ -595,16 +666,16 @@ impl DriftClient {
     })
   }
 
-  pub fn spot_market_price(
+  pub async fn spot_market_price(
     &self,
     cache: &RwLockReadGuard<'_, Cache>,
     spot_market_index: u16,
   ) -> anyhow::Result<OraclePrice> {
     let sm_key = DriftUtils::spot_market_pda(spot_market_index);
-    let sm = cache.decoded_account::<SpotMarket>(&sm_key, None)?.decoded;
+    let sm = cache.decoded_account::<SpotMarket>(&sm_key, None).await?.decoded;
     let oracle_key = sm.oracle;
     let oracle_source = sm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
+    let oracle_acct = cache.account(&oracle_key, None).await?.account.clone();
     let oracle_acct_info = oracle_acct.to_account_info(
       oracle_key,
       false,
@@ -615,7 +686,7 @@ impl DriftClient {
     let price_data = get_oracle_price(
       &oracle_source,
       &oracle_acct_info,
-      cache.slot(),
+      cache.block(None)?.slot,
     ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
@@ -714,6 +785,51 @@ impl DriftClient {
     let mut account_metas = base_accounts.to_account_metas(None);
     account_metas.extend(accounts.into_iter().map(Into::into));
     account_metas
+  }
+
+  pub async fn oracle_price(
+    &self,
+    market: MarketId,
+    cache: &RwLockReadGuard<'_, Cache>,
+    slot: u64,
+    oracle_offset: Option<i32>,
+  ) -> anyhow::Result<OraclePrice> {
+    let offset = match oracle_offset {
+      None => 0.0,
+      Some(offset) => offset as f64 / PRICE_PRECISION as f64
+    };
+    let (price, name) = match market.kind {
+      MarketType::Spot => {
+        let market_key = DriftUtils::spot_market_pda(market.index);
+        let market_ctx = cache.decoded_account::<SpotMarket>(&market_key, Some(slot)).await?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.oracle, Some(slot)).await?;
+        let price = DriftUtils::oracle_price(
+          &market_ctx.decoded.oracle_source,
+          market_ctx.decoded.oracle,
+          &oracle_ctx.account,
+          oracle_ctx.slot,
+        )?;
+        let name = DriftUtils::decode_name(&market_ctx.decoded.name);
+        (price, name)
+      }
+      MarketType::Perp => {
+        let market_key = DriftUtils::perp_market_pda(market.index);
+        let market_ctx = cache.decoded_account::<PerpMarket>(&market_key, Some(slot)).await?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, Some(slot)).await?;
+        let price = DriftUtils::oracle_price(
+          &market_ctx.decoded.amm.oracle_source,
+          market_ctx.decoded.amm.oracle,
+          &oracle_ctx.account,
+          oracle_ctx.slot,
+        )?;
+        let name = DriftUtils::decode_name(&market_ctx.decoded.name);
+        (price, name)
+      }
+    };
+    Ok(OraclePrice {
+      price: price + offset,
+      name,
+    })
   }
 }
 
@@ -843,6 +959,40 @@ impl DriftUtils {
     Ok(markets)
   }
 
+  // pub async fn users(rpc: &RpcClient) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
+  //   let discrim = User::discriminator();
+  //   let memcmp = Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice());
+  //   let filters = vec![RpcFilterType::Memcmp(memcmp)];
+  //   let account_config = RpcAccountInfoConfig {
+  //     encoding: Some(UiAccountEncoding::Base64),
+  //     commitment: Some(CommitmentConfig::confirmed()),
+  //     ..Default::default()
+  //   };
+  //   let config = RpcProgramAccountsConfig {
+  //     filters: Some(filters),
+  //     account_config,
+  //     with_context: Some(true),
+  //   };
+  //
+  //   let slot = rpc.get_slot_with_commitment(CommitmentConfig::confirmed()).await?;
+  //   let now = std::time::Instant::now();
+  //   let accounts = rpc.get_program_accounts_with_config(&id(), config).await?;
+  //   info!("get users in {:?}", now.elapsed());
+  //   let now = std::time::Instant::now();
+  //   let mut users = vec![];
+  //   for (key, account) in accounts {
+  //     let decoded = account.decode_account::<User>()?;
+  //     users.push(DecodedAcctCtx {
+  //       key,
+  //       account,
+  //       slot,
+  //       decoded,
+  //     });
+  //   }
+  //   info!("decode users in {:?}", now.elapsed());
+  //   Ok(users)
+  // }
+
   pub async fn users(rpc: &RpcClient) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
     let discrim = User::discriminator();
     let memcmp = Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice());
@@ -866,12 +1016,11 @@ impl DriftUtils {
     if let OptionalContext::Context(accounts) = response {
       for account in accounts.value {
         let slot = accounts.context.slot;
-        let market_data = account.account.data.clone();
         users.push(DecodedAcctCtx {
           key: Pubkey::from_str(&account.pubkey)?,
           account: account.account.to_account()?,
           slot,
-          decoded: decode_ui_account::<User>(market_data)?,
+          decoded: account.account.decode_account::<User>()?,
         });
       }
     }
@@ -881,7 +1030,7 @@ impl DriftUtils {
   pub async fn user_stats(rpc: &RpcClient, user_auths: &[Pubkey]) -> anyhow::Result<Vec<DecodedAcctCtx<UserStats>>> {
     let pdas = user_auths.iter().map(DriftUtils::user_stats_pda).collect::<Vec<Pubkey>>();
 
-    let account_infos = Nexus::accounts(rpc, &pdas).await?;
+    let account_infos = NexusClient::accounts(rpc, &pdas).await?;
     let user_stats: Vec<DecodedAcctCtx<UserStats>> = account_infos.into_par_iter().flat_map(|k| {
       match AccountType::decode(k.account.data.as_slice()).map_err(
         |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
@@ -975,7 +1124,7 @@ impl DriftUtils {
     Ok(trader_stats)
   }
 
-  pub async fn drift_historical_pnl(nexus: &Nexus, user: &Pubkey, days_back: i64) -> anyhow::Result<HistoricalPerformance> {
+  pub async fn drift_historical_pnl(client: &Client, user: &Pubkey, days_back: i64) -> anyhow::Result<HistoricalPerformance> {
     let end = Time::now();
     // drift doesn't have anything more recent than 2 days ago
     let end = end.delta_date(-2);
@@ -994,7 +1143,7 @@ impl DriftUtils {
         date.day.to_dd()
       );
 
-      let res = nexus.client.get(url.clone()).header("Accept-Encoding", "gzip").send().await?;
+      let res = client.get(url.clone()).header("Accept-Encoding", "gzip").send().await?;
       if res.status().is_success() {
         let bytes = res.bytes().await?;
         let decoder = flate2::read::GzDecoder::new(bytes.as_ref());
@@ -1022,29 +1171,16 @@ impl DriftUtils {
     Ok(HistoricalPerformance(data))
   }
 
-  pub async fn perp_market_info(rpc: &RpcClient, perp_market_index: u16) -> anyhow::Result<OraclePrice> {
+  pub async fn perp_market_info(cache: &RwLock<Cache>, perp_market_index: u16) -> anyhow::Result<OraclePrice> {
     let market_pda = DriftUtils::perp_market_pda(perp_market_index);
-    let market_acct = rpc.get_account(&market_pda).await?;
-    let mut bytes = &market_acct.data.as_slice()[8..];
-    let perp_market = PerpMarket::deserialize(&mut bytes).map_err(|_| anyhow::anyhow!("Failed to deserialize perp market"))?;
+    let cache = cache.read().await;
+    let perp_market = cache.decoded_account::<PerpMarket>(&market_pda, None).await?.decoded;
 
     let oracle = perp_market.amm.oracle;
-    let res = rpc.get_account_with_commitment(&oracle, CommitmentConfig::default()).await?;
-    let oracle_acct = res.value.ok_or(anyhow::anyhow!("Oracle account not found"))?;
-    let slot = res.context.slot;
+    let oracle_ctx = cache.account(&oracle, None).await?;
+    let oracle_acct_info = oracle_ctx.account.to_account_info(oracle, false, false, oracle_ctx.account.executable);
+    let slot = oracle_ctx.slot;
     let oracle_source = perp_market.amm.oracle_source;
-    let mut data = oracle_acct.data;
-    let mut lamports = oracle_acct.lamports;
-    let oracle_acct_info = AccountInfo::new(
-      &oracle,
-      false,
-      false,
-      &mut lamports,
-      &mut data,
-      &oracle_acct.owner,
-      oracle_acct.executable,
-      oracle_acct.rent_epoch,
-    );
     let price_data = get_oracle_price(
       &oracle_source,
       &oracle_acct_info,
@@ -1104,5 +1240,35 @@ impl DriftUtils {
     }).collect();
 
     Ok((spot_markets, perp_markets))
+  }
+
+  pub fn oracle_price(
+    src: &OracleSource,
+    key: Pubkey,
+    acct: &impl ToAccountInfo,
+    slot: u64,
+  ) -> anyhow::Result<f64> {
+    let price_data = get_oracle_price(
+      src,
+      &acct.to_account_info(key, false, false, false),
+      slot,
+    ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    Ok(price_data.price as f64 / PRICE_PRECISION as f64)
+  }
+
+  pub fn log_order(params: &OrderParams, oracle_price: &OraclePrice) {
+    let dir = match params.direction {
+      PositionDirection::Long => "long",
+      PositionDirection::Short => "short"
+    };
+    let base = trunc!(params.base_asset_amount as f64 / BASE_PRECISION as f64, 2);
+    info!(
+      "{} {} {} @ {} as {:?}",
+      dir,
+      base,
+      oracle_price.name,
+      trunc!(oracle_price.price, 2),
+      params.order_type
+    );
   }
 }

@@ -20,7 +20,7 @@ pub struct RemainingAccountParams {
 pub struct RemainingAccountMaps {
   pub oracle_account_map: HashMap<String, AccountInfo<'static>>,
   pub spot_market_account_map: HashMap<u16, AccountInfo<'static>>,
-  pub perp_market_account_map: HashMap<u16, AccountInfo<'static>>
+  pub perp_market_account_map: HashMap<u16, AccountInfo<'static>>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,17 +93,6 @@ pub enum RemainingAccount {
   Perp { pubkey: Pubkey, writable: bool },
 }
 
-impl Ord for RemainingAccount {
-  fn cmp(&self, other: &Self) -> Ordering {
-    let type_order = self.discriminant().cmp(&other.discriminant());
-    if let Ordering::Equal = type_order {
-      self.pubkey().cmp(other.pubkey())
-    } else {
-      type_order
-    }
-  }
-}
-
 impl RemainingAccount {
   fn pubkey(&self) -> &Pubkey {
     match self {
@@ -127,7 +116,27 @@ impl RemainingAccount {
     // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
     // between `repr(C)` structs, each of which has the `u8` discriminant as its first
     // field, so we can read the discriminant without offsetting the pointer.
-    unsafe { *<*const _>::from(self).cast::<u8>() }
+    // unsafe { *<*const _>::from(self).cast::<u8>() }
+
+    // get discriminant of self enum
+    let discrim: u8 = match self {
+      Self::Oracle { .. } => 0,
+      Self::Spot { .. } => 1,
+      Self::Perp { .. } => 2,
+    };
+    discrim
+  }
+}
+
+impl Ord for RemainingAccount {
+  fn cmp(&self, other: &Self) -> Ordering {
+    // let type_order = self.cmp(&other);
+    let type_order = self.discriminant().cmp(&other.discriminant());
+    if let Ordering::Equal = type_order {
+      self.pubkey().cmp(other.pubkey())
+    } else {
+      type_order
+    }
   }
 }
 

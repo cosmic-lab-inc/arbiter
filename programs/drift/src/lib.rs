@@ -1,10 +1,10 @@
 #![allow(clippy::too_many_arguments)]
 
+pub use anchor_gen::prelude::*;
+
 pub use utils::*;
 
 pub mod utils;
-
-pub use anchor_gen::prelude::*;
 
 generate_cpi_crate!("idl.json");
 declare_id!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");

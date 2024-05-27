@@ -40,4 +40,8 @@ impl<T> RingBuffer<T> {
   pub fn len(&self) -> usize {
     self.vec.len()
   }
+
+  pub fn find(&self, f: impl Fn(&T) -> bool) -> Option<&T> {
+    self.vec.iter().find(|t| f(t))
+  }
 }

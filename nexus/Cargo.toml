@@ -43,3 +43,7 @@ crossbeam = { workspace = true }
 plotters = { version = "0.3.5" }
 rand = { workspace = true }
 indexmap = "2.2.6"
+yellowstone-grpc-client = { workspace = true }
+yellowstone-grpc-proto = { workspace = true }
+maplit = { workspace = true }
+async-stream = "0.3.5"

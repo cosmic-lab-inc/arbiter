@@ -68,15 +68,11 @@ pub fn get_pyth_price(
   } else {
     oracle_scale_mult = PRICE_PRECISION.safe_div(oracle_precision)?;
   }
-
   let oracle_price_scaled = oracle_price.cast::<i128>()?.safe_mul(oracle_scale_mult.cast()?)?.safe_div(oracle_scale_div.cast()?)?.cast::<i64>()?;
-
   let oracle_conf_scaled = oracle_conf.cast::<u128>()?.safe_mul(oracle_scale_mult)?.safe_div(oracle_scale_div)?.cast::<u64>()?;
-
+  log::debug!("clock slot: {}, price slot: {}, diff: {}", clock_slot, price_data.valid_slot, clock_slot as i64 - price_data.valid_slot as i64);
   let oracle_delay: i64 = clock_slot.cast::<i64>()?.safe_sub(price_data.valid_slot.cast()?)?;
-
   let has_sufficient_number_of_data_points = publisher_count >= min_publishers;
-
   Ok(OraclePriceData {
     price: oracle_price_scaled,
     confidence: oracle_conf_scaled,
@@ -134,11 +130,11 @@ pub fn get_switchboard_price(
     has_sufficient_number_of_data_points,
   })
 }
- 
+
 fn convert_switchboard_decimal(switchboard_decimal: &SwitchboardDecimal) -> anyhow::Result<i128> {
   // Given a decimal number represented as a mantissa (the digits) plus an
   // original_precision (10.pow(some number of decimals)), scale the
-  // mantissa/digits to make sense with a new_precision. 
+  // mantissa/digits to make sense with a new_precision.
   let switchboard_precision = 10_u128.pow(switchboard_decimal.scale);
   if switchboard_precision > PRICE_PRECISION {
     switchboard_decimal.mantissa.safe_div((switchboard_precision / PRICE_PRECISION) as i128)
