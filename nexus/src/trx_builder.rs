@@ -1,27 +1,26 @@
-#![allow(dead_code)]
-
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use anchor_lang::solana_program::address_lookup_table::AddressLookupTableAccount;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_client::SerializableTransaction;
-use solana_client::rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig};
+use solana_client::rpc_config::{
+  RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig,
+};
 use solana_rpc_client_api::config::{RpcSendTransactionConfig, RpcTransactionConfig};
 use solana_rpc_client_api::response::{Response, RpcSimulateTransactionResult};
 use solana_sdk::clock::Slot;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::Instruction;
-use solana_sdk::message::{Message, v0, VersionedMessage};
+use solana_sdk::message::{v0, Message, VersionedMessage};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_sdk::signer::Signer;
 use solana_sdk::signers::Signers;
 use solana_sdk::transaction::VersionedTransaction;
-use solana_transaction_status::{TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding};
+use solana_transaction_status::{
+  TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding,
+};
 use spl_token::solana_program::native_token::LAMPORTS_PER_SOL;
+use std::sync::Arc;
 use tokio::time::MissedTickBehavior;
 
 use crate::ConfirmTransactionConfig;
@@ -47,7 +46,7 @@ pub enum TxError {
 /// The result of a transaction
 pub type TransactionResult<T> = Result<T, TxError>;
 
-pub struct TrxBuilder {
+pub struct TrxBuilder<'a, S: Signer + Sized, T: Signers> {
   rpc: Arc<RpcClient>,
   /// ordered list of instructions
   ixs: Vec<Instruction>,
@@ -55,17 +54,27 @@ pub struct TrxBuilder {
   legacy: bool,
   /// add additional lookup tables (v0 only)
   lookup_tables: Vec<AddressLookupTableAccount>,
-  pub prior_fee_added: bool,
+  prior_fee_added: bool,
+  payer: &'a S,
+  signers: T,
 }
 
-impl TrxBuilder {
-  pub fn new(rpc: Arc<RpcClient>, legacy: bool, lookup_tables: Vec<AddressLookupTableAccount>) -> Self {
+impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
+  pub fn new(
+    rpc: Arc<RpcClient>,
+    legacy: bool,
+    lookup_tables: Vec<AddressLookupTableAccount>,
+    payer: &'a S,
+    signers: T,
+  ) -> Self {
     Self {
       rpc,
       ixs: vec![],
       legacy,
       lookup_tables,
       prior_fee_added: false,
+      payer,
+      signers,
     }
   }
 
@@ -93,22 +102,27 @@ impl TrxBuilder {
     }
   }
 
-  async fn recent_priority_fee(
-    &self,
-    key: Pubkey,
-    window: Option<usize>,
-  ) -> anyhow::Result<u64> {
+  async fn recent_priority_fee(&self, key: Pubkey, window: Option<usize>) -> anyhow::Result<u64> {
     let response = self.rpc.get_recent_prioritization_fees(&[key]).await?;
     let window = window.unwrap_or(100);
-    let fees: Vec<u64> = response.iter().take(window).map(|x| x.prioritization_fee).collect();
+    let fees: Vec<u64> = response
+      .iter()
+      .take(window)
+      .map(|x| x.prioritization_fee)
+      .collect();
     Ok(fees.iter().sum::<u64>() / fees.len() as u64)
   }
 
   /// Set the priority fee of the tx
   ///
   /// `microlamports_per_cu` the price per unit of compute in µ-lamports
-  pub async fn with_priority_fee(&mut self, key: Pubkey, window: Option<usize>, cu_limit: Option<u32>) -> anyhow::Result<()> {
-    let ul_per_cu = self.recent_priority_fee(key, window).await?.max(10_000);
+  pub async fn with_priority_fee(
+    &mut self,
+    key: Pubkey,
+    window: Option<usize>,
+    cu_limit: Option<u32>,
+  ) -> anyhow::Result<()> {
+    let ul_per_cu = self.recent_priority_fee(key, window).await?.max(1_000_000);
     let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_price(ul_per_cu);
     self.ixs.insert(0, cu_limit_ix);
     if let Some(cu_limit) = cu_limit {
@@ -140,33 +154,35 @@ impl TrxBuilder {
   }
 
   /// Build the transaction message ready for signing and sending
-  pub async fn build<S: Signer + Sized, T: Signers>(&self, payer: &S, signers: &T) -> anyhow::Result<VersionedTransaction> {
+  pub async fn build(&self) -> anyhow::Result<VersionedTransaction> {
     let bh = self.rpc.get_latest_blockhash().await?;
     let msg = if self.legacy {
       VersionedMessage::Legacy(Message::new_with_blockhash(
         self.ixs.as_ref(),
-        Some(&payer.pubkey()),
+        Some(&self.payer.pubkey()),
         &bh,
       ))
     } else {
       VersionedMessage::V0(v0::Message::try_compile(
-        &payer.pubkey(),
+        &self.payer.pubkey(),
         self.ixs.as_slice(),
         self.lookup_tables.as_slice(),
         bh,
       )?)
     };
-    let tx = VersionedTransaction::try_new(
-      msg,
-      signers,
-    )?;
+    let tx = VersionedTransaction::try_new(msg, &self.signers)?;
     Ok(tx)
   }
 
-  pub async fn compute_units<S: Signer + Sized, T: Signers>(&mut self, payer: &S, signers: &T) -> anyhow::Result<u32> {
-    let tx = self.build(payer, signers).await?;
+  pub async fn compute_units(&mut self) -> anyhow::Result<u32> {
+    let tx = self.build().await?;
     let sim = self.rpc.simulate_transaction(&tx).await?;
-    Ok(sim.value.units_consumed.ok_or(anyhow::anyhow!("No compute units found"))? as u32)
+    Ok(
+      sim
+        .value
+        .units_consumed
+        .ok_or(anyhow::anyhow!("No compute units found"))? as u32,
+    )
   }
 
   fn log_priority_fee(ul_per_cu: u64, cu_limit: Option<u32>) {
@@ -183,17 +199,15 @@ impl TrxBuilder {
     }
   }
 
-  pub async fn simulate<S: Signer + Sized, T: Signers>(
+  pub async fn simulate(
     &mut self,
-    payer: &S,
-    signers: &T,
     prior_fee_key: Pubkey,
   ) -> anyhow::Result<Response<RpcSimulateTransactionResult>> {
     if !self.prior_fee_added {
       self.with_priority_fee(prior_fee_key, None, None).await?;
     }
 
-    let tx = self.build(payer, signers).await?;
+    let tx = self.build().await?;
     let config = RpcSimulateTransactionConfig {
       commitment: Some(CommitmentConfig::processed()),
       encoding: Some(UiTransactionEncoding::Base64),
@@ -203,58 +217,73 @@ impl TrxBuilder {
       }),
       ..Default::default()
     };
-    let sim = self.rpc.simulate_transaction_with_config(&tx, config).await?;
-    log::debug!("Simulated transaction: {:#?}", sim.value);
+    let sim = self
+      .rpc
+      .simulate_transaction_with_config(&tx, config)
+      .await?;
+    log::info!("Simulation: {:#?}", sim.value);
     Ok(sim)
   }
 
-  pub async fn send<S: Signer + Sized, T: Signers>(&mut self, payer: &S, signers: &T, prior_fee_key: Pubkey) -> anyhow::Result<Signature> {
+  pub async fn send(
+    &mut self,
+    prior_fee_key: Pubkey,
+    cu_limit: Option<u32>,
+  ) -> anyhow::Result<(Signature, TransactionResult<Slot>)> {
     if !self.prior_fee_added {
-      self.with_priority_fee(prior_fee_key, None, None).await?;
+      self
+        .with_priority_fee(prior_fee_key, None, cu_limit)
+        .await?;
     }
 
     let config = RpcSendTransactionConfig {
-      skip_preflight: false,
+      skip_preflight: true,
+      max_retries: Some(0),
+      preflight_commitment: Some(CommitmentLevel::Confirmed),
       ..Default::default()
     };
 
-    const SEND_RETRIES: usize = 1;
-    const GET_STATUS_RETRIES: usize = 10; // 10 * 500 millis = 5 seconds
-    let tx = self.build(payer, signers).await?;
-    'sending: for _ in 0..SEND_RETRIES {
-      let sig = match self.rpc.send_transaction_with_config(&tx, config).await {
+    let tx = self.build().await?;
+
+    let now = std::time::Instant::now();
+    // todo: monitor our transactions with grpc, and break loop if cache has confirmed our transaction
+    let mut sig: Option<Signature> = None;
+    for _ in 0..50 {
+      let new_sig = match self.rpc.send_transaction_with_config(&tx, config).await {
         Ok(sig) => Ok(sig),
         Err(e) => {
           log::error!("Failed to send transaction: {:#?}", e);
           Err(anyhow::anyhow!(e))
         }
       }?;
-      Self::log_tx(&sig);
-      let rbh = *tx.get_recent_blockhash();
-      for _status_retry in 0..GET_STATUS_RETRIES {
-        match self.rpc.get_signature_status(&sig).await? {
-          Some(Ok(_)) => return Ok(sig),
-          Some(Err(e)) => {
-            log::error!("Failed transaction: {:#?}", e);
-            return Err(e.into());
+      match sig {
+        Some(old_sig) => {
+          if old_sig != new_sig {
+            log::error!("Signature mismatch: {} != {}", old_sig, new_sig);
           }
-          None => {
-            if !self.rpc.is_blockhash_valid(&rbh, CommitmentConfig::processed()).await?
-            {
-              // Block hash is not found by some reason
-              break 'sending;
-            } else if cfg!(not(test))
-            // Ignore sleep at last step. && status_retry < GET_STATUS_RETRIES
-            {
-              // Retry twice a second
-              tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-              continue;
-            }
-          }
+          sig = Some(new_sig);
+        }
+        None => {
+          sig = Some(new_sig);
         }
       }
     }
-    Err(anyhow::anyhow!("Transaction dropped"))
+    let sig = sig.ok_or(anyhow::anyhow!("Signature is none"))?;
+    Self::log_tx(&sig);
+
+    let res = self
+      .confirm(
+        sig,
+        ConfirmTransactionConfig {
+          min_confirmation: TransactionConfirmationStatus::Confirmed,
+          loop_rate: std::time::Duration::from_millis(50),
+        },
+      )
+      .await?;
+    if res.is_ok() {
+      log::warn!("Transaction confirmed in {:?}", now.elapsed());
+    }
+    Ok((sig, res))
   }
 
   fn confirmation_at_least(
@@ -262,22 +291,20 @@ impl TrxBuilder {
     test: &TransactionConfirmationStatus,
   ) -> bool {
     matches!(
-        (control, test),
-        (TransactionConfirmationStatus::Processed, _)
-            | (
-                TransactionConfirmationStatus::Confirmed,
-                TransactionConfirmationStatus::Confirmed | TransactionConfirmationStatus::Finalized,
-            )
-            | (
-                TransactionConfirmationStatus::Finalized,
-                TransactionConfirmationStatus::Finalized
-            )
+      (control, test),
+      (TransactionConfirmationStatus::Processed, _)
+        | (
+          TransactionConfirmationStatus::Confirmed,
+          TransactionConfirmationStatus::Confirmed | TransactionConfirmationStatus::Finalized,
+        )
+        | (
+          TransactionConfirmationStatus::Finalized,
+          TransactionConfirmationStatus::Finalized
+        )
     )
   }
 
-  /// Convert a [`TransactionConfirmationStatus`] into a [`CommitmentConfig`]
-  #[must_use]
-  pub fn tc_into_commitment(confirmation: &TransactionConfirmationStatus) -> CommitmentConfig {
+  fn tc_into_commitment(confirmation: &TransactionConfirmationStatus) -> CommitmentConfig {
     match confirmation {
       TransactionConfirmationStatus::Processed => CommitmentConfig::processed(),
       TransactionConfirmationStatus::Confirmed => CommitmentConfig::confirmed(),
@@ -287,69 +314,67 @@ impl TrxBuilder {
 
   async fn confirm(
     &self,
-    sig_and_block_height: impl IntoIterator<Item=(Signature, u64)> + Send,
+    sig: Signature,
     config: ConfirmTransactionConfig,
-  ) -> anyhow::Result<HashMap<Signature, TransactionResult<Slot>>> {
-    let mut sigs = Vec::new();
-    let mut block_heights = Vec::new();
-    for (sig, block_height) in sig_and_block_height {
-      sigs.push(sig);
-      block_heights.push(block_height);
-    }
-    let mut out = HashMap::new();
+  ) -> anyhow::Result<TransactionResult<Slot>> {
+    let mut result: Option<TransactionResult<Slot>> = None;
     let mut interval = tokio::time::interval(config.loop_rate);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    while !sigs.is_empty() {
+    let mut not_resolved = true;
+    let mut iterations = 0;
+    const MAX_CONFIRMATION_ITERATIONS: usize = 1;
+    while not_resolved && iterations < MAX_CONFIRMATION_ITERATIONS {
       interval.tick().await;
-      let block_height = self.rpc.get_block_height_with_commitment(Self::tc_into_commitment(&config.min_confirmation)).await?;
-      let statues = self.rpc.get_signature_statuses(&sigs).await?;
-      for (index, status) in statues.value.into_iter().enumerate().rev() {
-        match status {
-          Some(TransactionStatus {
-                 slot,
-                 err,
-                 confirmation_status: Some(confirmation_status),
-                 ..
-               }) if Self::confirmation_at_least(&config.min_confirmation, &confirmation_status) => {
-            let sig = sigs[index];
-            out.insert(
-              sig,
-              match err {
-                None => Ok(slot),
-                Some(error) => {
-                  let tx = self.rpc.get_transaction_with_config(
-                    &sig,
-                    RpcTransactionConfig {
-                      encoding: None,
-                      commitment: Some(Self::tc_into_commitment(
-                        &config.min_confirmation,
-                      )),
-                      max_supported_transaction_version: None,
-                    },
-                  ).await?;
-                  Err(TxError::TxError {
-                    slot,
-                    error,
-                    logs: tx.transaction.meta.and_then(|meta| meta.log_messages.into()),
-                  })
-                }
-              },
-            );
-            sigs.swap_remove(index);
-            block_heights.swap_remove(index);
-          }
-          _ => {}
+      let res = self
+        .rpc
+        .get_signature_statuses(vec![sig].as_slice())
+        .await?;
+      let status = res
+        .value
+        .first()
+        .ok_or(anyhow::anyhow!("Failed to get signature from response"))?
+        .clone();
+      match status {
+        Some(TransactionStatus {
+          slot,
+          err,
+          confirmation_status: Some(confirmation_status),
+          ..
+        }) if Self::confirmation_at_least(&config.min_confirmation, &confirmation_status) => {
+          result = Some(match err {
+            None => Ok(slot),
+            Some(error) => {
+              let tx = self
+                .rpc
+                .get_transaction_with_config(
+                  &sig,
+                  RpcTransactionConfig {
+                    encoding: None,
+                    commitment: Some(Self::tc_into_commitment(&config.min_confirmation)),
+                    max_supported_transaction_version: None,
+                  },
+                )
+                .await?;
+              Err(TxError::TxError {
+                slot,
+                error,
+                logs: tx
+                  .transaction
+                  .meta
+                  .and_then(|meta| meta.log_messages.into()),
+              })
+            }
+          });
+          not_resolved = false;
         }
+        _ => {}
       }
-
-      for (index, last_block_height) in block_heights.clone().into_iter().enumerate().rev() {
-        if last_block_height < block_height {
-          out.insert(sigs[index], Err(TxError::Dropped));
-          sigs.swap_remove(index);
-          block_heights.swap_remove(index);
-        }
-      }
+      iterations += 1;
     }
-    Ok(out)
+    Ok(if result.is_none() {
+      Err(TxError::Dropped)
+    } else {
+      result.ok_or(anyhow::anyhow!("Failed to define transaction state"))?
+    })
   }
 }

@@ -68,11 +68,19 @@ impl NexusClient {
                     });
                   }
 
+                  let signer = *account_keys.first().ok_or(
+                    anyhow::anyhow!("Signer not found at account key index: 0")
+                  )?;
+                  let signature = Signature::try_from(
+                    tx_info.signature.as_slice()
+                  )?;
                   let hash_bytes: [u8; 32] = msg.recent_blockhash.try_into().map_err(|e| anyhow::anyhow!("Failed to convert blockhash: {:?}", e))?;
                   channel.send(TxStub {
                     slot: event.slot,
                     blockhash: Hash::from(hash_bytes).to_string(),
                     ixs,
+                    signature,
+                    signer,
                   })?;
                 }
               }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signature;
 use yellowstone_grpc_proto::prelude::{CommitmentLevel, SubscribeRequest, SubscribeRequestFilterAccounts, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots, SubscribeRequestFilterTransactions};
 
 use crate::Time;
@@ -72,6 +73,8 @@ pub struct TxStub {
   pub ixs: Vec<Ix>,
   pub slot: Slot,
   pub blockhash: String,
+  pub signer: Pubkey,
+  pub signature: Signature,
 }
 
 #[derive(Debug, Clone)]

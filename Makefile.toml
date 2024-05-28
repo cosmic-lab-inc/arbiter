@@ -2,4 +2,4 @@
 default_to_workspace = false
 
 [tasks.arbiter]
-script = "cargo run -r -p arbiter"
+script = "cargo run -r -p imitator"

@@ -130,9 +130,13 @@ impl Imitator {
   /// 3. Listen to geyser stream of transactions.
   pub async fn start(&mut self) -> anyhow::Result<()> {
     self.drift.setup_user().await?;
+    let mut trx = self.new_tx();
+    self.cancel_orders(None, None, &mut trx).await?;
+    self.send_tx(&mut trx, None).await?;
 
     while let Ok(tx) = self.rx.recv() {
-      // todo: bundle ix into same tx just, to copy at the tx level
+      let mut trx = self.new_tx();
+      let mut cu_limit: Option<u32> = None;
       for ix in tx.ixs {
         if ix.program == id() {
           let decoded_ix = InstructionType::decode(&ix.data[..]).map_err(
@@ -143,30 +147,20 @@ impl Imitator {
 
           match decoded_ix {
             InstructionType::PlacePerpOrder(ix) => {
+              info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let params = ix._params;
               let market_info = DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
               if self.allow_market(MarketId {
                 index: params.market_index,
                 kind: params.market_type,
               }) {
-                info!("{}", name);
                 self.log_order(&name, &params, &market_info);
-                self.place_orders(tx.slot, vec![params]).await?;
+                self.place_orders(tx.slot, vec![params], &mut trx).await?;
+                cu_limit = Some(100_000);
               }
             }
-            InstructionType::PlaceAndTakePerpOrder(_ix) => {
-              // todo? taker orders specify a maker which is unique to the trade, and therefore not copyable... I think.
-              // let params = ix._params;
-              // let market_info = DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
-              // if self.allow_market(MarketId {
-              //   index: params.market_index,
-              //   kind: params.market_type,
-              // }) {
-              // info!("{}", name);
-              // self.log_order(&name, &params, &market_info);
-              // }
-            }
             InstructionType::PlaceOrders(ix) => {
+              info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let mut orders = vec![];
               for params in ix._params.iter() {
                 let market_info = DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
@@ -178,9 +172,11 @@ impl Imitator {
                   orders.push(*params);
                 }
               }
-              self.place_orders(tx.slot, orders).await?;
+              self.place_orders(tx.slot, orders, &mut trx).await?;
+              cu_limit = Some(100_000);
             }
             InstructionType::CancelOrders(ix) => {
+              info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let market = match (ix._market_index, ix._market_type) {
                 (Some(index), Some(kind)) => {
                   Some(MarketId {
@@ -191,12 +187,14 @@ impl Imitator {
                 (None, None) => None,
                 _ => return Err(anyhow::anyhow!("Invalid market index and kind Options")),
               };
-              self.cancel_orders(market, ix._direction).await?;
+              self.cancel_orders(market, ix._direction, &mut trx).await?;
+              cu_limit = Some(40_000);
             }
             _ => {}
           }
         }
       }
+      self.send_tx(&mut trx, cu_limit).await?;
     }
     Ok(())
   }
@@ -260,17 +258,30 @@ impl Imitator {
     );
   }
 
+  pub fn new_tx(&self) -> TrxBuilder<'_, Keypair, Vec<&Keypair>> {
+    self.drift.new_tx(true)
+  }
+
+  pub async fn send_tx(&self, trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>, cu_limit: Option<u32>) -> anyhow::Result<()> {
+    if !trx.is_empty() {
+      let res = trx.send(id(), cu_limit).await?;
+      if let Err(e) = &res.1 {
+        log::error!("Failed to confirm transaction: {:#?}", e);
+      }
+    }
+    Ok(())
+  }
+
+  // todo: receiving this error on occasion:
+  //    https://github.com/drift-labs/protocol-v2/blob/7d4f9e0251f8136ee530253e0f90b46ed223d441/programs/drift/src/math/oracle.rs#L295
   pub async fn place_orders(
     &self,
     tx_slot: u64,
     orders: Vec<OrderParams>,
+    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
-    let mut trx = self.drift.new_tx(true);
     let market_filter = self.market_filter.as_deref();
-    self.drift.copy_place_orders_ix(tx_slot, self.cache(), orders, market_filter, &mut trx).await?;
-    if !trx.is_empty() {
-      trx.simulate(&self.signer, &vec![self.signer.deref()], id()).await?;
-    }
+    self.drift.copy_place_orders_ix(tx_slot, self.cache(), orders, market_filter, trx).await?;
     Ok(())
   }
 
@@ -278,13 +289,10 @@ impl Imitator {
     &self,
     market: Option<MarketId>,
     direction: Option<PositionDirection>,
+    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
-    let mut trx = self.drift.new_tx(true);
     let market_filter = self.market_filter.as_deref();
-    self.drift.cancel_orders_ix(self.cache(), market_filter, market, direction, &mut trx).await?;
-    if !trx.is_empty() {
-      trx.simulate(&self.signer, &vec![self.signer.deref()], id()).await?;
-    }
+    self.drift.cancel_orders_ix(self.cache(), market_filter, market, direction, trx).await?;
     Ok(())
   }
 }

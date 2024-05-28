@@ -1,0 +1,8 @@
+empty_item_single_time = true
+fn_params_layout = "Tall"
+tab_spaces = 2
+type_punctuation_density = "Wide"
+use_field_init_shorthand = true
+wrap_comments = true
+struct_lit_single_line = false
+max_width = 100
