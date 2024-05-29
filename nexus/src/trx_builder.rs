@@ -23,7 +23,7 @@ use spl_token::solana_program::native_token::LAMPORTS_PER_SOL;
 use std::sync::Arc;
 use tokio::time::MissedTickBehavior;
 
-use crate::ConfirmTransactionConfig;
+use crate::{trunc, ConfirmTransactionConfig, MICRO_LAMPORTS_PER_LAMPORT};
 
 /// Error received when confirming a transaction
 #[derive(Debug, thiserror::Error)]
@@ -122,7 +122,10 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     window: Option<usize>,
     cu_limit: Option<u32>,
   ) -> anyhow::Result<()> {
-    let ul_per_cu = self.recent_priority_fee(key, window).await?.max(1_000_000);
+    let ul_per_cu = self
+      .recent_priority_fee(key, window)
+      .await?
+      .max(MICRO_LAMPORTS_PER_LAMPORT);
     let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_price(ul_per_cu);
     self.ixs.insert(0, cu_limit_ix);
     if let Some(cu_limit) = cu_limit {
@@ -189,12 +192,11 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     match cu_limit {
       Some(cu_limit) => {
         let ul_cost = ul_per_cu * cu_limit as u64;
-        let lamport_cost = ul_cost / 1_000_000;
-        let sol_cost = lamport_cost as f64 / LAMPORTS_PER_SOL as f64;
-        log::debug!("Priority fee: {} SOL", sol_cost);
+        let sol_cost = ul_cost as f64 / MICRO_LAMPORTS_PER_LAMPORT as f64 / LAMPORTS_PER_SOL as f64;
+        log::debug!("Priority fee: {} SOL", trunc!(sol_cost, 2));
       }
       None => {
-        log::debug!("Priority fee: {} u-lamports per compute unit", ul_per_cu);
+        log::debug!("Priority fee: {} µ-lamports per compute unit", ul_per_cu);
       }
     }
   }
@@ -247,38 +249,31 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
 
     let now = std::time::Instant::now();
     // todo: monitor our transactions with grpc, and break loop if cache has confirmed our transaction
-    let mut sig: Option<Signature> = None;
-    for _ in 0..50 {
-      let new_sig = match self.rpc.send_transaction_with_config(&tx, config).await {
-        Ok(sig) => Ok(sig),
-        Err(e) => {
-          log::error!("Failed to send transaction: {:#?}", e);
-          Err(anyhow::anyhow!(e))
-        }
-      }?;
-      match sig {
-        Some(old_sig) => {
-          if old_sig != new_sig {
-            log::error!("Signature mismatch: {} != {}", old_sig, new_sig);
-          }
-          sig = Some(new_sig);
-        }
-        None => {
-          sig = Some(new_sig);
-        }
+    let sig = match self.rpc.send_transaction_with_config(&tx, config).await {
+      Ok(sig) => Ok(sig),
+      Err(e) => {
+        log::error!("Failed to send transaction: {:#?}", e);
+        Err(anyhow::anyhow!(e))
       }
+    }?;
+    for _ in 0..10 {
+      let rpc = self.rpc.clone();
+      let tx = tx.clone();
+      tokio::task::spawn(async move {
+        match rpc.send_transaction_with_config(&tx, config).await {
+          Ok(sig) => Ok(sig),
+          Err(e) => {
+            log::error!("Failed to send transaction: {:#?}", e);
+            Err(anyhow::anyhow!(e))
+          }
+        }?;
+        Result::<_, anyhow::Error>::Ok(())
+      });
     }
-    let sig = sig.ok_or(anyhow::anyhow!("Signature is none"))?;
     Self::log_tx(&sig);
 
     let res = self
-      .confirm(
-        sig,
-        ConfirmTransactionConfig {
-          min_confirmation: TransactionConfirmationStatus::Confirmed,
-          loop_rate: std::time::Duration::from_millis(50),
-        },
-      )
+      .confirm(sig, ConfirmTransactionConfig::default())
       .await?;
     if res.is_ok() {
       log::warn!("Transaction confirmed in {:?}", now.elapsed());
@@ -322,8 +317,7 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut not_resolved = true;
     let mut iterations = 0;
-    const MAX_CONFIRMATION_ITERATIONS: usize = 1;
-    while not_resolved && iterations < MAX_CONFIRMATION_ITERATIONS {
+    while not_resolved && iterations < config.max_confirmation_checks {
       interval.tick().await;
       let res = self
         .rpc
@@ -344,17 +338,33 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
           result = Some(match err {
             None => Ok(slot),
             Some(error) => {
-              let tx = self
+              let tx = match self
                 .rpc
                 .get_transaction_with_config(
                   &sig,
                   RpcTransactionConfig {
                     encoding: None,
                     commitment: Some(Self::tc_into_commitment(&config.min_confirmation)),
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version: Some(0),
                   },
                 )
-                .await?;
+                .await
+              {
+                Ok(res) => res,
+                Err(_) => {
+                  self
+                    .rpc
+                    .get_transaction_with_config(
+                      &sig,
+                      RpcTransactionConfig {
+                        encoding: None,
+                        commitment: Some(Self::tc_into_commitment(&config.min_confirmation)),
+                        max_supported_transaction_version: Some(0),
+                      },
+                    )
+                    .await?
+                }
+              };
               Err(TxError::TxError {
                 slot,
                 error,

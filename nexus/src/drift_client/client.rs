@@ -23,7 +23,7 @@ pub struct DriftClient {
   /// contextual on-chain program data
   program_data: ProgramData,
   /// the drift subaccount address
-  sub_account: Pubkey,
+  pub sub_account: Pubkey,
 }
 
 impl DriftClient {

@@ -1,1 +1,1 @@
-web: ./target/release/arbiter
+web: ./target/release/imitator

@@ -6,11 +6,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anchor_lang::{Accounts, Bumps, Discriminator, InstructionData, ToAccountMetas};
 use anchor_lang::context::Context;
 use anchor_lang::prelude::{AccountInfo, AccountMeta, CpiContext};
-use base64::Engine;
+use anchor_lang::{Accounts, Bumps, Discriminator, InstructionData, ToAccountMetas};
 use base64::engine::general_purpose;
+use base64::Engine;
 use borsh::BorshDeserialize;
 use crossbeam::channel::{Receiver, Sender};
 use futures::StreamExt;
@@ -18,7 +18,10 @@ use log::info;
 use reqwest::Client;
 use solana_account_decoder::{UiAccount, UiAccountData, UiAccountEncoding};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig};
+use solana_client::rpc_config::{
+  RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig,
+  RpcSimulateTransactionConfig,
+};
 use solana_client::rpc_filter::{Memcmp, RpcFilterType};
 use solana_client::rpc_response::RpcKeyedAccount;
 use solana_sdk::account::Account;
@@ -33,12 +36,16 @@ use solana_sdk::sysvar::SysvarId;
 use solana_sdk::transaction::Transaction;
 use solana_transaction_status::UiTransactionEncoding;
 use tokio::io::ReadBuf;
-use tokio::sync::{RwLock, RwLockWriteGuard};
 use tokio::sync::RwLockReadGuard;
-use yellowstone_grpc_proto::prelude::{CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterBlocks, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots, SubscribeRequestFilterTransactions};
+use tokio::sync::{RwLock, RwLockWriteGuard};
+use yellowstone_grpc_proto::prelude::{
+  CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterBlocks,
+  SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
+  SubscribeRequestFilterTransactions,
+};
 
-use nexus::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
+use nexus::*;
 
 pub struct Imitator {
   pub signer: Arc<Keypair>,
@@ -67,7 +74,10 @@ impl Imitator {
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
     info!("Imitator using wallet: {}", signer.pubkey());
-    let rpc = Arc::new(RpcClient::new_with_timeout(rpc_url, Duration::from_secs(90)));
+    let rpc = Arc::new(RpcClient::new_with_timeout(
+      rpc_url,
+      Duration::from_secs(90),
+    ));
     let (tx, rx) = crossbeam::channel::unbounded::<TxStub>();
 
     let this = Self {
@@ -81,12 +91,17 @@ impl Imitator {
       rx,
     };
 
-    let account_filter: Vec<String> = this.account_filter().await?.into_iter().map(|k| k.to_string()).collect();
+    let account_filter: Vec<String> = this
+      .account_filter()
+      .await?
+      .into_iter()
+      .map(|k| k.to_string())
+      .collect();
     let cfg = GeyserConfig {
       grpc,
       x_token,
       slots: Some(SubscribeRequestFilterSlots {
-        filter_by_commitment: Some(true)
+        filter_by_commitment: Some(true),
       }),
       // slots: None,
       accounts: Some(SubscribeRequestFilterAccounts {
@@ -119,8 +134,15 @@ impl Imitator {
   pub fn rpc(&self) -> Arc<RpcClient> {
     self.rpc.clone()
   }
-  pub fn cache(&self) -> &RwLock<Cache> { &self.cache }
-  pub fn client(&self) -> Arc<Client> { self.client.clone() }
+  pub fn cache(&self) -> &RwLock<Cache> {
+    &self.cache
+  }
+  pub fn client(&self) -> Arc<Client> {
+    self.client.clone()
+  }
+  pub fn user(&self) -> &Pubkey {
+    &self.drift.sub_account
+  }
 
   /// 1. Initialize [`User`] and [`UserStats`] accounts,
   /// and deposit 100% of available USDC from the wallet.
@@ -139,17 +161,18 @@ impl Imitator {
       let mut cu_limit: Option<u32> = None;
       for ix in tx.ixs {
         if ix.program == id() {
-          let decoded_ix = InstructionType::decode(&ix.data[..]).map_err(
-            |e| anyhow::anyhow!("Failed to decode instruction: {:?}", e)
-          )?;
+          let decoded_ix = InstructionType::decode(&ix.data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode instruction: {:?}", e))?;
           let discrim: [u8; 8] = ix.data[..8].try_into()?;
-          let name = InstructionType::discrim_to_name(discrim).map_err(|e| anyhow::anyhow!("Failed to get ix discrim: {:?}", e))?;
+          let name = InstructionType::discrim_to_name(discrim)
+            .map_err(|e| anyhow::anyhow!("Failed to get ix discrim: {:?}", e))?;
 
           match decoded_ix {
             InstructionType::PlacePerpOrder(ix) => {
               info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let params = ix._params;
-              let market_info = DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
+              let market_info =
+                DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
               if self.allow_market(MarketId {
                 index: params.market_index,
                 kind: params.market_type,
@@ -163,7 +186,8 @@ impl Imitator {
               info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let mut orders = vec![];
               for params in ix._params.iter() {
-                let market_info = DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
+                let market_info =
+                  DriftUtils::perp_market_info(self.cache(), params.market_index).await?;
                 if self.allow_market(MarketId {
                   index: params.market_index,
                   kind: params.market_type,
@@ -178,12 +202,7 @@ impl Imitator {
             InstructionType::CancelOrders(ix) => {
               info!("{}, signer: {}, sig: {}", name, tx.signer, tx.signature);
               let market = match (ix._market_index, ix._market_type) {
-                (Some(index), Some(kind)) => {
-                  Some(MarketId {
-                    index,
-                    kind,
-                  })
-                }
+                (Some(index), Some(kind)) => Some(MarketId { index, kind }),
                 (None, None) => None,
                 _ => return Err(anyhow::anyhow!("Invalid market index and kind Options")),
               };
@@ -229,21 +248,36 @@ impl Imitator {
     ];
     let auths = [self.signer.pubkey()];
     let now = std::time::Instant::now();
-    self.cache.write().await.load_all(&self.rpc(), &users, &accounts, &auths).await?;
+    self
+      .cache
+      .write()
+      .await
+      .load_all(&self.rpc(), &users, &accounts, &auths)
+      .await?;
     log::debug!("time to load cache: {:?}", now.elapsed());
-    let keys = perp_markets.iter().chain(spot_markets.iter()).chain(users.iter()).chain(perp_oracles.iter()).chain(spot_oracles.iter()).chain(accounts.iter()).cloned().collect::<Vec<Pubkey>>();
-    assert!(keys.contains(&solana_sdk::pubkey!("H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG")));
+    let keys = perp_markets
+      .iter()
+      .chain(spot_markets.iter())
+      .chain(users.iter())
+      .chain(perp_oracles.iter())
+      .chain(spot_oracles.iter())
+      .chain(accounts.iter())
+      .cloned()
+      .collect::<Vec<Pubkey>>();
+    assert!(keys.contains(&solana_sdk::pubkey!(
+      "H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG"
+    )));
     Ok(keys)
   }
 
   pub fn log_order(&self, name: &str, params: &OrderParams, oracle_price: &OraclePrice) {
     let dir = match params.direction {
       PositionDirection::Long => "long",
-      PositionDirection::Short => "short"
+      PositionDirection::Short => "short",
     };
     let oracle_price_offset = match params.oracle_price_offset {
       None => 0.0,
-      Some(offset) => trunc!(offset as f64 / PRICE_PRECISION as f64, 2)
+      Some(offset) => trunc!(offset as f64 / PRICE_PRECISION as f64, 2),
     };
     let base = trunc!(params.base_asset_amount as f64 / BASE_PRECISION as f64, 2);
     let limit_price = trunc!(oracle_price.price + oracle_price_offset, 2);
@@ -262,7 +296,11 @@ impl Imitator {
     self.drift.new_tx(true)
   }
 
-  pub async fn send_tx(&self, trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>, cu_limit: Option<u32>) -> anyhow::Result<()> {
+  pub async fn send_tx(
+    &self,
+    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    cu_limit: Option<u32>,
+  ) -> anyhow::Result<()> {
     if !trx.is_empty() {
       let res = trx.send(id(), cu_limit).await?;
       if let Err(e) = &res.1 {
@@ -281,7 +319,10 @@ impl Imitator {
     trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
     let market_filter = self.market_filter.as_deref();
-    self.drift.copy_place_orders_ix(tx_slot, self.cache(), orders, market_filter, trx).await?;
+    self
+      .drift
+      .copy_place_orders_ix(tx_slot, self.cache(), orders, market_filter, trx)
+      .await?;
     Ok(())
   }
 
@@ -292,7 +333,10 @@ impl Imitator {
     trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
     let market_filter = self.market_filter.as_deref();
-    self.drift.cancel_orders_ix(self.cache(), market_filter, market, direction, trx).await?;
+    self
+      .drift
+      .cancel_orders_ix(self.cache(), market_filter, market, direction, trx)
+      .await?;
     Ok(())
   }
 }

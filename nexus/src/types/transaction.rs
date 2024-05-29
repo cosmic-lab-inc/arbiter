@@ -1,4 +1,3 @@
-use std::time::Duration;
 use solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature;
 use solana_sdk::{
   clock::{Slot, UnixTimestamp},
@@ -7,6 +6,7 @@ use solana_sdk::{
   transaction::Transaction,
 };
 use solana_transaction_status::TransactionConfirmationStatus;
+use std::time::Duration;
 
 pub struct TrxData {
   pub tx: Transaction,
@@ -29,13 +29,16 @@ pub struct ConfirmTransactionConfig {
   pub loop_rate: Duration,
   /// The minimum confirmation status to wait for
   pub min_confirmation: TransactionConfirmationStatus,
+  /// This number of iterations * loop_rate = total duration to wait for confirmation
+  pub max_confirmation_checks: u16,
 }
 
 impl Default for ConfirmTransactionConfig {
   fn default() -> Self {
     Self {
-      loop_rate: Duration::from_millis(2000),
+      loop_rate: Duration::from_millis(200),
       min_confirmation: TransactionConfirmationStatus::Confirmed,
+      max_confirmation_checks: 100,
     }
   }
 }

@@ -18,8 +18,8 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::RwLock;
 
-use crate::{DecodedAcctCtx, Time, trunc};
 use crate::*;
+use crate::{trunc, DecodedAcctCtx, Time};
 
 pub struct DriftUtils;
 
@@ -57,7 +57,8 @@ impl DriftUtils {
     Pubkey::find_program_address(
       &[&b"spot_market_vault"[..], &market_index.to_le_bytes()],
       &id(),
-    ).0
+    )
+    .0
   }
 
   pub fn perp_market_pda(market_index: u16) -> Pubkey {
@@ -77,7 +78,9 @@ impl DriftUtils {
     round_up: bool,
   ) -> anyhow::Result<TokenBalance> {
     let precision_increase = 10_u128.pow(
-      19_u32.checked_sub(spot_market.decimals).ok_or(anyhow::anyhow!("Checked sub overflow"))?,
+      19_u32
+        .checked_sub(spot_market.decimals)
+        .ok_or(anyhow::anyhow!("Checked sub overflow"))?,
     );
 
     let cumulative_interest = match balance_type {
@@ -85,10 +88,16 @@ impl DriftUtils {
       SpotBalanceType::Borrow => spot_market.cumulative_borrow_interest,
     };
 
-    let mut balance = token_amount.checked_mul(precision_increase).ok_or(anyhow::anyhow!("Checked mul overflow"))?.checked_div(cumulative_interest).ok_or(anyhow::anyhow!("Checked div overflow"))?;
+    let mut balance = token_amount
+      .checked_mul(precision_increase)
+      .ok_or(anyhow::anyhow!("Checked mul overflow"))?
+      .checked_div(cumulative_interest)
+      .ok_or(anyhow::anyhow!("Checked div overflow"))?;
 
     if round_up && balance != 0 {
-      balance = balance.checked_add(1).ok_or(anyhow::anyhow!("Checked add overflow"))?;
+      balance = balance
+        .checked_add(1)
+        .ok_or(anyhow::anyhow!("Checked add overflow"))?;
     }
 
     Ok(TokenBalance {
@@ -101,24 +110,32 @@ impl DriftUtils {
     let state_key = DriftUtils::state_pda();
     let state_data = client.get_account_data(&state_key).await?;
     let state = State::try_deserialize(&mut state_data.as_slice())?;
-    let pdas: Vec<Pubkey> = (0..state.number_of_markets).map(DriftUtils::perp_market_pda).collect();
+    let pdas: Vec<Pubkey> = (0..state.number_of_markets)
+      .map(DriftUtils::perp_market_pda)
+      .collect();
 
-    let res = client.get_multiple_accounts_with_commitment(&pdas, CommitmentConfig::confirmed()).await?;
+    let res = client
+      .get_multiple_accounts_with_commitment(&pdas, CommitmentConfig::confirmed())
+      .await?;
     let keyed_accounts = res.value;
     let slot = res.context.slot;
     let valid_accounts: Vec<Account> = keyed_accounts.into_iter().flatten().collect();
-    let markets: Vec<DecodedAcctCtx<PerpMarket>> = valid_accounts.into_iter().enumerate().flat_map(|(i, a)| {
-      let mut bytes = &a.data.as_slice()[8..];
-      match PerpMarket::deserialize(&mut bytes) {
-        Ok(market) => Some(DecodedAcctCtx {
-          key: pdas[i],
-          account: a,
-          slot,
-          decoded: market,
-        }),
-        Err(_) => None,
-      }
-    }).collect();
+    let markets: Vec<DecodedAcctCtx<PerpMarket>> = valid_accounts
+      .into_iter()
+      .enumerate()
+      .flat_map(|(i, a)| {
+        let mut bytes = &a.data.as_slice()[8..];
+        match PerpMarket::deserialize(&mut bytes) {
+          Ok(market) => Some(DecodedAcctCtx {
+            key: pdas[i],
+            account: a,
+            slot,
+            decoded: market,
+          }),
+          Err(_) => None,
+        }
+      })
+      .collect();
     Ok(markets)
   }
 
@@ -126,24 +143,32 @@ impl DriftUtils {
     let state_key = DriftUtils::state_pda();
     let state_data = client.get_account_data(&state_key).await?;
     let state = State::try_deserialize(&mut state_data.as_slice())?;
-    let pdas: Vec<Pubkey> = (0..state.number_of_spot_markets).map(DriftUtils::spot_market_pda).collect();
+    let pdas: Vec<Pubkey> = (0..state.number_of_spot_markets)
+      .map(DriftUtils::spot_market_pda)
+      .collect();
 
-    let res = client.get_multiple_accounts_with_commitment(&pdas, CommitmentConfig::confirmed()).await?;
+    let res = client
+      .get_multiple_accounts_with_commitment(&pdas, CommitmentConfig::confirmed())
+      .await?;
     let keyed_accounts = res.value;
     let slot = res.context.slot;
     let valid_accounts: Vec<Account> = keyed_accounts.into_iter().flatten().collect();
-    let markets: Vec<DecodedAcctCtx<SpotMarket>> = valid_accounts.into_iter().enumerate().flat_map(|(i, a)| {
-      let mut bytes = &a.data.as_slice()[8..];
-      match SpotMarket::deserialize(&mut bytes) {
-        Ok(market) => Some(DecodedAcctCtx {
-          key: pdas[i],
-          account: a,
-          slot,
-          decoded: market,
-        }),
-        Err(_) => None,
-      }
-    }).collect();
+    let markets: Vec<DecodedAcctCtx<SpotMarket>> = valid_accounts
+      .into_iter()
+      .enumerate()
+      .flat_map(|(i, a)| {
+        let mut bytes = &a.data.as_slice()[8..];
+        match SpotMarket::deserialize(&mut bytes) {
+          Ok(market) => Some(DecodedAcctCtx {
+            key: pdas[i],
+            account: a,
+            slot,
+            decoded: market,
+          }),
+          Err(_) => None,
+        }
+      })
+      .collect();
     Ok(markets)
   }
 
@@ -195,10 +220,12 @@ impl DriftUtils {
       with_context: Some(true),
     };
 
-    let response = rpc.send::<OptionalContext<Vec<RpcKeyedAccount>>>(
-      RpcRequest::GetProgramAccounts,
-      serde_json::json!([crate::drift_cpi::id().to_string(), config]),
-    ).await?;
+    let response = rpc
+      .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
+        RpcRequest::GetProgramAccounts,
+        serde_json::json!([crate::drift_cpi::id().to_string(), config]),
+      )
+      .await?;
 
     let mut users = vec![];
     if let OptionalContext::Context(accounts) = response {
@@ -215,16 +242,23 @@ impl DriftUtils {
     Ok(users)
   }
 
-  pub async fn user_stats(rpc: &RpcClient, user_auths: &[Pubkey]) -> anyhow::Result<Vec<DecodedAcctCtx<UserStats>>> {
-    let pdas = user_auths.iter().map(DriftUtils::user_stats_pda).collect::<Vec<Pubkey>>();
+  pub async fn user_stats(
+    rpc: &RpcClient,
+    user_auths: &[Pubkey],
+  ) -> anyhow::Result<Vec<DecodedAcctCtx<UserStats>>> {
+    let pdas = user_auths
+      .iter()
+      .map(DriftUtils::user_stats_pda)
+      .collect::<Vec<Pubkey>>();
 
     let account_infos = NexusClient::accounts(rpc, &pdas).await?;
-    let user_stats: Vec<DecodedAcctCtx<UserStats>> = account_infos.into_par_iter().flat_map(|k| {
-      match AccountType::decode(k.account.data.as_slice()).map_err(
-        |e| anyhow::anyhow!("Failed to decode account: {:?}", e)
-      ) {
-        Ok(account) => {
-          match account {
+    let user_stats: Vec<DecodedAcctCtx<UserStats>> = account_infos
+      .into_par_iter()
+      .flat_map(|k| {
+        match AccountType::decode(k.account.data.as_slice())
+          .map_err(|e| anyhow::anyhow!("Failed to decode account: {:?}", e))
+        {
+          Ok(account) => match account {
             AccountType::UserStats(user) => Some(DecodedAcctCtx {
               key: k.key,
               account: k.account,
@@ -232,14 +266,14 @@ impl DriftUtils {
               decoded: user,
             }),
             _ => None,
+          },
+          Err(e) => {
+            log::error!("{:#?}", e);
+            None
           }
         }
-        Err(e) => {
-          log::error!("{:#?}", e);
-          None
-        }
-      }
-    }).collect();
+      })
+      .collect();
 
     Ok(user_stats)
   }
@@ -253,9 +287,9 @@ impl DriftUtils {
     let mut users = DriftUtils::users(rpc).await?;
     let end = Instant::now();
     info!(
-        "Fetched Drift {} users in {}s",
-        &users.len(),
-        trunc!(end.duration_since(start).as_secs_f64(), 2)
+      "Fetched Drift {} users in {}s",
+      &users.len(),
+      trunc!(end.duration_since(start).as_secs_f64(), 2)
     );
 
     // sort where highest roi is first index
@@ -264,14 +298,16 @@ impl DriftUtils {
 
     // map all User accounts to each authority
     let mut user_auths = HashMap::<Pubkey, Vec<DecodedAcctCtx<User>>>::new();
-    users.into_iter().for_each(|u| match user_auths.get_mut(&u.decoded.authority) {
-      Some(users) => {
-        users.push(u);
-      }
-      None => {
-        user_auths.insert(u.decoded.authority, vec![u]);
-      }
-    });
+    users
+      .into_iter()
+      .for_each(|u| match user_auths.get_mut(&u.decoded.authority) {
+        Some(users) => {
+          users.push(u);
+        }
+        None => {
+          user_auths.insert(u.decoded.authority, vec![u]);
+        }
+      });
 
     // get UserStats account for each authority
     let auths = user_auths.keys().cloned().collect::<Vec<Pubkey>>();
@@ -282,16 +318,20 @@ impl DriftUtils {
     // Therefore, insert (which overwrites) is safe.
     let mut traders = HashMap::<Pubkey, DriftTrader>::new();
     // filter traders who have traded in the last 30 days
-    user_stats.into_iter().filter(|us| us.decoded.taker_volume30d > 0 && us.decoded.maker_volume30d > 0).for_each(|us| {
-      let users: Vec<DecodedAcctCtx<User>> = user_auths.remove(&us.decoded.authority).unwrap_or_default();
-      let key = us.decoded.authority;
-      let trader = DriftTrader {
-        authority: us.decoded.authority,
-        user_stats: us,
-        users,
-      };
-      traders.insert(key, trader);
-    });
+    user_stats
+      .into_iter()
+      .filter(|us| us.decoded.taker_volume30d > 0 && us.decoded.maker_volume30d > 0)
+      .for_each(|us| {
+        let users: Vec<DecodedAcctCtx<User>> =
+          user_auths.remove(&us.decoded.authority).unwrap_or_default();
+        let key = us.decoded.authority;
+        let trader = DriftTrader {
+          authority: us.decoded.authority,
+          user_stats: us,
+          users,
+        };
+        traders.insert(key, trader);
+      });
     Ok(traders)
   }
 
@@ -307,15 +347,20 @@ impl DriftUtils {
   /// Formatted into [`TraderStats`] struct for easy display and less memory usage.
   pub async fn top_trader_stats_by_pnl(rpc: &RpcClient) -> anyhow::Result<Vec<TraderStats>> {
     let best_traders = DriftUtils::top_traders_by_pnl(rpc).await?;
-    let mut trader_stats: Vec<TraderStats> = best_traders.into_iter().map(TraderStats::from).collect();
+    let mut trader_stats: Vec<TraderStats> =
+      best_traders.into_iter().map(TraderStats::from).collect();
     trader_stats.sort_by_key(|a| a.settled_perp_pnl as i64);
     Ok(trader_stats)
   }
 
-  pub async fn drift_historical_pnl(client: &Client, user: &Pubkey, days_back: i64) -> anyhow::Result<HistoricalPerformance> {
+  pub async fn drift_historical_pnl(
+    client: &Client,
+    user: &Pubkey,
+    days_back: i64,
+  ) -> anyhow::Result<HistoricalPerformance> {
     let end = Time::now();
     // drift doesn't have anything more recent than 2 days ago
-    let end = end.delta_date(-2);
+    // let end = end.delta_date(-2);
 
     let mut data = vec![];
     for i in 0..days_back {
@@ -331,7 +376,11 @@ impl DriftUtils {
         date.day.to_dd()
       );
 
-      let res = client.get(url.clone()).header("Accept-Encoding", "gzip").send().await?;
+      let res = client
+        .get(url.clone())
+        .header("Accept-Encoding", "gzip")
+        .send()
+        .await?;
       if res.status().is_success() {
         let bytes = res.bytes().await?;
         let decoder = flate2::read::GzDecoder::new(bytes.as_ref());
@@ -359,21 +408,27 @@ impl DriftUtils {
     Ok(HistoricalPerformance(data))
   }
 
-  pub async fn perp_market_info(cache: &RwLock<Cache>, perp_market_index: u16) -> anyhow::Result<OraclePrice> {
+  pub async fn perp_market_info(
+    cache: &RwLock<Cache>,
+    perp_market_index: u16,
+  ) -> anyhow::Result<OraclePrice> {
     let market_pda = DriftUtils::perp_market_pda(perp_market_index);
     let cache = cache.read().await;
-    let perp_market = cache.decoded_account::<PerpMarket>(&market_pda, None).await?.decoded;
+    let perp_market = cache
+      .decoded_account::<PerpMarket>(&market_pda, None)
+      .await?
+      .decoded;
 
     let oracle = perp_market.amm.oracle;
     let oracle_ctx = cache.account(&oracle, None).await?;
-    let oracle_acct_info = oracle_ctx.account.to_account_info(oracle, false, false, oracle_ctx.account.executable);
+    let oracle_acct_info =
+      oracle_ctx
+        .account
+        .to_account_info(oracle, false, false, oracle_ctx.account.executable);
     let slot = oracle_ctx.slot;
     let oracle_source = perp_market.amm.oracle_source;
-    let price_data = get_oracle_price(
-      &oracle_source,
-      &oracle_acct_info,
-      slot,
-    ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, slot)
+      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
     Ok(OraclePrice {
@@ -387,7 +442,10 @@ impl DriftUtils {
   }
 
   pub fn perp_position_available(pos: &PerpPosition) -> bool {
-    !DriftUtils::perp_is_open_position(pos) && !DriftUtils::perp_has_open_order(pos) && !DriftUtils::has_unsettled_pnl(pos) && !DriftUtils::perp_is_lp(pos)
+    !DriftUtils::perp_is_open_position(pos)
+      && !DriftUtils::perp_has_open_order(pos)
+      && !DriftUtils::has_unsettled_pnl(pos)
+      && !DriftUtils::perp_is_lp(pos)
   }
   fn perp_is_open_position(pos: &PerpPosition) -> bool {
     pos.base_asset_amount != 0
@@ -409,23 +467,33 @@ impl DriftUtils {
     let state_key = DriftUtils::state_pda();
     let state_data = client.get_account_data(&state_key).await?;
     let state = State::try_deserialize(&mut state_data.as_slice())?;
-    let spot_market_pdas: Vec<Pubkey> = (0..state.number_of_spot_markets).map(DriftUtils::spot_market_pda).collect();
-    let perp_market_pdas: Vec<Pubkey> = (0..state.number_of_markets).map(DriftUtils::perp_market_pda).collect();
+    let spot_market_pdas: Vec<Pubkey> = (0..state.number_of_spot_markets)
+      .map(DriftUtils::spot_market_pda)
+      .collect();
+    let perp_market_pdas: Vec<Pubkey> = (0..state.number_of_markets)
+      .map(DriftUtils::perp_market_pda)
+      .collect();
 
     let (spot_markets, perp_markets) = tokio::join!(
-        client.get_multiple_accounts(spot_market_pdas.as_slice()),
-        client.get_multiple_accounts(perp_market_pdas.as_slice())
+      client.get_multiple_accounts(spot_market_pdas.as_slice()),
+      client.get_multiple_accounts(perp_market_pdas.as_slice())
     );
 
-    let spot_markets = spot_markets?.into_iter().map(|x| {
-      let account = x.unwrap();
-      SpotMarket::try_deserialize(&mut account.data.as_slice()).unwrap()
-    }).collect();
+    let spot_markets = spot_markets?
+      .into_iter()
+      .map(|x| {
+        let account = x.unwrap();
+        SpotMarket::try_deserialize(&mut account.data.as_slice()).unwrap()
+      })
+      .collect();
 
-    let perp_markets = perp_markets?.into_iter().map(|x| {
-      let account = x.unwrap();
-      PerpMarket::try_deserialize(&mut account.data.as_slice()).unwrap()
-    }).collect();
+    let perp_markets = perp_markets?
+      .into_iter()
+      .map(|x| {
+        let account = x.unwrap();
+        PerpMarket::try_deserialize(&mut account.data.as_slice()).unwrap()
+      })
+      .collect();
 
     Ok((spot_markets, perp_markets))
   }
@@ -436,18 +504,15 @@ impl DriftUtils {
     acct: &impl ToAccountInfo,
     slot: u64,
   ) -> anyhow::Result<f64> {
-    let price_data = get_oracle_price(
-      src,
-      &acct.to_account_info(key, false, false, false),
-      slot,
-    ).map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let price_data = get_oracle_price(src, &acct.to_account_info(key, false, false, false), slot)
+      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
     Ok(price_data.price as f64 / PRICE_PRECISION as f64)
   }
 
   pub fn log_order(params: &OrderParams, oracle_price: &OraclePrice, prefix: Option<&str>) {
     let dir = match params.direction {
       PositionDirection::Long => "long",
-      PositionDirection::Short => "short"
+      PositionDirection::Short => "short",
     };
     let base = trunc!(params.base_asset_amount as f64 / BASE_PRECISION as f64, 2);
     match prefix {
