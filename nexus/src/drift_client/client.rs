@@ -69,13 +69,8 @@ impl DriftClient {
     spot_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
   ) -> anyhow::Result<()> {
     let spot_market_key = DriftUtils::spot_market_pda(market_index);
-    let spot_market = cache
-      .decoded_account::<SpotMarket>(&spot_market_key, None)
-      .await?;
-    let oracle = cache
-      .account(&spot_market.decoded.oracle, None)
-      .await?
-      .clone();
+    let spot_market = cache.decoded_account::<SpotMarket>(&spot_market_key, None)?;
+    let oracle = cache.account(&spot_market.decoded.oracle, None)?.clone();
     let spot_market_acct = spot_market.account;
 
     let acct_info = spot_market_acct.to_account_info(spot_market_key, false, writable, false);
@@ -102,12 +97,9 @@ impl DriftClient {
     perp_market_account_map: &mut HashMap<u16, AccountInfo<'static>>,
   ) -> anyhow::Result<()> {
     let perp_market_key = DriftUtils::perp_market_pda(market_index);
-    let perp_market = cache
-      .decoded_account::<PerpMarket>(&perp_market_key, None)
-      .await?;
+    let perp_market = cache.decoded_account::<PerpMarket>(&perp_market_key, None)?;
     let oracle = cache
-      .account(&perp_market.decoded.amm.oracle, None)
-      .await?
+      .account(&perp_market.decoded.amm.oracle, None)?
       .clone();
 
     let acct_info = perp_market
@@ -216,7 +208,7 @@ impl DriftClient {
 
     let user_key = DriftUtils::user_pda(&self.signer.pubkey(), 0);
     if params.use_market_last_slot_cache {
-      let last_user_slot = cache.account(&user_key, None).await?.slot;
+      let last_user_slot = cache.account(&user_key, None)?.slot;
       for perp_market in
         cache.registry_accounts::<PerpMarket>(&CacheKeyRegistry::PerpMarkets, None)?
       {
@@ -517,8 +509,7 @@ impl DriftClient {
   ) -> anyhow::Result<()> {
     let cache = cache.read().await;
     let user = cache
-      .decoded_account::<User>(&self.sub_account, None)
-      .await?
+      .decoded_account::<User>(&self.sub_account, None)?
       .decoded;
 
     let state = DriftUtils::state_pda();
@@ -574,22 +565,18 @@ impl DriftClient {
         let (sm, price) = match o.market_type {
           MarketType::Perp => {
             let pm = cache
-              .decoded_account::<PerpMarket>(&DriftUtils::perp_market_pda(o.market_index), None)
-              .await?
+              .decoded_account::<PerpMarket>(&DriftUtils::perp_market_pda(o.market_index), None)?
               .decoded;
-            let sm = cache
-              .decoded_account::<SpotMarket>(
-                &DriftUtils::spot_market_pda(pm.quote_spot_market_index),
-                None,
-              )
-              .await?;
+            let sm = cache.decoded_account::<SpotMarket>(
+              &DriftUtils::spot_market_pda(pm.quote_spot_market_index),
+              None,
+            )?;
             let price = self.perp_market_price(&cache, pm.market_index).await?;
             (sm, price)
           }
           MarketType::Spot => {
             let sm = cache
-              .decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(o.market_index), None)
-              .await?;
+              .decoded_account::<SpotMarket>(&DriftUtils::spot_market_pda(o.market_index), None)?;
             let price = self
               .spot_market_price(&cache, sm.decoded.market_index)
               .await?;
@@ -664,8 +651,7 @@ impl DriftClient {
 
     let cache = cache.read().await;
     let user = cache
-      .decoded_account::<User>(&self.sub_account, None)
-      .await?
+      .decoded_account::<User>(&self.sub_account, None)?
       .decoded;
 
     let accounts = accounts::CancelOrder {
@@ -712,13 +698,10 @@ impl DriftClient {
   ) -> anyhow::Result<OraclePrice> {
     // let cache = cache.read().await;
     let pm_key = DriftUtils::perp_market_pda(perp_market_index);
-    let pm = cache
-      .decoded_account::<PerpMarket>(&pm_key, None)
-      .await?
-      .decoded;
+    let pm = cache.decoded_account::<PerpMarket>(&pm_key, None)?.decoded;
     let oracle_key = pm.amm.oracle;
     let oracle_source = pm.amm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None).await?.account.clone();
+    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
 
     let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
 
@@ -738,13 +721,10 @@ impl DriftClient {
     spot_market_index: u16,
   ) -> anyhow::Result<OraclePrice> {
     let sm_key = DriftUtils::spot_market_pda(spot_market_index);
-    let sm = cache
-      .decoded_account::<SpotMarket>(&sm_key, None)
-      .await?
-      .decoded;
+    let sm = cache.decoded_account::<SpotMarket>(&sm_key, None)?.decoded;
     let oracle_key = sm.oracle;
     let oracle_source = sm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None).await?.account.clone();
+    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
     let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
 
     let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, cache.block(None)?.slot)
@@ -876,10 +856,8 @@ impl DriftClient {
     let (price, name) = match market.kind {
       MarketType::Spot => {
         let market_key = DriftUtils::spot_market_pda(market.index);
-        let market_ctx = cache
-          .decoded_account::<SpotMarket>(&market_key, slot)
-          .await?;
-        let oracle_ctx = cache.account(&market_ctx.decoded.oracle, slot).await?;
+        let market_ctx = cache.decoded_account::<SpotMarket>(&market_key, slot)?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.oracle, slot)?;
         let price = DriftUtils::oracle_price(
           &market_ctx.decoded.oracle_source,
           market_ctx.decoded.oracle,
@@ -891,10 +869,8 @@ impl DriftClient {
       }
       MarketType::Perp => {
         let market_key = DriftUtils::perp_market_pda(market.index);
-        let market_ctx = cache
-          .decoded_account::<PerpMarket>(&market_key, slot)
-          .await?;
-        let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, slot).await?;
+        let market_ctx = cache.decoded_account::<PerpMarket>(&market_key, slot)?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, slot)?;
         let price = DriftUtils::oracle_price(
           &market_ctx.decoded.amm.oracle_source,
           market_ctx.decoded.amm.oracle,
@@ -909,5 +885,24 @@ impl DriftClient {
       price: price + offset,
       name,
     })
+  }
+
+  pub async fn users_with_order_for_market(
+    &self,
+    market: MarketId,
+    cache: &RwLockReadGuard<'_, Cache>,
+    slot: Option<u64>,
+  ) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
+    let mut users = cache.decoded_accounts::<User>(slot)?;
+    users.retain(|u| {
+      let orders = u.decoded.orders;
+      let has_order_for_market = orders.iter().any(|o| {
+        let id = MarketId::from((o.market_index, o.market_type));
+        let open = matches!(o.status, OrderStatus::Open);
+        market.eq(&id) && open
+      });
+      u.decoded.has_open_order && has_order_for_market
+    });
+    Ok(users)
   }
 }

@@ -1,8 +1,11 @@
-use crate::{Data, trunc};
+use crate::{trunc, Data};
 use drift_cpi::{OracleSource, PerpMarket, SpotMarket};
+use serde::{Deserialize, Serialize};
 
 /// https://docs.drift.trade/historical-data/historical-data-glossary#settle-pnl
-#[derive(Debug, Clone, borsh::BorshSerialize, borsh::BorshDeserialize, serde::Serialize, serde::Deserialize)]
+#[derive(
+  Debug, Clone, borsh::BorshSerialize, borsh::BorshDeserialize, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoricalSettlePnl {
   pub pnl: f64,
@@ -16,7 +19,7 @@ pub struct HistoricalSettlePnl {
   pub ts: u64,
   pub market_index: u16,
   pub explanation: String,
-  pub program_id: String
+  pub program_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -51,16 +54,18 @@ impl HistoricalPerformance {
   }
 
   pub fn dataset(&self) -> Vec<Data> {
-    self.summary().into_iter().map(|s| {
-      Data {
+    self
+      .summary()
+      .into_iter()
+      .map(|s| Data {
         x: s.ts as i64,
         y: s.cum_quote_pnl,
-      }
-    }).collect()
+      })
+      .collect()
   }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRecord {
   pub cum_quote_pnl: f64,
   pub trade_quote_pnl: f64,
@@ -68,25 +73,25 @@ pub struct TradeRecord {
   pub ts: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PnlStub {
   pub user: String,
-  pub avg_quote_pnl: f64
+  pub avg_quote_pnl: f64,
 }
 
 pub struct OraclePrice {
   pub price: f64,
-  pub name: String
+  pub name: String,
 }
 
 #[derive(Clone)]
 pub struct PerpOracle {
   pub market: PerpMarket,
-  pub source: OracleSource
+  pub source: OracleSource,
 }
 
 #[derive(Clone)]
 pub struct SpotOracle {
   pub market: SpotMarket,
-  pub source: OracleSource
+  pub source: OracleSource,
 }

@@ -1,9 +1,9 @@
 use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
 
-use drift_cpi::{QUOTE_PRECISION, User, UserStats};
+use drift_cpi::{User, UserStats, QUOTE_PRECISION};
 
-use crate::{DecodedAcctCtx, trunc};
+use crate::{trunc, DecodedAcctCtx};
 
 pub struct TokenBalance {
   pub balance: u128,
@@ -37,14 +37,14 @@ impl DriftTrader {
   }
   pub fn taker_volume_30d(&self) -> f64 {
     trunc!(
-        self.user_stats.decoded.taker_volume30d as f64 / (QUOTE_PRECISION as f64),
-        3
+      self.user_stats.decoded.taker_volume30d as f64 / (QUOTE_PRECISION as f64),
+      3
     )
   }
   pub fn maker_volume_30d(&self) -> f64 {
     trunc!(
-        self.user_stats.decoded.maker_volume30d as f64 / (QUOTE_PRECISION as f64),
-        3
+      self.user_stats.decoded.maker_volume30d as f64 / (QUOTE_PRECISION as f64),
+      3
     )
   }
   pub fn roi(&self) -> Option<f64> {
@@ -55,23 +55,24 @@ impl DriftTrader {
   }
   pub fn pnl_per_volume(&self) -> f64 {
     trunc!(
-        self.settled_perp_pnl() / (self.taker_volume_30d() + self.maker_volume_30d()),
-        3
+      self.settled_perp_pnl() / (self.taker_volume_30d() + self.maker_volume_30d()),
+      3
     )
   }
   pub fn best_user(&self) -> &DecodedAcctCtx<User> {
-    self.users
-        .iter()
-        .max_by_key(|u| u.decoded.settled_perp_pnl)
-        .unwrap()
+    self
+      .users
+      .iter()
+      .max_by_key(|u| u.decoded.settled_perp_pnl)
+      .unwrap()
   }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct TraderStub {
   pub authority: String,
   pub pnl: f64,
-  pub best_user: String
+  pub best_user: String,
 }
 
 pub struct DriftTraderSnapshot {

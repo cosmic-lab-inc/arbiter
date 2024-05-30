@@ -38,9 +38,11 @@ use solana_transaction_status::UiTransactionEncoding;
 use tokio::io::ReadBuf;
 use tokio::sync::RwLockReadGuard;
 use tokio::sync::{RwLock, RwLockWriteGuard};
+use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
 use yellowstone_grpc_proto::prelude::{
-  CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterBlocks,
-  SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
+  subscribe_request_filter_accounts_filter_memcmp, CommitmentLevel, SubscribeRequestFilterAccounts,
+  SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
+  SubscribeRequestFilterBlocks, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
   SubscribeRequestFilterTransactions,
 };
 
@@ -56,6 +58,7 @@ pub struct Imitator {
   pub market_filter: Option<Vec<MarketId>>,
   pub cache: Arc<RwLock<Cache>>,
   rx: Receiver<TxStub>,
+  pub orderbook: Arc<RwLock<Orderbook>>,
 }
 
 impl Imitator {
@@ -89,6 +92,7 @@ impl Imitator {
       copy_user,
       market_filter,
       rx,
+      orderbook: Arc::new(RwLock::new(Orderbook::new())),
     };
 
     let account_filter: Vec<String> = this
@@ -97,17 +101,18 @@ impl Imitator {
       .into_iter()
       .map(|k| k.to_string())
       .collect();
+
     let cfg = GeyserConfig {
       grpc,
       x_token,
       slots: Some(SubscribeRequestFilterSlots {
         filter_by_commitment: Some(true),
       }),
-      // slots: None,
       accounts: Some(SubscribeRequestFilterAccounts {
         account: account_filter,
         owner: vec![],
-        filters: vec![],
+        // subscribe to all `User` accounts
+        filters: vec![DriftUtils::grpc_subscribe_users_filter()],
       }),
       transactions: Some(SubscribeRequestFilterTransactions {
         vote: Some(false),
@@ -117,15 +122,15 @@ impl Imitator {
         account_exclude: vec![],
         account_required: vec![],
       }),
-      blocks_meta: Some(SubscribeRequestFilterBlocksMeta {}),
-      // blocks_meta: None,
+      blocks_meta: None,
       commitment: CommitmentLevel::Processed,
     };
     // stream updates from gRPC
     let nexus = NexusClient::new(cfg)?;
     let cache = this.cache.clone();
+    let orderbook = this.orderbook.clone();
     tokio::task::spawn(async move {
-      nexus.stream(&cache, tx).await?;
+      nexus.stream(&cache, tx, &orderbook).await?;
       Result::<_, anyhow::Error>::Ok(())
     });
     Ok(this)
@@ -149,7 +154,7 @@ impl Imitator {
   ///
   /// 2. Start geyser stream of account, transaction, and slot updates.
   ///
-  /// 3. Listen to geyser stream of transactions.
+  /// 3. Listen to geyser stream.
   pub async fn start(&mut self) -> anyhow::Result<()> {
     self.drift.setup_user().await?;
     let mut trx = self.new_tx();

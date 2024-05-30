@@ -289,7 +289,10 @@ mod tests {
     let path = format!("{}/traders.json", prefix);
     let top_traders: Vec<TraderStub> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
     // ordered least to greatest profit, so reverse order and take the best performers
-    let top_traders: Vec<TraderStub> = top_traders.into_iter().rev().take(15).collect();
+    // todo: run this
+    let top_traders: Vec<TraderStub> = top_traders.into_iter().rev().take(175).collect();
+    let top_traders = top_traders.as_slice()[125..].to_vec();
+
     let users: Vec<Pubkey> = top_traders
       .into_iter()
       .flat_map(|t| Pubkey::from_str(&t.best_user))
@@ -298,14 +301,17 @@ mod tests {
     let mut top_dogs = vec![];
     for user in users {
       let data = DriftUtils::drift_historical_pnl(&imitator.client(), &user, 100).await?;
-      tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
       if data.dataset().len() > 1 && data.avg_quote_pnl() > 0.0 {
         top_dogs.push(data.clone());
 
+        let json = serde_json::to_string(data.dataset().as_slice())?;
+        std::fs::write(&format!("{}/data/{}.json", prefix, user), json)?;
+
         Plot::plot(
           vec![data.dataset()],
-          &format!("{}/pnl/{}_cum_pnl.png", prefix, user),
+          &format!("{}/images/{}_cum_pnl.png", prefix, user),
           &format!("{} Performance", user),
           "Cum USDC PnL",
           "Unix Seconds",
@@ -314,6 +320,7 @@ mod tests {
       }
     }
 
+    // todo: sort by linear regression of pnl and/or max drawdown instead
     let best: Vec<PnlStub> = top_dogs
       .into_iter()
       .map(|d| PnlStub {

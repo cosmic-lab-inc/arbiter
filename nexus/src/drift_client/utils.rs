@@ -11,12 +11,18 @@ use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_client::rpc_filter::{Memcmp, RpcFilterType};
+use solana_rpc_client_api::filter::MemcmpEncodedBytes;
 use solana_rpc_client_api::request::RpcRequest;
 use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
 use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::RwLock;
+use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
+use yellowstone_grpc_proto::prelude::{
+  subscribe_request_filter_accounts_filter_memcmp, SubscribeRequestFilterAccountsFilter,
+  SubscribeRequestFilterAccountsFilterMemcmp,
+};
 
 use crate::*;
 use crate::{trunc, DecodedAcctCtx, Time};
@@ -172,50 +178,84 @@ impl DriftUtils {
     Ok(markets)
   }
 
-  // pub async fn users(rpc: &RpcClient) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
-  //   let discrim = User::discriminator();
-  //   let memcmp = Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice());
-  //   let filters = vec![RpcFilterType::Memcmp(memcmp)];
-  //   let account_config = RpcAccountInfoConfig {
-  //     encoding: Some(UiAccountEncoding::Base64),
-  //     commitment: Some(CommitmentConfig::confirmed()),
-  //     ..Default::default()
-  //   };
-  //   let config = RpcProgramAccountsConfig {
-  //     filters: Some(filters),
-  //     account_config,
-  //     with_context: Some(true),
-  //   };
-  //
-  //   let slot = rpc.get_slot_with_commitment(CommitmentConfig::confirmed()).await?;
-  //   let now = std::time::Instant::now();
-  //   let accounts = rpc.get_program_accounts_with_config(&id(), config).await?;
-  //   info!("get users in {:?}", now.elapsed());
-  //   let now = std::time::Instant::now();
-  //   let mut users = vec![];
-  //   for (key, account) in accounts {
-  //     let decoded = account.decode_account::<User>()?;
-  //     users.push(DecodedAcctCtx {
-  //       key,
-  //       account,
-  //       slot,
-  //       decoded,
-  //     });
-  //   }
-  //   info!("decode users in {:?}", now.elapsed());
-  //   Ok(users)
-  // }
+  pub fn users_filter() -> RpcFilterType {
+    let discrim = User::discriminator();
+    RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice()))
+  }
+
+  pub fn grpc_subscribe_users_filter() -> SubscribeRequestFilterAccountsFilter {
+    SubscribeRequestFilterAccountsFilter {
+      filter: Some(Filter::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+        offset: 0,
+        data: Some(
+          subscribe_request_filter_accounts_filter_memcmp::Data::Base58(
+            solana_sdk::bs58::encode(User::discriminator()).into_string(),
+          ),
+        ),
+      })),
+    }
+  }
+
+  pub fn users_with_order_filter() -> RpcFilterType {
+    let filter: String = solana_sdk::bs58::encode(vec![1]).into_string();
+    RpcFilterType::Memcmp(Memcmp::new(4352, MemcmpEncodedBytes::Base58(filter)))
+  }
+
+  pub fn grpc_subscribe_users_with_order_filter() -> SubscribeRequestFilterAccountsFilter {
+    SubscribeRequestFilterAccountsFilter {
+      filter: Some(Filter::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+        offset: 4352,
+        data: Some(
+          subscribe_request_filter_accounts_filter_memcmp::Data::Base58(
+            solana_sdk::bs58::encode(vec![1]).into_string(),
+          ),
+        ),
+      })),
+    }
+  }
 
   pub async fn users(rpc: &RpcClient) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
-    let discrim = User::discriminator();
-    let memcmp = Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice());
-    let filters = vec![RpcFilterType::Memcmp(memcmp)];
+    let filters = Some(vec![Self::users_filter()]);
     let account_config = RpcAccountInfoConfig {
       encoding: Some(UiAccountEncoding::Base64),
       ..Default::default()
     };
     let config = RpcProgramAccountsConfig {
-      filters: Some(filters),
+      filters,
+      account_config,
+      with_context: Some(true),
+    };
+
+    let response = rpc
+      .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
+        RpcRequest::GetProgramAccounts,
+        serde_json::json!([crate::drift_cpi::id().to_string(), config]),
+      )
+      .await?;
+
+    let mut users = vec![];
+    if let OptionalContext::Context(accounts) = response {
+      for account in accounts.value {
+        let slot = accounts.context.slot;
+        users.push(DecodedAcctCtx {
+          key: Pubkey::from_str(&account.pubkey)?,
+          account: account.account.to_account()?,
+          slot,
+          decoded: account.account.decode_account::<User>()?,
+        });
+      }
+    }
+    Ok(users)
+  }
+
+  pub async fn users_with_order(rpc: &RpcClient) -> anyhow::Result<Vec<DecodedAcctCtx<User>>> {
+    let filters = Some(vec![Self::users_with_order_filter()]);
+    let account_config = RpcAccountInfoConfig {
+      encoding: Some(UiAccountEncoding::Base64),
+      ..Default::default()
+    };
+    let config = RpcProgramAccountsConfig {
+      filters,
       account_config,
       with_context: Some(true),
     };
@@ -376,11 +416,28 @@ impl DriftUtils {
         date.day.to_dd()
       );
 
-      let res = client
-        .get(url.clone())
-        .header("Accept-Encoding", "gzip")
-        .send()
-        .await?;
+      let fetch = || async {
+        client
+          .get(url.clone())
+          .header("Accept-Encoding", "gzip")
+          .send()
+          .await
+      };
+
+      let mut res = None;
+      while res.is_none() {
+        match fetch().await {
+          Ok(r) => {
+            res = Some(r);
+          }
+          Err(e) => {
+            log::error!("Failed to get historical Drift data: {:?}", e);
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+          }
+        }
+      }
+      let res = res.ok_or(anyhow::anyhow!("Failed to get resolve Drift data"))?;
+
       if res.status().is_success() {
         let bytes = res.bytes().await?;
         let decoder = flate2::read::GzDecoder::new(bytes.as_ref());
@@ -415,12 +472,11 @@ impl DriftUtils {
     let market_pda = DriftUtils::perp_market_pda(perp_market_index);
     let cache = cache.read().await;
     let perp_market = cache
-      .decoded_account::<PerpMarket>(&market_pda, None)
-      .await?
+      .decoded_account::<PerpMarket>(&market_pda, None)?
       .decoded;
 
     let oracle = perp_market.amm.oracle;
-    let oracle_ctx = cache.account(&oracle, None).await?;
+    let oracle_ctx = cache.account(&oracle, None)?;
     let oracle_acct_info =
       oracle_ctx
         .account

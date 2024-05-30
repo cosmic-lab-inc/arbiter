@@ -4,7 +4,11 @@ use std::collections::HashMap;
 use anchor_lang::prelude::{AccountInfo, AccountMeta};
 use solana_sdk::pubkey::Pubkey;
 
-use drift_cpi::{MarketType, OraclePriceData, OracleSource, User};
+use crate::{DriftUtils, ToAccountInfo};
+use drift_cpi::{
+  MarketType, OraclePriceData, OracleSource, Order, PositionDirection, User, BASE_PRECISION,
+  PRICE_PRECISION,
+};
 
 #[derive(Clone)]
 pub struct RemainingAccountParams {
@@ -45,12 +49,22 @@ pub struct MarketId {
 impl PartialEq<Self> for MarketId {
   fn eq(&self, other: &Self) -> bool {
     let index_eq = self.index == other.index;
-    let kind_eq = matches!((self.kind, other.kind), (MarketType::Spot, MarketType::Spot) | (MarketType::Perp, MarketType::Perp));
+    let kind_eq = matches!(
+      (self.kind, other.kind),
+      (MarketType::Spot, MarketType::Spot) | (MarketType::Perp, MarketType::Perp)
+    );
     index_eq && kind_eq
   }
 }
 
 impl MarketId {
+  pub fn key(&self) -> Pubkey {
+    match self.kind {
+      MarketType::Spot => DriftUtils::spot_market_pda(self.index),
+      MarketType::Perp => DriftUtils::perp_market_pda(self.index),
+    }
+  }
+
   /// Id of a perp market
   pub const fn perp(index: u16) -> Self {
     Self {
@@ -71,6 +85,13 @@ impl MarketId {
     index: 0,
     kind: MarketType::Spot,
   };
+
+  pub fn kind_eq(&self, other: MarketType) -> bool {
+    matches!(
+      (self.kind, other),
+      (MarketType::Spot, MarketType::Spot) | (MarketType::Perp, MarketType::Perp)
+    )
+  }
 }
 
 impl From<(u16, MarketType)> for MarketId {
@@ -155,4 +176,104 @@ impl From<RemainingAccount> for AccountMeta {
       is_signer: false,
     }
   }
+}
+
+pub struct DlobNode {
+  pub order: Order,
+}
+
+impl DlobNode {
+  pub fn new(order: Order) -> Self {
+    Self { order }
+  }
+
+  pub fn price(
+    &self,
+    src: &OracleSource,
+    key: Pubkey,
+    acct: &impl ToAccountInfo,
+    slot: u64,
+  ) -> anyhow::Result<f64> {
+    let oracle_price = DriftUtils::oracle_price(src, key, acct, slot)?;
+    let offset = self.order.oracle_price_offset as f64 / PRICE_PRECISION as f64;
+    Ok(oracle_price + offset)
+  }
+
+  pub fn slot(&self) -> u64 {
+    self.order.slot
+  }
+
+  pub fn size(&self) -> f64 {
+    (self.order.base_asset_amount - self.order.base_asset_amount_filled) as f64
+      / BASE_PRECISION as f64
+  }
+
+  pub fn filled(&self) -> bool {
+    self.order.base_asset_amount == self.order.base_asset_amount_filled
+  }
+
+  pub fn base(&self) -> f64 {
+    self.order.base_asset_amount as f64 / BASE_PRECISION as f64
+  }
+
+  pub fn filled_base(&self) -> f64 {
+    self.order.base_asset_amount_filled as f64 / BASE_PRECISION as f64
+  }
+
+  pub fn is_bid(&self) -> bool {
+    matches!(self.order.direction, PositionDirection::Long)
+  }
+
+  pub fn is_ask(&self) -> bool {
+    matches!(self.order.direction, PositionDirection::Short)
+  }
+
+  pub fn bid(
+    &self,
+    src: &OracleSource,
+    key: Pubkey,
+    acct: &impl ToAccountInfo,
+    slot: u64,
+  ) -> anyhow::Result<BidAsk> {
+    if !self.is_bid() {
+      return Err(anyhow::anyhow!("Order is not a bid"));
+    }
+    Ok(BidAsk {
+      price: self.price(src, key, acct, slot)?,
+      size: self.size(),
+      slot: self.slot(),
+    })
+  }
+
+  pub fn ask(
+    &self,
+    src: &OracleSource,
+    key: Pubkey,
+    acct: &impl ToAccountInfo,
+    slot: u64,
+  ) -> anyhow::Result<BidAsk> {
+    if !self.is_ask() {
+      return Err(anyhow::anyhow!("Order is not an ask"));
+    }
+    Ok(BidAsk {
+      price: self.price(src, key, acct, slot)?,
+      size: self.size(),
+      slot: self.slot(),
+    })
+  }
+}
+
+pub struct BidAsk {
+  pub price: f64,
+  pub size: f64,
+  pub slot: u64,
+}
+
+pub struct L3Orderbook {
+  /// First index is highest/best bid
+  pub bids: Vec<BidAsk>,
+  /// First index is lowest/best ask
+  pub asks: Vec<BidAsk>,
+  pub spread: f64,
+  pub slot: u64,
 }

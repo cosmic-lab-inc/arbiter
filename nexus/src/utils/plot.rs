@@ -1,8 +1,9 @@
 use plotters::prelude::*;
-use plotters::style::{BLACK, WHITE};
 use plotters::style::full_palette::*;
+use plotters::style::{BLACK, WHITE};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Data {
   pub x: i64,
   pub y: f64,
@@ -11,7 +12,13 @@ pub struct Data {
 pub struct Plot;
 
 impl Plot {
-  pub fn plot(series: Vec<Vec<Data>>, out_file: &str, title: &str, y_label: &str, x_label: &str) -> anyhow::Result<()> {
+  pub fn plot(
+    series: Vec<Vec<Data>>,
+    out_file: &str,
+    title: &str,
+    y_label: &str,
+    x_label: &str,
+  ) -> anyhow::Result<()> {
     let all: Vec<&Data> = series.iter().flatten().collect();
 
     let mut min_x = i64::MAX;
@@ -34,52 +41,47 @@ impl Plot {
     }
 
     let root = BitMapBackend::new(out_file, (2048, 1024)).into_drawing_area();
-    root.fill(&WHITE).map_err(
-      |e| anyhow::anyhow!("Failed to fill drawing area with white: {}", e)
-    )?;
+    root
+      .fill(&WHITE)
+      .map_err(|e| anyhow::anyhow!("Failed to fill drawing area with white: {}", e))?;
     let mut chart = ChartBuilder::on(&root)
       .margin_top(20)
       .margin_bottom(20)
       .margin_left(30)
       .margin_right(30)
       .set_all_label_area_size(170)
-      .caption(
-        title,
-        ("sans-serif", 40.0).into_font(),
-      )
-      .build_cartesian_2d(min_x..max_x, min_y..max_y).map_err(
-      |e| anyhow::anyhow!("Failed to build cartesian 2d: {}", e)
-    )?;
+      .caption(title, ("sans-serif", 40.0).into_font())
+      .build_cartesian_2d(min_x..max_x, min_y..max_y)
+      .map_err(|e| anyhow::anyhow!("Failed to build cartesian 2d: {}", e))?;
     chart
       .configure_mesh()
       .light_line_style(WHITE)
       .label_style(("sans-serif", 30, &BLACK).into_text_style(&root))
       .x_desc(x_label)
       .y_desc(y_label)
-      .draw().map_err(
-      |e| anyhow::anyhow!("Failed to draw mesh: {}", e)
-    )?;
+      .draw()
+      .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
 
     for data in series {
       let color = Self::random_color();
-      chart.draw_series(
-        LineSeries::new(
-          data.iter().map(|data| (data.x, data.y)),
-          ShapeStyle {
-            color,
-            filled: true,
-            stroke_width: 2,
-          },
-        )
+      chart
+        .draw_series(
+          LineSeries::new(
+            data.iter().map(|data| (data.x, data.y)),
+            ShapeStyle {
+              color,
+              filled: true,
+              stroke_width: 2,
+            },
+          )
           .point_size(3),
-      ).map_err(
-        |e| anyhow::anyhow!("Failed to draw series: {}", e)
-      )?;
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
     }
 
-    root.present().map_err(
-      |e| anyhow::anyhow!("Failed to present root: {}", e)
-    )?;
+    root
+      .present()
+      .map_err(|e| anyhow::anyhow!("Failed to present root: {}", e))?;
 
     Ok(())
   }
