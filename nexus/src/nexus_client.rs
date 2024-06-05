@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use crossbeam::channel::Sender;
@@ -15,8 +16,9 @@ use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 
+use crate::drift_client::{Cache, Orderbook};
 use crate::types::*;
-use crate::{Cache, Decode, GrpcClient, Orderbook, Time, ToAccount};
+use crate::{Decode, GrpcClient, Time, ToAccount};
 
 pub struct NexusClient {
   pub geyser: GrpcClient,
@@ -31,9 +33,10 @@ impl NexusClient {
 
   pub async fn stream(
     &self,
-    cache: &RwLock<Cache>,
-    channel: Sender<TxStub>,
-    orderbook: &RwLock<Orderbook>,
+    cache: &Cache,
+    channel: Option<Sender<TxStub>>,
+    orderbook: Option<&RwLock<Orderbook>>,
+    filter: Option<HashSet<Pubkey>>,
   ) -> anyhow::Result<()> {
     let mut stream = self.geyser.subscribe().await?;
     while let Some(update) = stream.next().await {
@@ -41,55 +44,56 @@ impl NexusClient {
       if let Some(update) = update.update_oneof {
         match update {
           UpdateOneof::Transaction(event) => {
-            if let Some(tx_info) = event.transaction {
-              if let Some(tx) = tx_info.transaction {
-                if let Some(msg) = tx.message {
-                  log::debug!("tx");
-                  let account_keys: Vec<Pubkey> = msg
-                    .account_keys
-                    .iter()
-                    .flat_map(|k| Pubkey::try_from(k.as_slice()))
-                    .collect();
-                  assert_eq!(account_keys.len(), msg.account_keys.len());
-
-                  let mut ixs = vec![];
-                  for ix in msg.instructions {
-                    let program: Pubkey =
-                      *account_keys
-                        .get(ix.program_id_index as usize)
-                        .ok_or(anyhow::anyhow!(
-                          "Program not found at account key index: {}",
-                          ix.program_id_index
-                        ))?;
-                    let accounts: Vec<Pubkey> = ix
-                      .accounts
+            if let Some(channel) = &channel {
+              if let Some(tx_info) = event.transaction {
+                if let Some(tx) = tx_info.transaction {
+                  if let Some(msg) = tx.message {
+                    let account_keys: Vec<Pubkey> = msg
+                      .account_keys
                       .iter()
-                      .flat_map(|ix| account_keys.get(*ix as usize).cloned())
+                      .flat_map(|k| Pubkey::try_from(k.as_slice()))
                       .collect();
-                    let data = ix.data.clone();
+                    assert_eq!(account_keys.len(), msg.account_keys.len());
 
-                    ixs.push(Ix {
-                      program,
-                      accounts,
-                      data,
-                    });
+                    let mut ixs = vec![];
+                    for ix in msg.instructions {
+                      let program: Pubkey =
+                        *account_keys
+                          .get(ix.program_id_index as usize)
+                          .ok_or(anyhow::anyhow!(
+                            "Program not found at account key index: {}",
+                            ix.program_id_index
+                          ))?;
+                      let accounts: Vec<Pubkey> = ix
+                        .accounts
+                        .iter()
+                        .flat_map(|ix| account_keys.get(*ix as usize).cloned())
+                        .collect();
+                      let data = ix.data.clone();
+
+                      ixs.push(Ix {
+                        program,
+                        accounts,
+                        data,
+                      });
+                    }
+
+                    let signer = *account_keys
+                      .first()
+                      .ok_or(anyhow::anyhow!("Signer not found at account key index: 0"))?;
+                    let signature = Signature::try_from(tx_info.signature.as_slice())?;
+                    let hash_bytes: [u8; 32] = msg
+                      .recent_blockhash
+                      .try_into()
+                      .map_err(|e| anyhow::anyhow!("Failed to convert blockhash: {:?}", e))?;
+                    channel.send(TxStub {
+                      slot: event.slot,
+                      blockhash: Hash::from(hash_bytes).to_string(),
+                      ixs,
+                      signature,
+                      signer,
+                    })?;
                   }
-
-                  let signer = *account_keys
-                    .first()
-                    .ok_or(anyhow::anyhow!("Signer not found at account key index: 0"))?;
-                  let signature = Signature::try_from(tx_info.signature.as_slice())?;
-                  let hash_bytes: [u8; 32] = msg
-                    .recent_blockhash
-                    .try_into()
-                    .map_err(|e| anyhow::anyhow!("Failed to convert blockhash: {:?}", e))?;
-                  channel.send(TxStub {
-                    slot: event.slot,
-                    blockhash: Hash::from(hash_bytes).to_string(),
-                    ixs,
-                    signature,
-                    signer,
-                  })?;
                 }
               }
             }
@@ -101,33 +105,39 @@ impl NexusClient {
 
               let account = account.to_account()?.clone();
               if account.owner == drift_cpi::id() {
-                let acct = AccountType::decode(account.data.as_slice())
-                  .map_err(|e| anyhow::anyhow!("Failed to decode account: {:?}", e))?;
-                if let AccountType::User(user) = acct {
-                  let ctx = DecodedAcctCtx {
-                    key,
-                    account: account.clone(),
-                    decoded: user,
-                    slot: event.slot,
-                  };
-                  orderbook.write().await.insert_user(ctx);
+                if let Some(orderbook) = orderbook {
+                  let acct = AccountType::decode(account.data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode account: {:?}", e))?;
+                  if let AccountType::User(user) = acct {
+                    let ctx = DecodedAcctCtx {
+                      key,
+                      account: account.clone(),
+                      decoded: user,
+                      slot: event.slot,
+                    };
+                    orderbook.write().await.insert_user(ctx);
+                  }
                 }
               }
 
-              log::debug!("account: {}", &key);
-              cache.write().await.ring_mut(key).insert(
-                event.slot,
-                AcctCtx {
-                  key,
-                  account,
-                  slot: event.slot,
-                },
-              );
+              let allow = match &filter {
+                Some(filter) => filter.contains(&key),
+                None => true,
+              };
+              if allow {
+                cache.write().await.ring_mut(key).insert(
+                  event.slot,
+                  AcctCtx {
+                    key,
+                    account,
+                    slot: event.slot,
+                  },
+                );
+              }
             }
           }
           UpdateOneof::BlockMeta(event) => {
             if let Some(block_time) = event.block_time {
-              log::debug!("block meta: {}, {}", event.slot, event.blockhash);
               cache.write().await.blocks.insert(
                 event.slot,
                 BlockInfo {
@@ -139,7 +149,6 @@ impl NexusClient {
             }
           }
           UpdateOneof::Slot(event) => {
-            log::debug!("slot: {}", event.slot);
             if event.slot > cache.read().await.slot {
               cache.write().await.slot = event.slot;
             }

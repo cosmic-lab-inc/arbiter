@@ -1,13 +1,14 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use anchor_lang::prelude::{AccountInfo, AccountMeta};
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{DriftUtils, ToAccountInfo};
+use crate::drift_client::DriftUtils;
 use drift_cpi::{
-  MarketType, OraclePriceData, OracleSource, Order, PositionDirection, User, BASE_PRECISION,
-  PRICE_PRECISION,
+  MarketType, OraclePriceData, OracleSource, Order, OrderType, PerpMarket, PositionDirection,
+  SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
 };
 
 #[derive(Clone)]
@@ -28,7 +29,7 @@ pub struct RemainingAccountMaps {
 }
 
 #[derive(Debug, Clone)]
-pub struct MarketInfo {
+pub struct MarketMetadata {
   pub perp_oracle: Pubkey,
   pub perp_oracle_source: OracleSource,
   pub perp_oracle_price_data: Option<OraclePriceData>,
@@ -54,6 +55,19 @@ impl PartialEq<Self> for MarketId {
       (MarketType::Spot, MarketType::Spot) | (MarketType::Perp, MarketType::Perp)
     );
     index_eq && kind_eq
+  }
+}
+
+impl Eq for MarketId {}
+
+impl Hash for MarketId {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.index.hash(state);
+    let kind = match self.kind {
+      MarketType::Spot => 0,
+      MarketType::Perp => 1,
+    };
+    kind.hash(state);
   }
 }
 
@@ -187,16 +201,14 @@ impl DlobNode {
     Self { order }
   }
 
-  pub fn price(
-    &self,
-    src: &OracleSource,
-    key: Pubkey,
-    acct: &impl ToAccountInfo,
-    slot: u64,
-  ) -> anyhow::Result<f64> {
-    let oracle_price = DriftUtils::oracle_price(src, key, acct, slot)?;
-    let offset = self.order.oracle_price_offset as f64 / PRICE_PRECISION as f64;
-    Ok(oracle_price + offset)
+  pub fn price(&self, oracle_price: f64) -> anyhow::Result<f64> {
+    Ok(match self.order.price == 0 {
+      true => {
+        let offset = self.order.oracle_price_offset as f64 / PRICE_PRECISION as f64;
+        oracle_price + offset
+      }
+      false => self.order.price as f64 / PRICE_PRECISION as f64,
+    })
   }
 
   pub fn slot(&self) -> u64 {
@@ -228,35 +240,23 @@ impl DlobNode {
     matches!(self.order.direction, PositionDirection::Short)
   }
 
-  pub fn bid(
-    &self,
-    src: &OracleSource,
-    key: Pubkey,
-    acct: &impl ToAccountInfo,
-    slot: u64,
-  ) -> anyhow::Result<BidAsk> {
+  pub fn bid(&self, oracle_price: f64) -> anyhow::Result<BidAsk> {
     if !self.is_bid() {
       return Err(anyhow::anyhow!("Order is not a bid"));
     }
     Ok(BidAsk {
-      price: self.price(src, key, acct, slot)?,
+      price: self.price(oracle_price)?,
       size: self.size(),
       slot: self.slot(),
     })
   }
 
-  pub fn ask(
-    &self,
-    src: &OracleSource,
-    key: Pubkey,
-    acct: &impl ToAccountInfo,
-    slot: u64,
-  ) -> anyhow::Result<BidAsk> {
+  pub fn ask(&self, oracle_price: f64) -> anyhow::Result<BidAsk> {
     if !self.is_ask() {
       return Err(anyhow::anyhow!("Order is not an ask"));
     }
     Ok(BidAsk {
-      price: self.price(src, key, acct, slot)?,
+      price: self.price(oracle_price)?,
       size: self.size(),
       slot: self.slot(),
     })
@@ -276,4 +276,72 @@ pub struct L3Orderbook {
   pub asks: Vec<BidAsk>,
   pub spread: f64,
   pub slot: u64,
+  pub oracle_price: f64,
+}
+impl L3Orderbook {
+  pub fn best_bid(&self) -> anyhow::Result<&BidAsk> {
+    self
+      .bids
+      .iter()
+      .filter(|b| b.price < self.oracle_price)
+      .max_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+      .ok_or(anyhow::anyhow!("No bids"))
+  }
+
+  pub fn best_ask(&self) -> anyhow::Result<&BidAsk> {
+    self
+      .asks
+      .iter()
+      .filter(|b| b.price > self.oracle_price)
+      .min_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+      .ok_or(anyhow::anyhow!("No asks"))
+  }
+}
+
+pub enum OrderPriceType {
+  Price(f64),
+  OraclePercentOffset(f64),
+}
+
+pub struct OrderBuilder {
+  pub market: MarketId,
+  pub pct_risk: f64,
+  pub price_type: OrderPriceType,
+  pub order_type: OrderType,
+  pub direction: PositionDirection,
+}
+
+pub struct OrderPrice {
+  pub price: f64,
+  pub name: String,
+  pub offset: f64,
+}
+impl OrderPrice {
+  pub fn price_without_offset(&self) -> f64 {
+    self.price - self.offset
+  }
+
+  pub fn price(&self) -> f64 {
+    self.price
+  }
+}
+
+#[derive(Clone)]
+pub struct PerpOracle {
+  pub market: PerpMarket,
+  pub source: OracleSource,
+}
+
+#[derive(Clone)]
+pub struct SpotOracle {
+  pub market: SpotMarket,
+  pub source: OracleSource,
+}
+
+#[derive(Clone)]
+pub struct MarketInfo {
+  pub price: f64,
+  pub name: String,
+  pub market: MarketId,
+  pub spot_market: MarketId,
 }

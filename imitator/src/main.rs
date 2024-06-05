@@ -17,19 +17,31 @@ use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
-use client::*;
+use imitator::*;
+use nexus::drift_client::*;
 use nexus::drift_cpi::*;
 use nexus::*;
 
-mod client;
+mod imitator;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-  init_logger();
   dotenv::dotenv().ok();
+  init_logger();
 
-  // let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-  let copy_user = pubkey!("772JJ15pJV64Uit5BmV4CoJtMQHx9KRdHhizP7mAgjRQ");
+  // "bracket spread" market maker
+  // Example:
+  // short 14.78 SOL-PERP @ 169.49 as Limit, offset: 0.42, price w/o offset?: 169.06
+  // short 29.56 SOL-PERP @ 169.91 as Limit, offset: 0.85, price w/o offset?: 169.06
+  // short 44.33 SOL-PERP @ 170.33 as Limit, offset: 1.27, price w/o offset?: 169.06
+  let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
+
+  // "same price long-short" market maker
+  // Example:
+  // long 33.15 SOL-PERP @ 169.49 as Limit, offset: 0.0, price w/o offset?: 169.49
+  // short 33.15 SOL-PERP @ 169.49 as Limit, offset: 0.0, price w/o offset?: 169.49
+  // let copy_user = pubkey!("772JJ15pJV64Uit5BmV4CoJtMQHx9KRdHhizP7mAgjRQ");
+
   let market_filter = Some(vec![
     // SOL-PERP
     MarketId::perp(0),
@@ -40,9 +52,21 @@ async fn main() -> anyhow::Result<()> {
   Ok(())
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use solana_client::nonblocking::rpc_client::RpcClient;
+  use solana_sdk::sysvar::SysvarId;
+  use std::collections::HashSet;
+  use std::sync::Arc;
+  use tokio::sync::RwLock;
+  use yellowstone_grpc_proto::prelude::{
+    CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterSlots,
+  };
 
   /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs
   /// Rust oracle type: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/programs/drift/src/state/oracle.rs#L126
@@ -61,7 +85,7 @@ mod tests {
 
     let perp_markets = DriftUtils::perp_markets(&imitator.rpc()).await?;
     let spot_markets = DriftUtils::spot_markets(&imitator.rpc()).await?;
-    let mut oracles: HashMap<String, MarketInfo> = HashMap::new();
+    let mut oracles: HashMap<String, MarketMetadata> = HashMap::new();
     for acct in perp_markets {
       let DecodedAcctCtx {
         decoded: market, ..
@@ -78,7 +102,7 @@ mod tests {
 
       oracles.insert(
         perp_name.clone(),
-        MarketInfo {
+        MarketMetadata {
           perp_oracle,
           perp_oracle_source,
           perp_oracle_price_data: None,
@@ -147,7 +171,7 @@ mod tests {
     ]);
     let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
 
-    struct MarketInfo {
+    struct MarketMetadata {
       name: String,
       oracle: Pubkey,
       oracle_source: OracleSource,
@@ -157,13 +181,13 @@ mod tests {
     }
 
     let spot_markets = DriftUtils::spot_markets(&imitator.rpc()).await?;
-    let mut oracles: Vec<MarketInfo> = vec![];
+    let mut oracles: Vec<MarketMetadata> = vec![];
     for spot_market in spot_markets {
       let name = DriftUtils::decode_name(&spot_market.decoded.name);
       let oracle = spot_market.decoded.oracle;
       let oracle_source = spot_market.decoded.oracle_source;
 
-      oracles.push(MarketInfo {
+      oracles.push(MarketMetadata {
         name,
         oracle,
         oracle_source,
@@ -245,7 +269,8 @@ mod tests {
     init_logger();
     dotenv::dotenv().ok();
 
-    let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
+    // let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
+    let copy_user = pubkey!("EWvvvhYYKnRAyaw5PGpPRs4TkdAVMw1vL5ZvYFSzNcSQ");
     let market_filter = Some(vec![
       // SOL-PERP
       MarketId::perp(0),
@@ -389,6 +414,128 @@ mod tests {
     .balance;
     println!("cum deposits: {}", spot_pos.cumulative_deposits);
     println!("quote amount: {}", quote_amt);
+
+    Ok(())
+  }
+
+  #[tokio::test]
+  async fn orderbook() -> anyhow::Result<()> {
+    init_logger();
+    dotenv::dotenv().ok();
+
+    let cache = Arc::new(RwLock::new(Cache::new(200)));
+    let orderbook = Arc::new(RwLock::new(Orderbook::new()));
+    let (tx, _rx) = crossbeam::channel::unbounded::<TxStub>();
+    let grpc = std::env::var("GRPC")?;
+    let x_token = std::env::var("X_TOKEN")?;
+    let signer = read_keypair_from_env("WALLET")?;
+    let rpc_url = std::env::var("RPC_URL")?;
+    let rpc = RpcClient::new(rpc_url);
+
+    // accounts to subscribe to
+    let now = std::time::Instant::now();
+    let perps = DriftUtils::perp_markets(&rpc).await?;
+    let spots = DriftUtils::spot_markets(&rpc).await?;
+    let perp_markets: Vec<Pubkey> = perps.iter().map(|p| p.key).collect();
+    let spot_markets: Vec<Pubkey> = spots.iter().map(|s| s.key).collect();
+    let user = DriftUtils::user_pda(&signer.pubkey(), 0);
+    let select_users = [user];
+    let users = DriftUtils::users(&rpc).await?;
+    let user_keys: Vec<Pubkey> = users.iter().map(|ctx| ctx.key).collect();
+    let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
+    let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
+    info!("time to load filters: {:?}", now.elapsed());
+    let accounts = perp_markets
+      .iter()
+      .chain(spot_markets.iter())
+      .chain(user_keys.iter())
+      .chain(perp_oracles.iter())
+      .chain(spot_oracles.iter())
+      .cloned()
+      .collect::<Vec<Pubkey>>();
+    let mut filter = HashSet::new();
+    for a in accounts {
+      filter.insert(a);
+    }
+
+    let now = std::time::Instant::now();
+    let auths = [signer.pubkey()];
+    cache
+      .write()
+      .await
+      .load(&rpc, &select_users, None, &auths)
+      .await?;
+    info!("time to load cache: {:?}", now.elapsed());
+    let now = std::time::Instant::now();
+    orderbook.write().await.load(users)?;
+    info!("time to load orderbook: {:?}", now.elapsed());
+
+    let cfg = GeyserConfig {
+      grpc,
+      x_token,
+      slots: Some(SubscribeRequestFilterSlots {
+        filter_by_commitment: Some(true),
+      }),
+      accounts: Some(SubscribeRequestFilterAccounts {
+        account: vec![],
+        owner: vec![drift_cpi::id().to_string(), PYTH_PROGRAM_ID.to_string()],
+        filters: vec![],
+      }),
+      transactions: None,
+      blocks_meta: None,
+      commitment: CommitmentLevel::Processed,
+    };
+    // stream updates from gRPC
+    let nexus = NexusClient::new(cfg)?;
+
+    let _orderbook = orderbook.clone();
+    let _cache = cache.clone();
+    tokio::task::spawn(async move {
+      nexus
+        .stream(&_cache, Some(tx), Some(&_orderbook), Some(filter))
+        .await?;
+      Result::<_, anyhow::Error>::Ok(())
+    });
+
+    let market_id = MarketId::perp(0);
+    let orderbook = orderbook.clone();
+    let cache = cache.clone();
+    loop {
+      let dlob = orderbook.read().await;
+      let cache = cache.read().await;
+      let market_ctx = cache.decoded_account::<PerpMarket>(&market_id.key(), None)?;
+      let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, None)?;
+      let price = DriftUtils::oracle_price(
+        &market_ctx.decoded.amm.oracle_source,
+        market_ctx.decoded.amm.oracle,
+        &oracle_ctx.account,
+        oracle_ctx.slot,
+      )?;
+      drop(cache);
+      let l3 = dlob.l3(&market_id.key(), price)?;
+      drop(dlob);
+      info!(
+        "price: {}, bid: {}, ask: {}, spread: {}",
+        trunc!(price, 4),
+        l3.best_bid()?.price,
+        l3.best_ask()?.price,
+        trunc!(l3.spread, 4)
+      );
+      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+
+    Ok(())
+  }
+
+  #[tokio::test]
+  async fn graphql() -> anyhow::Result<()> {
+    init_logger();
+    dotenv::dotenv().ok();
+
+    let url = std::env::var("GRAPHQL")?;
+    let client = GraphqlClient::new(url);
+    client.drift_users().await?;
+    // info!("graphql users: {}", users.len());
 
     Ok(())
   }

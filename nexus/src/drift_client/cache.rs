@@ -1,13 +1,15 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anchor_lang::AccountDeserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
+use tokio::sync::{Mutex, MutexGuard};
 
-use crate::{AcctCtx, BlockInfo, DecodedAcctCtx, DriftClient, RingMap, Time};
-use crate::{DriftUtils, PerpOracle, SpotOracle};
+use crate::drift_client::{DriftUtils, PerpOracle, SpotOracle};
+use crate::{AcctCtx, BlockInfo, DecodedAcctCtx, RingMap, Time};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum CacheKeyRegistry {
@@ -16,6 +18,18 @@ pub enum CacheKeyRegistry {
 }
 
 pub struct Cache {
+  cache: Arc<Mutex<InnerCache>>,
+}
+
+impl Clone for Cache {
+  fn clone(&self) -> Self {
+    Self {
+      cache: self.cache.clone(),
+    }
+  }
+}
+
+pub struct InnerCache {
   /// How many versions back to keep in the cache
   pub slot: u64,
   pub depth: usize,
@@ -25,17 +39,34 @@ pub struct Cache {
   pub key_registry: HashMap<CacheKeyRegistry, Vec<Pubkey>>,
 }
 
+// pub type ReadCache<'a> = RwLockReadGuard<'a, Cache>;
+// pub type WriteCache<'a> = RwLockWriteGuard<'a, Cache>;
+pub type ReadCache<'a> = MutexGuard<'a, InnerCache>;
+pub type WriteCache<'a> = MutexGuard<'a, InnerCache>;
+
 impl Cache {
   pub fn new(depth: usize) -> Self {
     Self {
-      slot: 0,
-      blocks: RingMap::new(depth),
-      depth,
-      accounts: HashMap::new(),
-      key_registry: HashMap::new(),
+      cache: Arc::new(Mutex::new(InnerCache {
+        slot: 0,
+        blocks: RingMap::new(depth),
+        depth,
+        accounts: HashMap::new(),
+        key_registry: HashMap::new(),
+      })),
     }
   }
 
+  pub async fn read(&self) -> ReadCache {
+    self.cache.lock().await
+  }
+
+  pub async fn write(&self) -> WriteCache {
+    self.cache.lock().await
+  }
+}
+
+impl InnerCache {
   pub fn block(&self, slot: Option<u64>) -> anyhow::Result<&BlockInfo> {
     Ok(match slot {
       Some(slot) => self
@@ -60,16 +91,11 @@ impl Cache {
     let ring = self
       .accounts
       .get(key)
-      .ok_or(anyhow::anyhow!("Program not found for key: {}", key))?;
+      .ok_or(anyhow::anyhow!("Cache not found for key: {}", key))?;
     Ok(match slot {
       Some(slot) => match ring.get(&slot) {
         Some(acct) => acct,
         None => {
-          log::debug!(
-            "Slot {} not found for account {}, use most recent update",
-            slot,
-            key
-          );
           let recent_updates = ring
             .values()
             .filter(|a| a.slot <= slot)
@@ -97,7 +123,7 @@ impl Cache {
         match self
           .accounts
           .get(key)
-          .ok_or(anyhow::anyhow!("Program not found for key: {}", key))?
+          .ok_or(anyhow::anyhow!("Cache not found for key: {}", key))?
           .get(&slot)
         {
           Some(acct) => acct,
@@ -110,7 +136,7 @@ impl Cache {
               let ring = self
                 .accounts
                 .get(key)
-                .ok_or(anyhow::anyhow!("Program not found for key: {}", key))?;
+                .ok_or(anyhow::anyhow!("Cache not found for key: {}", key))?;
               tokio::time::sleep(std::time::Duration::from_millis(10)).await;
               if let Some(a) = ring.get(&slot) {
                 acct = Some(a);
@@ -140,7 +166,7 @@ impl Cache {
         self
           .accounts
           .get(key)
-          .ok_or(anyhow::anyhow!("Program not found for key: {}", key))?
+          .ok_or(anyhow::anyhow!("Cache not found for key: {}", key))?
           .newest()
           .ok_or(anyhow::anyhow!("Slot not found for key: {}", key))?
           .1
@@ -252,11 +278,11 @@ impl Cache {
     self.accounts.get_mut(&key).unwrap()
   }
 
-  pub async fn load_all(
+  pub async fn load(
     &mut self,
     rpc: &RpcClient,
     users: &[Pubkey],
-    accounts: &[Pubkey],
+    accounts: Option<&[Pubkey]>,
     auths: &[Pubkey],
   ) -> anyhow::Result<()> {
     self.load_perp_markets(rpc).await?;
@@ -264,7 +290,9 @@ impl Cache {
     self.load_select_users(rpc, users).await?;
     self.load_user_stats(rpc, auths).await?;
     self.load_oracles(rpc).await?;
-    self.load_accounts(rpc, accounts).await?;
+    if let Some(accounts) = accounts {
+      self.load_accounts(rpc, accounts).await?;
+    }
     self.load_block(rpc).await?;
     self.load_slot(rpc).await?;
     Ok(())

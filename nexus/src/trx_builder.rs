@@ -1,4 +1,5 @@
 use anchor_lang::solana_program::address_lookup_table::AddressLookupTableAccount;
+use log::info;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::{
@@ -19,11 +20,10 @@ use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::{
   TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding,
 };
-use spl_token::solana_program::native_token::LAMPORTS_PER_SOL;
 use std::sync::Arc;
 use tokio::time::MissedTickBehavior;
 
-use crate::{trunc, ConfirmTransactionConfig, MICRO_LAMPORTS_PER_LAMPORT};
+use crate::{ConfirmTransactionConfig, MICRO_LAMPORTS_PER_LAMPORT};
 
 /// Error received when confirming a transaction
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +55,8 @@ pub struct TrxBuilder<'a, S: Signer + Sized, T: Signers> {
   /// add additional lookup tables (v0 only)
   lookup_tables: Vec<AddressLookupTableAccount>,
   prior_fee_added: bool,
+  read_only: bool,
+  retry_until_confirmed: bool,
   payer: &'a S,
   signers: T,
 }
@@ -73,6 +75,8 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
       legacy,
       lookup_tables,
       prior_fee_added: false,
+      read_only: false,
+      retry_until_confirmed: false,
       payer,
       signers,
     }
@@ -84,6 +88,16 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
 
   pub fn with_ixs(mut self, ixs: Vec<Instruction>) -> Self {
     self.ixs = ixs;
+    self
+  }
+
+  pub fn read_only(mut self) -> Self {
+    self.read_only = true;
+    self
+  }
+
+  pub fn retry_until_confirmed(mut self) -> Self {
+    self.retry_until_confirmed = true;
     self
   }
 
@@ -132,7 +146,6 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
       let cu_price_ix = ComputeBudgetInstruction::set_compute_unit_limit(cu_limit);
       self.ixs.insert(1, cu_price_ix);
     }
-    Self::log_priority_fee(ul_per_cu, cu_limit);
     self.prior_fee_added = true;
     Ok(())
   }
@@ -188,19 +201,6 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     )
   }
 
-  fn log_priority_fee(ul_per_cu: u64, cu_limit: Option<u32>) {
-    match cu_limit {
-      Some(cu_limit) => {
-        let ul_cost = ul_per_cu * cu_limit as u64;
-        let sol_cost = ul_cost as f64 / MICRO_LAMPORTS_PER_LAMPORT as f64 / LAMPORTS_PER_SOL as f64;
-        log::debug!("Priority fee: {} SOL", trunc!(sol_cost, 2));
-      }
-      None => {
-        log::debug!("Priority fee: {} µ-lamports per compute unit", ul_per_cu);
-      }
-    }
-  }
-
   pub async fn simulate(
     &mut self,
     prior_fee_key: Pubkey,
@@ -223,8 +223,36 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
       .rpc
       .simulate_transaction_with_config(&tx, config)
       .await?;
-    log::info!("Simulation: {:#?}", sim.value);
     Ok(sim)
+  }
+
+  pub async fn send_tx(
+    &mut self,
+    priority_key: Pubkey,
+    cu_limit: Option<u32>,
+  ) -> anyhow::Result<()> {
+    if !self.is_empty() {
+      if self.read_only {
+        let res = self.simulate(priority_key).await?.value;
+        info!("Simulation: {:#?}", res);
+      } else {
+        let res = self.send(priority_key, cu_limit).await?;
+        if let Err(e) = &res.1 {
+          log::error!("Failed to confirm transaction: {:#?}", e);
+          if self.retry_until_confirmed {
+            let mut retries = 0;
+            while retries < 10 {
+              let res = self.send(priority_key, cu_limit).await?;
+              if res.1.is_ok() {
+                break;
+              }
+              retries += 1;
+            }
+          }
+        }
+      }
+    }
+    Ok(())
   }
 
   pub async fn send(

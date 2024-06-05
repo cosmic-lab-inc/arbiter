@@ -5,40 +5,58 @@ use std::str::FromStr;
 // Custom deserialization function for converting a String to a Pubkey
 pub fn deserialize_pubkey<'de, D>(deserializer: D) -> Result<Pubkey, D::Error>
 where
-    D: Deserializer<'de>,
+  D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    Pubkey::from_str(&s).map_err(serde::de::Error::custom)
+  let s = String::deserialize(deserializer)?;
+  Pubkey::from_str(&s).map_err(serde::de::Error::custom)
 }
 
 pub fn serialize_pubkey<S>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error>
 where
-    S: serde::Serializer,
+  S: serde::Serializer,
 {
-    serializer.serialize_str(&key.to_string())
+  serializer.serialize_str(&key.to_string())
 }
 
 // deserialize Option<Pubkey>
 pub fn deserialize_option_pubkey<'de, D>(deserializer: D) -> Result<Option<Pubkey>, D::Error>
 where
-    D: Deserializer<'de>,
+  D: Deserializer<'de>,
 {
-    let s = Option::<String>::deserialize(deserializer)?;
-    match s {
-        Some(s) => Ok(Some(
-            Pubkey::from_str(&s).map_err(serde::de::Error::custom)?,
-        )),
-        None => Ok(None),
-    }
+  let s = Option::<String>::deserialize(deserializer)?;
+  match s {
+    Some(s) => Ok(Some(
+      Pubkey::from_str(&s).map_err(serde::de::Error::custom)?,
+    )),
+    None => Ok(None),
+  }
 }
 
 // serialize Option<Pubkey>
 pub fn serialize_option_pubkey<S>(key: &Option<Pubkey>, serializer: S) -> Result<S::Ok, S::Error>
 where
-    S: serde::Serializer,
+  S: serde::Serializer,
 {
-    match key {
-        Some(key) => serializer.serialize_str(&key.to_string()),
-        None => serializer.serialize_none(),
-    }
+  match key {
+    Some(key) => serializer.serialize_str(&key.to_string()),
+    None => serializer.serialize_none(),
+  }
+}
+
+// deserialize String into u64
+pub fn deserialize_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let s = String::deserialize(deserializer)?;
+  Ok(s.parse().map_err(serde::de::Error::custom)?)
+}
+
+// deserialize String into i64
+pub fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let s = String::deserialize(deserializer)?;
+  Ok(s.parse().map_err(serde::de::Error::custom)?)
 }

@@ -1,5 +1,4 @@
 use crate::{trunc, Data};
-use drift_cpi::{OracleSource, PerpMarket, SpotMarket};
 use serde::{Deserialize, Serialize};
 
 /// https://docs.drift.trade/historical-data/historical-data-glossary#settle-pnl
@@ -77,21 +76,4 @@ pub struct TradeRecord {
 pub struct PnlStub {
   pub user: String,
   pub avg_quote_pnl: f64,
-}
-
-pub struct OraclePrice {
-  pub price: f64,
-  pub name: String,
-}
-
-#[derive(Clone)]
-pub struct PerpOracle {
-  pub market: PerpMarket,
-  pub source: OracleSource,
-}
-
-#[derive(Clone)]
-pub struct SpotOracle {
-  pub market: SpotMarket,
-  pub source: OracleSource,
 }

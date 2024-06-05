@@ -1,3 +1,4 @@
+pub use cache::*;
 pub use client::*;
 pub use historical::*;
 pub use orderbook::*;
@@ -6,6 +7,7 @@ pub use trader::*;
 pub use types::*;
 pub use utils::*;
 
+pub mod cache;
 pub mod client;
 pub mod historical;
 pub mod orderbook;

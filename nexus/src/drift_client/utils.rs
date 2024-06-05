@@ -17,13 +17,13 @@ use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
 use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
-use tokio::sync::RwLock;
 use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
 use yellowstone_grpc_proto::prelude::{
   subscribe_request_filter_accounts_filter_memcmp, SubscribeRequestFilterAccountsFilter,
   SubscribeRequestFilterAccountsFilterMemcmp,
 };
 
+use crate::drift_client::*;
 use crate::*;
 use crate::{trunc, DecodedAcctCtx, Time};
 
@@ -179,17 +179,45 @@ impl DriftUtils {
   }
 
   pub fn users_filter() -> RpcFilterType {
-    let discrim = User::discriminator();
-    RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, discrim.to_vec().as_slice()))
+    RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+      0,
+      User::discriminator().to_vec().as_slice(),
+    ))
   }
 
-  pub fn grpc_subscribe_users_filter() -> SubscribeRequestFilterAccountsFilter {
+  pub fn grpc_users_filter() -> SubscribeRequestFilterAccountsFilter {
     SubscribeRequestFilterAccountsFilter {
       filter: Some(Filter::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
         offset: 0,
         data: Some(
           subscribe_request_filter_accounts_filter_memcmp::Data::Base58(
             solana_sdk::bs58::encode(User::discriminator()).into_string(),
+          ),
+        ),
+      })),
+    }
+  }
+
+  pub fn grpc_perp_markets_filter() -> SubscribeRequestFilterAccountsFilter {
+    SubscribeRequestFilterAccountsFilter {
+      filter: Some(Filter::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+        offset: 0,
+        data: Some(
+          subscribe_request_filter_accounts_filter_memcmp::Data::Base58(
+            solana_sdk::bs58::encode(PerpMarket::discriminator()).into_string(),
+          ),
+        ),
+      })),
+    }
+  }
+
+  pub fn grpc_spot_markets_filter() -> SubscribeRequestFilterAccountsFilter {
+    SubscribeRequestFilterAccountsFilter {
+      filter: Some(Filter::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+        offset: 0,
+        data: Some(
+          subscribe_request_filter_accounts_filter_memcmp::Data::Base58(
+            solana_sdk::bs58::encode(SpotMarket::discriminator()).into_string(),
           ),
         ),
       })),
@@ -466,11 +494,10 @@ impl DriftUtils {
   }
 
   pub async fn perp_market_info(
-    cache: &RwLock<Cache>,
+    cache: &ReadCache<'_>,
     perp_market_index: u16,
-  ) -> anyhow::Result<OraclePrice> {
+  ) -> anyhow::Result<OrderPrice> {
     let market_pda = DriftUtils::perp_market_pda(perp_market_index);
-    let cache = cache.read().await;
     let perp_market = cache
       .decoded_account::<PerpMarket>(&market_pda, None)?
       .decoded;
@@ -487,9 +514,10 @@ impl DriftUtils {
       .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
 
-    Ok(OraclePrice {
+    Ok(OrderPrice {
       price,
       name: DriftUtils::decode_name(&perp_market.name),
+      offset: 0.0,
     })
   }
 
@@ -565,7 +593,7 @@ impl DriftUtils {
     Ok(price_data.price as f64 / PRICE_PRECISION as f64)
   }
 
-  pub fn log_order(params: &OrderParams, oracle_price: &OraclePrice, prefix: Option<&str>) {
+  pub fn log_order(params: &OrderParams, order_price: &OrderPrice, prefix: Option<&str>) {
     let dir = match params.direction {
       PositionDirection::Long => "long",
       PositionDirection::Short => "short",
@@ -574,23 +602,27 @@ impl DriftUtils {
     match prefix {
       Some(prefix) => {
         info!(
-          "{}: {} {} {} @ {} as {:?}",
+          "{}: {} {} {} @ {} as {:?}, offset: {}, price w/o offset?: {}",
           prefix,
           dir,
           base,
-          oracle_price.name,
-          trunc!(oracle_price.price, 2),
-          params.order_type
+          order_price.name,
+          trunc!(order_price.price(), 2),
+          params.order_type,
+          trunc!(order_price.offset, 2),
+          trunc!(order_price.price_without_offset(), 2),
         );
       }
       None => {
         info!(
-          "{} {} {} @ {} as {:?}",
+          "{} {} {} @ {} as {:?}, offset: {}, limit?: {}",
           dir,
           base,
-          oracle_price.name,
-          trunc!(oracle_price.price, 2),
-          params.order_type
+          order_price.name,
+          trunc!(order_price.price(), 2),
+          params.order_type,
+          trunc!(order_price.offset, 2),
+          trunc!(order_price.price_without_offset(), 2),
         );
       }
     }
