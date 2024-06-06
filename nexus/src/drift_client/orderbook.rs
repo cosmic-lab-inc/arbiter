@@ -1,5 +1,5 @@
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use drift_cpi::{Order, User};
@@ -48,7 +48,7 @@ impl Orderbook {
 #[derive(Default)]
 pub struct InnerOrderbook {
   markets: Vec<MarketId>,
-  orderbook: HashMap<MarketKey, HashMap<UserKey, Vec<DlobNode>>>,
+  orderbook: HashMap<MarketKey, HashMap<UserKey, HashSet<DlobNode>>>,
 }
 
 impl InnerOrderbook {
@@ -77,7 +77,7 @@ impl InnerOrderbook {
     Ok(
       dlob
         .values()
-        .collect::<Vec<&Vec<DlobNode>>>()
+        .collect::<Vec<&HashSet<DlobNode>>>()
         .par_iter()
         .map(|o| o.len())
         .sum::<usize>(),
@@ -88,7 +88,7 @@ impl InnerOrderbook {
     let mut bids: Vec<_> = self
       .orders(&market.key())?
       .values()
-      .collect::<Vec<&Vec<DlobNode>>>()
+      .collect::<Vec<&HashSet<DlobNode>>>()
       .par_iter()
       .map(|o| {
         o.par_iter()
@@ -107,7 +107,7 @@ impl InnerOrderbook {
     let mut asks: Vec<_> = self
       .orders(&market.key())?
       .values()
-      .collect::<Vec<&Vec<DlobNode>>>()
+      .collect::<Vec<&HashSet<DlobNode>>>()
       .par_iter()
       .map(|o| {
         o.par_iter()
@@ -151,7 +151,7 @@ impl InnerOrderbook {
     })
   }
 
-  pub fn orders(&self, market: &MarketKey) -> anyhow::Result<&HashMap<UserKey, Vec<DlobNode>>> {
+  pub fn orders(&self, market: &MarketKey) -> anyhow::Result<&HashMap<UserKey, HashSet<DlobNode>>> {
     self
       .orderbook
       .get(market)
@@ -172,7 +172,7 @@ impl InnerOrderbook {
         .or_default()
         .entry(user)
         .or_default()
-        .push(node);
+        .insert(node);
     } else {
       let orders = self
         .orderbook
@@ -180,7 +180,7 @@ impl InnerOrderbook {
         .or_default()
         .entry(user)
         .or_default();
-      orders.retain(|o| o.order.order_id != node.order.order_id);
+      orders.remove(&node);
     }
     Ok(())
   }

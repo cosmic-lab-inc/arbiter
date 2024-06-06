@@ -197,6 +197,20 @@ pub struct DlobNode {
   pub order: Order,
 }
 
+impl PartialEq for DlobNode {
+  fn eq(&self, other: &Self) -> bool {
+    self.order.order_id == other.order.order_id
+      && self.order.base_asset_amount == other.order.base_asset_amount
+  }
+}
+impl Eq for DlobNode {}
+impl Hash for DlobNode {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.order.order_id.hash(state);
+    self.order.base_asset_amount.hash(state);
+  }
+}
+
 impl DlobNode {
   pub fn new(order: Order) -> Self {
     Self { order }

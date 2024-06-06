@@ -57,7 +57,7 @@ mod tests {
     let baker = Bracketeer::new(0, market, None).await?;
 
     let now = std::time::Instant::now();
-    while now.elapsed() < std::time::Duration::from_secs(30) {
+    while now.elapsed() < std::time::Duration::from_secs(60 * 10) {
       let res = baker
         .drift
         .bid_ask_prices(market, true, &baker.cache().await)?;
@@ -88,6 +88,7 @@ mod tests {
     init_logger();
 
     let market_id = MarketId::perp(0);
+    let baker = Bracketeer::new(0, market_id, None).await?;
     let cache = Cache::new(200);
     let orderbook = Orderbook::new(vec![market_id]);
     let (tx, _rx) = crossbeam::channel::unbounded::<TxStub>();
@@ -174,14 +175,12 @@ mod tests {
       let orders = dlob.market_orders(&market_id)?;
       drop(cache);
       drop(dlob);
-      let quote_spread = trunc!(l3.spread, 4);
       let pct_spread = trunc!(l3.spread / price * 100.0, 3);
       info!(
-        "price: {}, bid: {}, ask: {}, spread: ${}, spread: {}%, orders: {}",
+        "price: {}, bid: {}, ask: {}, spread: {}%, orders: {}",
         trunc!(price, 4),
         trunc!(l3.best_bid()?.price, 4),
         trunc!(l3.best_ask()?.price, 4),
-        quote_spread,
         pct_spread,
         orders
       );
