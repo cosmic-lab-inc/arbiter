@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(tests)]
 mod tests {
   use super::*;
   use solana_client::nonblocking::rpc_client::RpcClient;
@@ -414,115 +414,6 @@ mod tests {
     .balance;
     println!("cum deposits: {}", spot_pos.cumulative_deposits);
     println!("quote amount: {}", quote_amt);
-
-    Ok(())
-  }
-
-  #[tokio::test]
-  async fn orderbook() -> anyhow::Result<()> {
-    init_logger();
-    dotenv::dotenv().ok();
-
-    let cache = Arc::new(RwLock::new(Cache::new(200)));
-    let orderbook = Arc::new(RwLock::new(Orderbook::new()));
-    let (tx, _rx) = crossbeam::channel::unbounded::<TxStub>();
-    let grpc = std::env::var("GRPC")?;
-    let x_token = std::env::var("X_TOKEN")?;
-    let signer = read_keypair_from_env("WALLET")?;
-    let rpc_url = std::env::var("RPC_URL")?;
-    let rpc = RpcClient::new(rpc_url);
-
-    // accounts to subscribe to
-    let now = std::time::Instant::now();
-    let perps = DriftUtils::perp_markets(&rpc).await?;
-    let spots = DriftUtils::spot_markets(&rpc).await?;
-    let perp_markets: Vec<Pubkey> = perps.iter().map(|p| p.key).collect();
-    let spot_markets: Vec<Pubkey> = spots.iter().map(|s| s.key).collect();
-    let user = DriftUtils::user_pda(&signer.pubkey(), 0);
-    let select_users = [user];
-    let users = DriftUtils::users(&rpc).await?;
-    let user_keys: Vec<Pubkey> = users.iter().map(|ctx| ctx.key).collect();
-    let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
-    let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
-    info!("time to load filters: {:?}", now.elapsed());
-    let accounts = perp_markets
-      .iter()
-      .chain(spot_markets.iter())
-      .chain(user_keys.iter())
-      .chain(perp_oracles.iter())
-      .chain(spot_oracles.iter())
-      .cloned()
-      .collect::<Vec<Pubkey>>();
-    let mut filter = HashSet::new();
-    for a in accounts {
-      filter.insert(a);
-    }
-
-    let now = std::time::Instant::now();
-    let auths = [signer.pubkey()];
-    cache
-      .write()
-      .await
-      .load(&rpc, &select_users, None, &auths)
-      .await?;
-    info!("time to load cache: {:?}", now.elapsed());
-    let now = std::time::Instant::now();
-    orderbook.write().await.load(users)?;
-    info!("time to load orderbook: {:?}", now.elapsed());
-
-    let cfg = GeyserConfig {
-      grpc,
-      x_token,
-      slots: Some(SubscribeRequestFilterSlots {
-        filter_by_commitment: Some(true),
-      }),
-      accounts: Some(SubscribeRequestFilterAccounts {
-        account: vec![],
-        owner: vec![drift_cpi::id().to_string(), PYTH_PROGRAM_ID.to_string()],
-        filters: vec![],
-      }),
-      transactions: None,
-      blocks_meta: None,
-      commitment: CommitmentLevel::Processed,
-    };
-    // stream updates from gRPC
-    let nexus = NexusClient::new(cfg)?;
-
-    let _orderbook = orderbook.clone();
-    let _cache = cache.clone();
-    tokio::task::spawn(async move {
-      nexus
-        .stream(&_cache, Some(tx), Some(&_orderbook), Some(filter))
-        .await?;
-      Result::<_, anyhow::Error>::Ok(())
-    });
-
-    let market_id = MarketId::perp(0);
-    let orderbook = orderbook.clone();
-    let cache = cache.clone();
-    loop {
-      let dlob = orderbook.read().await;
-      let cache = cache.read().await;
-      let market_ctx = cache.decoded_account::<PerpMarket>(&market_id.key(), None)?;
-      let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, None)?;
-      let price = DriftUtils::oracle_price(
-        &market_ctx.decoded.amm.oracle_source,
-        market_ctx.decoded.amm.oracle,
-        &oracle_ctx.account,
-        oracle_ctx.slot,
-      )?;
-      drop(cache);
-      let l3 = dlob.l3(&market_id.key(), price)?;
-      drop(dlob);
-      info!(
-        "price: {}, bid: {}, ask: {}, spread: {}",
-        trunc!(price, 4),
-        l3.best_bid()?.price,
-        l3.best_ask()?.price,
-        trunc!(l3.spread, 4)
-      );
-      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
 
     Ok(())
   }

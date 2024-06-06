@@ -195,7 +195,7 @@ impl Imitator {
           let decoded_ix = InstructionType::decode(&ix.data[..])
             .map_err(|e| anyhow::anyhow!("Failed to decode instruction: {:?}", e))?;
           let discrim: [u8; 8] = ix.data[..8].try_into()?;
-          let name = InstructionType::discrim_to_name(discrim)
+          let _name = InstructionType::discrim_to_name(discrim)
             .map_err(|e| anyhow::anyhow!("Failed to get ix discrim: {:?}", e))?;
 
           match decoded_ix {
@@ -270,7 +270,6 @@ impl Imitator {
     let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
     let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
     let auths = [self.signer.pubkey()];
-    let now = std::time::Instant::now();
     self
       .cache
       .write()

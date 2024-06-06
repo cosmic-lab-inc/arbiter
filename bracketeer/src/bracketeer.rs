@@ -47,6 +47,7 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
+use crate::config::BracketeerConfig;
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
@@ -68,19 +69,16 @@ impl Bracketeer {
     market: MarketId,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let read_only = std::env::var("READ_ONLY")?.parse::<bool>()?;
-    let retry_until_confirmed = std::env::var("RETRY_UNTIL_CONFIRMED")?.parse::<bool>()?;
-    let signer = read_keypair_from_env("WALLET")?;
-    let rpc_url = std::env::var("RPC_URL")?;
-    let grpc = std::env::var("GRPC")?;
-    let x_token = std::env::var("X_TOKEN")?;
-    let pct_target_spread = match std::env::var("PCT_TARGET_SPREAD") {
-      Ok(pct) => pct.parse::<f64>()?,
-      Err(_) => {
-        warn!("PCT_TARGET_SPREAD not set, defaulting to 0.1%");
-        0.1
-      }
-    };
+    let BracketeerConfig {
+      read_only,
+      retry_until_confirmed,
+      signer,
+      rpc_url,
+      grpc,
+      x_token,
+      pct_target_spread,
+      ..
+    } = BracketeerConfig::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
@@ -177,7 +175,7 @@ impl Bracketeer {
 
   pub async fn start(&mut self) -> anyhow::Result<()> {
     self.drift.setup_user().await?;
-    self.reset_orders().await?;
+    self.reset().await?;
     let run = AtomicBool::new(true);
 
     while run.load(Ordering::Relaxed) {
@@ -216,21 +214,12 @@ impl Bracketeer {
           let long_filled = matches!(long.status, OrderStatus::Filled);
           let short_filled = matches!(short.status, OrderStatus::Filled);
 
-          if short_price_pct_diff.abs() > 0.1 || long_price_pct_diff.abs() > 0.1 {
-            warn!(
-              "diff: {}%, long: {:?}, short: {:?}",
-              trunc!(long_price_pct_diff.abs(), 4),
-              long.status,
-              short.status
-            );
-          }
-
           if long_filled && short_filled {
-            info!("both filled, place orders");
+            info!("🟢 both filled, place orders");
             let params = self.build_orders().await?;
             self.place_orders(params, &mut trx).await?;
           } else if short_price_pct_diff.abs() > 0.1 || long_price_pct_diff.abs() > 0.1 {
-            warn!("price moved 0.1%, cancel orders");
+            info!("🔴 price moved 0.1%, cancel orders");
             // Does not matter if either order is filled, as price has moved too much to ensure both are filled.
             self
               .cancel_orders_by_ids(vec![&long, &short], &mut trx)
@@ -261,7 +250,7 @@ impl Bracketeer {
     }
   }
 
-  async fn reset_orders(&self) -> anyhow::Result<()> {
+  async fn reset(&self) -> anyhow::Result<()> {
     let mut trx = self.new_tx();
     trx = trx.retry_until_confirmed();
     self.cancel_orders(None, None, &mut trx).await?;
@@ -279,8 +268,9 @@ impl Bracketeer {
     let base_amt_f64 = quote_balance / market_info.price * trade_alloc_ratio;
     let base_asset_amount = (base_amt_f64 * BASE_PRECISION as f64).round() as u64;
 
-    let long_price = market_info.price * (1.0 - self.pct_target_spread / 100.0 / 2.0);
-    let short_price = market_info.price * (1.0 + self.pct_target_spread / 100.0 / 2.0);
+    let spread = market_info.price * self.pct_target_spread / 100.0;
+    let long_price = market_info.price - spread / 2.0;
+    let short_price = market_info.price + spread / 2.0;
 
     let long = OrderParams {
       order_type: OrderType::Limit,
@@ -401,45 +391,9 @@ impl Bracketeer {
     trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
     info!("close positions...");
-    let user = self
-      .cache()
+    self
+      .drift
+      .close_perp_positions(&self.cache().await, markets, trx)
       .await
-      .decoded_account::<User>(self.user(), None)?
-      .decoded;
-    let open_orders: Vec<&Order> = user
-      .orders
-      .iter()
-      .filter(|o| {
-        let market = MarketId::from((o.market_index, o.market_type));
-        markets.contains(&market)
-      })
-      .collect();
-    let close_orders: Vec<OrderParams> = open_orders
-      .into_iter()
-      .map(|open_order| OrderParams {
-        order_type: OrderType::Market,
-        market_type: open_order.market_type,
-        direction: match open_order.direction {
-          PositionDirection::Long => PositionDirection::Short,
-          PositionDirection::Short => PositionDirection::Long,
-        },
-        user_order_id: 0,
-        base_asset_amount: open_order.base_asset_amount,
-        price: 0,
-        market_index: open_order.market_index,
-        reduce_only: false,
-        post_only: PostOnlyParam::None,
-        immediate_or_cancel: false,
-        max_ts: None,
-        trigger_price: None,
-        trigger_condition: Default::default(),
-        oracle_price_offset: None,
-        auction_duration: None,
-        auction_start_price: None,
-        auction_end_price: None,
-      })
-      .collect();
-    self.place_orders(close_orders, trx).await?;
-    Ok(())
   }
 }

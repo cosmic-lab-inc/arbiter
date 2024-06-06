@@ -263,15 +263,20 @@ impl DriftUtils {
 
     let mut users = vec![];
     if let OptionalContext::Context(accounts) = response {
-      for account in accounts.value {
-        let slot = accounts.context.slot;
-        users.push(DecodedAcctCtx {
-          key: Pubkey::from_str(&account.pubkey)?,
-          account: account.account.to_account()?,
-          slot,
-          decoded: account.account.decode_account::<User>()?,
-        });
-      }
+      users = accounts
+        .value
+        .into_par_iter()
+        .map(|account| {
+          let slot = accounts.context.slot;
+          Result::<_, anyhow::Error>::Ok(DecodedAcctCtx {
+            key: Pubkey::from_str(&account.pubkey)?,
+            account: account.account.to_account()?,
+            slot,
+            decoded: account.account.decode_account::<User>()?,
+          })
+        })
+        .flatten()
+        .collect();
     }
     Ok(users)
   }
@@ -583,15 +588,50 @@ impl DriftUtils {
   }
 
   pub fn oracle_price(
-    src: &OracleSource,
-    key: Pubkey,
-    acct: &impl ToAccountInfo,
-    slot: u64,
+    market: &MarketId,
+    cache: &ReadCache<'_>,
+    slot: Option<u64>,
   ) -> anyhow::Result<f64> {
-    let price_data = get_oracle_price(src, &acct.to_account_info(key, false, false, false), slot)
-      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
-    Ok(price_data.price as f64 / PRICE_PRECISION as f64)
+    match market.kind {
+      MarketType::Perp => {
+        let market_ctx = cache.decoded_account::<PerpMarket>(&market.key(), slot)?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, slot)?;
+        let price_data = get_oracle_price(
+          &market_ctx.decoded.amm.oracle_source,
+          &oracle_ctx
+            .account
+            .to_account_info(market_ctx.decoded.amm.oracle, false, false, false),
+          oracle_ctx.slot,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to get perp oracle price: {:?}", e))?;
+        Ok(price_data.price as f64 / PRICE_PRECISION as f64)
+      }
+      MarketType::Spot => {
+        let market_ctx = cache.decoded_account::<SpotMarket>(&market.key(), slot)?;
+        let oracle_ctx = cache.account(&market_ctx.decoded.oracle, slot)?;
+        let price_data = get_oracle_price(
+          &market_ctx.decoded.oracle_source,
+          &oracle_ctx
+            .account
+            .to_account_info(market_ctx.decoded.oracle, false, false, false),
+          oracle_ctx.slot,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to get spot oracle price: {:?}", e))?;
+        Ok(price_data.price as f64 / PRICE_PRECISION as f64)
+      }
+    }
   }
+
+  // pub fn oracle_price(
+  //   src: &OracleSource,
+  //   key: Pubkey,
+  //   acct: &impl ToAccountInfo,
+  //   slot: u64,
+  // ) -> anyhow::Result<f64> {
+  //   let price_data = get_oracle_price(src, &acct.to_account_info(key, false, false, false), slot)
+  //     .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+  //   Ok(price_data.price as f64 / PRICE_PRECISION as f64)
+  // }
 
   pub fn log_order(params: &OrderParams, order_price: &OrderPrice, prefix: Option<&str>) {
     let dir = match params.direction {
@@ -607,10 +647,10 @@ impl DriftUtils {
           dir,
           base,
           order_price.name,
-          trunc!(order_price.price(), 2),
+          trunc!(order_price.price(), 3),
           params.order_type,
-          trunc!(order_price.offset, 2),
-          trunc!(order_price.price_without_offset(), 2),
+          trunc!(order_price.offset, 3),
+          trunc!(order_price.price_without_offset(), 3),
         );
       }
       None => {
@@ -619,10 +659,10 @@ impl DriftUtils {
           dir,
           base,
           order_price.name,
-          trunc!(order_price.price(), 2),
+          trunc!(order_price.price(), 3),
           params.order_type,
-          trunc!(order_price.offset, 2),
-          trunc!(order_price.price_without_offset(), 2),
+          trunc!(order_price.offset, 3),
+          trunc!(order_price.price_without_offset(), 3),
         );
       }
     }

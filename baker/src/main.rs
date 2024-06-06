@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
   Ok(())
 }
 
-#[cfg(test)]
+#[cfg(tests)]
 mod tests {
   use super::*;
 

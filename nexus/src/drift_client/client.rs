@@ -13,6 +13,7 @@ use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
 use solana_sdk::sysvar::SysvarId;
 
+use crate::drift_client::amm::AmmUtils;
 use crate::drift_client::*;
 use crate::*;
 
@@ -792,6 +793,71 @@ impl DriftClient {
     Ok(())
   }
 
+  pub async fn close_perp_positions(
+    &self,
+    cache: &ReadCache<'_>,
+    markets: &[MarketId],
+    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+  ) -> anyhow::Result<()> {
+    info!("close positions...");
+    let user = cache
+      .decoded_account::<User>(&self.sub_account, None)?
+      .decoded;
+
+    for pos in user.perp_positions.iter() {
+      let market = MarketId::from((pos.market_index, MarketType::Perp));
+      if markets.contains(&market) && pos.base_asset_amount != 0 {
+        let name = match market.kind {
+          MarketType::Perp => {
+            let acct = cache.decoded_account::<PerpMarket>(&market.key(), None)?;
+            DriftUtils::decode_name(&acct.decoded.name)
+          }
+          MarketType::Spot => {
+            let acct = cache.decoded_account::<SpotMarket>(&market.key(), None)?;
+            DriftUtils::decode_name(&acct.decoded.name)
+          }
+        };
+        let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
+        let direction = match base_amt > 0.0 {
+          true => PositionDirection::Long,
+          false => PositionDirection::Short,
+        };
+        let side = match direction {
+          PositionDirection::Long => "long",
+          PositionDirection::Short => "short",
+        };
+        info!("close position: {} {} {}", side, base_amt, name,);
+
+        let order = OrderParams {
+          order_type: OrderType::Market,
+          market_type: MarketType::Perp,
+          direction: match direction {
+            PositionDirection::Long => PositionDirection::Short,
+            PositionDirection::Short => PositionDirection::Long,
+          },
+          user_order_id: 0,
+          base_asset_amount: pos.base_asset_amount.unsigned_abs(),
+          price: 0,
+          market_index: pos.market_index,
+          reduce_only: true,
+          post_only: Default::default(),
+          immediate_or_cancel: false,
+          max_ts: None,
+          trigger_price: None,
+          trigger_condition: Default::default(),
+          oracle_price_offset: None,
+          auction_duration: None,
+          auction_start_price: None,
+          auction_end_price: None,
+        };
+        self
+          .place_and_take_order_ix(cache, order, Some(user), None, trx)
+          .await?;
+      }
+    }
+    Ok(())
+  }
+
   // ======================================================================
   // Utilities
   // ======================================================================
@@ -959,13 +1025,8 @@ impl DriftClient {
       MarketType::Spot => {
         let market_key = DriftUtils::spot_market_pda(market.index);
         let market_ctx = cache.decoded_account::<SpotMarket>(&market_key, slot)?;
-        let oracle_ctx = cache.account(&market_ctx.decoded.oracle, slot)?;
-        let price = DriftUtils::oracle_price(
-          &market_ctx.decoded.oracle_source,
-          market_ctx.decoded.oracle,
-          &oracle_ctx.account,
-          oracle_ctx.slot,
-        )?;
+        let price = DriftUtils::oracle_price(&market, cache, None)?;
+
         let name = DriftUtils::decode_name(&market_ctx.decoded.name);
         MarketInfo {
           price,
@@ -977,13 +1038,7 @@ impl DriftClient {
       MarketType::Perp => {
         let market_key = DriftUtils::perp_market_pda(market.index);
         let market_ctx = cache.decoded_account::<PerpMarket>(&market_key, slot)?;
-        let oracle_ctx = cache.account(&market_ctx.decoded.amm.oracle, slot)?;
-        let price = DriftUtils::oracle_price(
-          &market_ctx.decoded.amm.oracle_source,
-          market_ctx.decoded.amm.oracle,
-          &oracle_ctx.account,
-          oracle_ctx.slot,
-        )?;
+        let price = DriftUtils::oracle_price(&market, cache, None)?;
         let name = DriftUtils::decode_name(&market_ctx.decoded.name);
         MarketInfo {
           price,
@@ -1085,5 +1140,23 @@ impl DriftClient {
       ))?;
     let quote_balance = spot_pos.cumulative_deposits as f64 / QUOTE_PRECISION as f64;
     Ok(quote_balance)
+  }
+
+  pub fn bid_ask_prices(
+    &self,
+    market: MarketId,
+    with_update: bool,
+    cache: &ReadCache<'_>,
+  ) -> anyhow::Result<BidAsk> {
+    let pm = cache
+      .decoded_account::<PerpMarket>(&market.key(), None)?
+      .decoded;
+    let oracle_key = pm.amm.oracle;
+    let oracle_source = pm.amm.oracle_source;
+    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
+    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
+    let oracle = get_oracle_price(&oracle_source, &oracle_acct_info, cache.block(None)?.slot)
+      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    Ok(AmmUtils::bid_ask_prices(pm, oracle, with_update))
   }
 }

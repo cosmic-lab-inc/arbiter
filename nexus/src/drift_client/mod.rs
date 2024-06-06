@@ -7,6 +7,7 @@ pub use trader::*;
 pub use types::*;
 pub use utils::*;
 
+mod amm;
 pub mod cache;
 pub mod client;
 pub mod historical;

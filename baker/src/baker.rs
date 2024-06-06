@@ -60,7 +60,7 @@ pub struct Baker {
   pub drift: DriftClient,
   pub market: MarketId,
   pub cache: Cache,
-  // pub pct_cancel_threshold: f64,
+  pub pct_cancel_threshold: f64,
 }
 
 impl Baker {
@@ -76,6 +76,7 @@ impl Baker {
       rpc_url,
       grpc,
       x_token,
+      pct_cancel_threshold,
       ..
     } = BakerConfig::read()?;
 
@@ -104,6 +105,7 @@ impl Baker {
       signer,
       cache: Cache::new(cache_depth),
       market,
+      pct_cancel_threshold,
     };
 
     let account_filter = this.account_filter().await?;
@@ -212,21 +214,14 @@ impl Baker {
           let long_filled = matches!(long.status, OrderStatus::Filled);
           let short_filled = matches!(short.status, OrderStatus::Filled);
 
-          if short_price_pct_diff.abs() > 0.1 || long_price_pct_diff.abs() > 0.1 {
-            warn!(
-              "diff: {}%, long: {:?}, short: {:?}",
-              trunc!(long_price_pct_diff.abs(), 4),
-              long.status,
-              short.status
-            );
-          }
-
           if long_filled && short_filled {
             info!("both filled, place orders");
             let params = self.build_orders().await?;
             self.place_orders(params, &mut trx).await?;
-          } else if short_price_pct_diff.abs() > 0.1 || long_price_pct_diff.abs() > 0.1 {
-            warn!("price moved 0.1%, cancel orders");
+          } else if short_price_pct_diff.abs() > self.pct_cancel_threshold
+            || long_price_pct_diff.abs() > self.pct_cancel_threshold
+          {
+            warn!("price moved {}%, cancel orders", self.pct_cancel_threshold);
             // Does not matter if either order is filled, as price has moved too much to ensure both are filled.
             self
               .cancel_orders_by_ids(vec![&long, &short], &mut trx)
@@ -410,70 +405,9 @@ impl Baker {
     trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
   ) -> anyhow::Result<()> {
     info!("close positions...");
-    let user = self
-      .cache()
+    self
+      .drift
+      .close_perp_positions(&self.cache().await, markets, trx)
       .await
-      .decoded_account::<User>(self.user(), None)?
-      .decoded;
-
-    for pos in user.perp_positions.iter() {
-      let market = MarketId::from((pos.market_index, MarketType::Perp));
-      if markets.contains(&market) && pos.base_asset_amount != 0 {
-        let name = match market.kind {
-          MarketType::Perp => {
-            let acct = self
-              .cache()
-              .await
-              .decoded_account::<PerpMarket>(&market.key(), None)?;
-            DriftUtils::decode_name(&acct.decoded.name)
-          }
-          MarketType::Spot => {
-            let acct = self
-              .cache()
-              .await
-              .decoded_account::<SpotMarket>(&market.key(), None)?;
-            DriftUtils::decode_name(&acct.decoded.name)
-          }
-        };
-        let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
-        let direction = match base_amt > 0.0 {
-          true => PositionDirection::Long,
-          false => PositionDirection::Short,
-        };
-        let side = match direction {
-          PositionDirection::Long => "long",
-          PositionDirection::Short => "short",
-        };
-        info!("close position: {} {} {}", side, base_amt, name,);
-
-        let order = OrderParams {
-          order_type: OrderType::Market,
-          market_type: MarketType::Perp,
-          direction: match direction {
-            PositionDirection::Long => PositionDirection::Short,
-            PositionDirection::Short => PositionDirection::Long,
-          },
-          user_order_id: 0,
-          base_asset_amount: pos.base_asset_amount.unsigned_abs(),
-          price: 0,
-          market_index: pos.market_index,
-          reduce_only: true,
-          post_only: Default::default(),
-          immediate_or_cancel: false,
-          max_ts: None,
-          trigger_price: None,
-          trigger_condition: Default::default(),
-          oracle_price_offset: None,
-          auction_duration: None,
-          auction_start_price: None,
-          auction_end_price: None,
-        };
-        self
-          .place_and_take_order(order, Some(user), None, trx)
-          .await?;
-      }
-    }
-
-    Ok(())
   }
 }

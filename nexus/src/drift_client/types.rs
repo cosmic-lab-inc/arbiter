@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use anchor_lang::prelude::{AccountInfo, AccountMeta};
+use num_bigint::BigInt;
 use solana_sdk::pubkey::Pubkey;
 
-use crate::drift_client::DriftUtils;
+use crate::drift_client::{DriftUtils, ReadCache};
 use drift_cpi::{
   MarketType, OraclePriceData, OracleSource, Order, OrderType, PerpMarket, PositionDirection,
   SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
@@ -201,9 +202,11 @@ impl DlobNode {
     Self { order }
   }
 
-  pub fn price(&self, oracle_price: f64) -> anyhow::Result<f64> {
+  pub fn price(&self, cache: &ReadCache<'_>) -> anyhow::Result<f64> {
     Ok(match self.order.price == 0 {
       true => {
+        let market = MarketId::from((self.order.market_index, self.order.market_type));
+        let oracle_price = DriftUtils::oracle_price(&market, cache, Some(self.order.slot))?;
         let offset = self.order.oracle_price_offset as f64 / PRICE_PRECISION as f64;
         oracle_price + offset
       }
@@ -222,6 +225,7 @@ impl DlobNode {
 
   pub fn filled(&self) -> bool {
     self.order.base_asset_amount == self.order.base_asset_amount_filled
+      || matches!(self.order.status, drift_cpi::OrderStatus::Filled)
   }
 
   pub fn base(&self) -> f64 {
@@ -240,30 +244,31 @@ impl DlobNode {
     matches!(self.order.direction, PositionDirection::Short)
   }
 
-  pub fn bid(&self, oracle_price: f64) -> anyhow::Result<BidAsk> {
+  pub fn bid(&self, cache: &ReadCache<'_>) -> anyhow::Result<OrderInfo> {
     if !self.is_bid() {
       return Err(anyhow::anyhow!("Order is not a bid"));
     }
-    Ok(BidAsk {
-      price: self.price(oracle_price)?,
+    // let price = cache.
+    Ok(OrderInfo {
+      price: self.price(cache)?,
       size: self.size(),
       slot: self.slot(),
     })
   }
 
-  pub fn ask(&self, oracle_price: f64) -> anyhow::Result<BidAsk> {
+  pub fn ask(&self, cache: &ReadCache<'_>) -> anyhow::Result<OrderInfo> {
     if !self.is_ask() {
       return Err(anyhow::anyhow!("Order is not an ask"));
     }
-    Ok(BidAsk {
-      price: self.price(oracle_price)?,
+    Ok(OrderInfo {
+      price: self.price(cache)?,
       size: self.size(),
       slot: self.slot(),
     })
   }
 }
 
-pub struct BidAsk {
+pub struct OrderInfo {
   pub price: f64,
   pub size: f64,
   pub slot: u64,
@@ -271,29 +276,47 @@ pub struct BidAsk {
 
 pub struct L3Orderbook {
   /// First index is highest/best bid
-  pub bids: Vec<BidAsk>,
+  pub bids: Vec<OrderInfo>,
   /// First index is lowest/best ask
-  pub asks: Vec<BidAsk>,
+  pub asks: Vec<OrderInfo>,
   pub spread: f64,
   pub slot: u64,
   pub oracle_price: f64,
 }
 impl L3Orderbook {
-  pub fn best_bid(&self) -> anyhow::Result<&BidAsk> {
+  pub fn best_bid(&self) -> anyhow::Result<&OrderInfo> {
     self
       .bids
       .iter()
-      .filter(|b| b.price < self.oracle_price)
+      .filter(|o| o.price < self.oracle_price)
       .max_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
       .ok_or(anyhow::anyhow!("No bids"))
   }
 
-  pub fn best_ask(&self) -> anyhow::Result<&BidAsk> {
+  pub fn worst_bid(&self) -> anyhow::Result<&OrderInfo> {
+    self
+      .bids
+      .iter()
+      .filter(|o| o.price < self.oracle_price)
+      .min_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+      .ok_or(anyhow::anyhow!("No bids"))
+  }
+
+  pub fn best_ask(&self) -> anyhow::Result<&OrderInfo> {
     self
       .asks
       .iter()
-      .filter(|b| b.price > self.oracle_price)
+      .filter(|o| o.price > self.oracle_price)
       .min_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+      .ok_or(anyhow::anyhow!("No asks"))
+  }
+
+  pub fn worst_ask(&self) -> anyhow::Result<&OrderInfo> {
+    self
+      .asks
+      .iter()
+      .filter(|o| o.price > self.oracle_price)
+      .max_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
       .ok_or(anyhow::anyhow!("No asks"))
   }
 }
@@ -344,4 +367,71 @@ pub struct MarketInfo {
   pub name: String,
   pub market: MarketId,
   pub spot_market: MarketId,
+}
+
+// AMM types
+
+pub struct OptimalPegAndBudget {
+  pub target_price: BigInt,
+  pub new_peg: BigInt,
+  pub budget: BigInt,
+  pub check_lower_bound: bool,
+}
+
+pub struct AmmReservesAfterSwap {
+  pub new_quote_asset_reserve: BigInt,
+  pub new_base_asset_reserve: BigInt,
+}
+
+pub struct NewAmm {
+  pub pre_peg_cost: BigInt,
+  pub pk_numer: BigInt,
+  pub pk_denom: BigInt,
+  pub new_peg: BigInt,
+}
+
+pub struct SpreadReserve {
+  pub base_asset_reserve: BigInt,
+  pub quote_asset_reserve: BigInt,
+}
+
+pub struct OpenBidAsk {
+  pub open_bids: BigInt,
+  pub open_asks: BigInt,
+}
+
+pub struct Spread {
+  pub long_spread: BigInt,
+  pub short_spread: BigInt,
+}
+
+pub struct SpreadReserves {
+  pub bid_reserves: SpreadReserve,
+  pub ask_reserves: SpreadReserve,
+}
+
+pub struct VolSpread {
+  pub long_vol_spread: BigInt,
+  pub short_vol_spread: BigInt,
+}
+
+pub struct UpdatedAmmSpreadReserves {
+  pub base_asset_reserve: BigInt,
+  pub quote_asset_reserve: BigInt,
+  pub sqrt_k: BigInt,
+  pub new_peg: BigInt,
+}
+
+pub struct BidAsk {
+  pub bid: f64,
+  pub ask: f64,
+}
+impl BidAsk {
+  pub fn spread(&self) -> f64 {
+    self.ask - self.bid
+  }
+
+  pub fn mark(&self) -> f64 {
+    (self.bid + self.ask) / 2.0
+  }
 }

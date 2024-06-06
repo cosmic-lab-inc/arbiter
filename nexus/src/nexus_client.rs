@@ -12,7 +12,6 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::hash::Hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 
@@ -35,7 +34,7 @@ impl NexusClient {
     &self,
     cache: &Cache,
     channel: Option<Sender<TxStub>>,
-    orderbook: Option<&RwLock<Orderbook>>,
+    orderbook: Option<&Orderbook>,
     filter: Option<HashSet<Pubkey>>,
   ) -> anyhow::Result<()> {
     let mut stream = self.geyser.subscribe().await?;
@@ -115,7 +114,7 @@ impl NexusClient {
                       decoded: user,
                       slot: event.slot,
                     };
-                    orderbook.write().await.insert_user(ctx);
+                    orderbook.write().await.insert_user(ctx)?;
                   }
                 }
               }

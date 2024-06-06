@@ -2941,6 +2941,8 @@ dependencies = [
  "lazy_static",
  "log",
  "maplit",
+ "num-bigint 0.4.5",
+ "num-traits",
  "plotters",
  "rand 0.8.5",
  "rayon",
