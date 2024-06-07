@@ -58,6 +58,14 @@ impl Cache {
   }
 
   pub async fn read(&self) -> ReadCache {
+    // let now = std::time::Instant::now();
+    // log::info!("read lock...");
+    // let lock = self.cache.lock().await;
+    // // if time to acquire lock > 1ms, log warning
+    // if now.elapsed() > std::time::Duration::from_millis(1) {
+    //   log::warn!("read lock in {:?}", now.elapsed());
+    // }
+    // lock
     self.cache.lock().await
   }
 

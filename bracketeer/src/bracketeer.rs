@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ops::Deref;
+use std::ops::{Deref, Neg};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -60,7 +60,10 @@ pub struct Bracketeer {
   pub drift: DriftClient,
   pub market: MarketId,
   pub cache: Cache,
-  pub pct_target_spread: f64,
+  pub orderbook: Orderbook,
+  pct_spread_multiplier: f64,
+  pct_exit_deviation: f64,
+  leverage: f64,
 }
 
 impl Bracketeer {
@@ -76,7 +79,9 @@ impl Bracketeer {
       rpc_url,
       grpc,
       x_token,
-      pct_target_spread,
+      pct_spread_multiplier,
+      pct_exit_deviation,
+      leverage,
       ..
     } = BracketeerConfig::read()?;
 
@@ -88,6 +93,7 @@ impl Bracketeer {
       rpc_url,
       Duration::from_secs(90),
     ));
+    let orderbook = Orderbook::new(vec![market]);
 
     let this = Self {
       read_only,
@@ -104,17 +110,27 @@ impl Bracketeer {
       rpc,
       signer,
       cache: Cache::new(cache_depth),
+      orderbook,
       market,
-      pct_target_spread,
+      pct_spread_multiplier,
+      pct_exit_deviation,
+      leverage,
     };
 
     let account_filter = this.account_filter().await?;
-    let cfg = this.geyser_config(grpc, x_token, account_filter)?;
+    let mut filter = HashSet::new();
+    for a in account_filter {
+      filter.insert(a);
+    }
+    let cfg = this.orderbook_geyser_config(grpc, x_token)?;
     // stream updates from gRPC
     let nexus = NexusClient::new(cfg)?;
     let cache = this.cache.clone();
+    let orderbook = this.orderbook.clone();
     tokio::task::spawn(async move {
-      nexus.stream(&cache, None, None, None).await?;
+      nexus
+        .stream(&cache, None, Some(&orderbook), Some(filter))
+        .await?;
       Result::<_, anyhow::Error>::Ok(())
     });
     Ok(this)
@@ -128,6 +144,9 @@ impl Bracketeer {
   }
   pub fn user(&self) -> &Pubkey {
     &self.drift.sub_account
+  }
+  pub async fn orderbook(&self) -> ReadOrderbook {
+    self.orderbook.read().await
   }
 
   fn geyser_config(
@@ -200,47 +219,108 @@ impl Bracketeer {
         short_order = None;
       }
 
-      let mut trx = self.new_tx();
-      match (long_order, short_order) {
-        (Some(long), Some(short)) => {
+      let pos = user
+        .perp_positions
+        .iter()
+        .find(|pos| MarketId::perp(pos.market_index) == self.market);
+
+      let (long_pos, short_pos) = match pos {
+        Some(pos) => match pos.base_asset_amount {
+          x if x > 0 => (Some(pos), None),
+          x if x < 0 => (None, Some(pos)),
+          _ => (None, None),
+        },
+        None => (None, None),
+      };
+
+      match (long_order, short_order, long_pos, short_pos) {
+        (Some(lo), Some(so), None, None) => {
           let market_info = self
             .drift
             .market_info(self.market, &self.cache().await, None)?;
-          let long_price = long.price as f64 / PRICE_PRECISION as f64;
-          let long_price_pct_diff = (market_info.price - long_price) / long_price * 100.0;
-          let short_price = short.price as f64 / PRICE_PRECISION as f64;
-          let short_price_pct_diff = (market_info.price - short_price) / short_price * 100.0;
+          let long_price = lo.price as f64 / PRICE_PRECISION as f64;
+          let long_price_pct_diff = market_info.price / long_price * 100.0 - 100.0;
+          let short_price = so.price as f64 / PRICE_PRECISION as f64;
+          let short_price_pct_diff = market_info.price / short_price * 100.0 - 100.0;
 
-          let long_filled = matches!(long.status, OrderStatus::Filled);
-          let short_filled = matches!(short.status, OrderStatus::Filled);
+          let long_filled = matches!(lo.status, OrderStatus::Filled);
+          let short_filled = matches!(so.status, OrderStatus::Filled);
 
           if long_filled && short_filled {
-            info!("🟢 both filled, place orders");
-            let params = self.build_orders().await?;
-            self.place_orders(params, &mut trx).await?;
-          } else if short_price_pct_diff.abs() > 0.1 || long_price_pct_diff.abs() > 0.1 {
-            info!("🔴 price moved 0.1%, cancel orders");
-            // Does not matter if either order is filled, as price has moved too much to ensure both are filled.
-            self
-              .cancel_orders_by_ids(vec![&long, &short], &mut trx)
-              .await?;
-            self.close_positions(&[self.market], &mut trx).await?;
+            let pnl = Self::pct_pnl(lo, so);
+            info!("🟢 pnl: {}%", trunc!(pnl, 4));
+          } else if short_price_pct_diff > self.pct_exit_deviation
+            || long_price_pct_diff < self.pct_exit_deviation * -1.0
+          {
+            warn!(
+              "🔴 price moved {}% beyond spread orders, reset position",
+              self.pct_exit_deviation
+            );
+            self.reset().await?;
           }
         }
-        (None, None) => {
-          info!("none, place orders");
-          let params = self.build_orders().await?;
-          self.place_orders(params, &mut trx).await?;
+        (Some(_), None, None, Some(spos)) => {
+          let market_info = self
+            .drift
+            .market_info(self.market, &self.cache().await, None)?;
+
+          let short_price = DriftUtils::perp_position_price(spos);
+          debug!("short pos: ${}", trunc!(short_price, 3));
+
+          let pct_diff = market_info.price / short_price * 100.0 - 100.0;
+          // if price moves far above the ask, the bid likely won't fill
+          if pct_diff > self.pct_exit_deviation {
+            warn!(
+              "🔴 price moved {}% above short entry, reset position",
+              self.pct_exit_deviation
+            );
+            self.reset().await?;
+          }
+        }
+        (None, Some(_), Some(lpos), None) => {
+          let market_info = self
+            .drift
+            .market_info(self.market, &self.cache().await, None)?;
+
+          let long_price = DriftUtils::perp_position_price(lpos);
+          debug!("long pos: ${}", trunc!(long_price, 3));
+
+          let pct_diff = market_info.price / long_price * 100.0 - 100.0;
+          // if price moves far below the bid, the ask likely won't fill
+          if pct_diff < self.pct_exit_deviation.neg() {
+            warn!(
+              "🔴 price moved -{}% below long entry, reset position",
+              self.pct_exit_deviation
+            );
+            self.reset().await?;
+          }
+        }
+        (None, None, Some(lpos), Some(spos)) => {
+          let lp = DriftUtils::perp_position_price(lpos);
+          let sp = DriftUtils::perp_position_price(spos);
+          info!("🟢 pnl: {}%", trunc!(sp / lp * 100.0 - 100.0, 4));
+        }
+        (None, None, None, None) => {
+          // no open orders or positions, place new orders
+          let mut trx = self.new_tx();
+          self
+            .place_orders(self.build_orders().await?, &mut trx)
+            .await?;
+          trx.send_tx(id(), None).await?;
         }
         _ => {}
       }
-
-      trx.send_tx(id(), None).await?;
 
       tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     Ok(())
+  }
+
+  fn pct_pnl(long: &Order, short: &Order) -> f64 {
+    let lp = DriftUtils::order_price(long);
+    let sp = DriftUtils::order_price(short);
+    trunc!(sp / lp * 100.0 - 100.0, 4)
   }
 
   fn blank_order(order: Option<&Order>) -> bool {
@@ -260,15 +340,23 @@ impl Bracketeer {
 
   /// Places a long and short at the oracle price to capitalize on maker fees
   async fn build_orders(&self) -> anyhow::Result<Vec<OrderParams>> {
-    let cache = self.cache().await;
-    let market_info = self.drift.market_info(self.market, &cache, None)?;
-    let quote_balance = self.drift.quote_balance(self.market, &cache, None)?;
-    let quote_balance = quote_balance * 0.98;
+    let market_info = self
+      .drift
+      .market_info(self.market, &self.cache().await, None)?;
+    let l3 = self
+      .orderbook()
+      .await
+      .l3(&self.market, &self.cache().await)?;
+
+    let quote_balance = self
+      .drift
+      .quote_balance(self.market, &self.cache().await, None)?;
+    let quote_balance = quote_balance * 0.98 * self.leverage;
     let trade_alloc_ratio = 50.0 / 100.0;
     let base_amt_f64 = quote_balance / market_info.price * trade_alloc_ratio;
     let base_asset_amount = (base_amt_f64 * BASE_PRECISION as f64).round() as u64;
 
-    let spread = market_info.price * self.pct_target_spread / 100.0;
+    let spread = l3.spread * self.pct_spread_multiplier / 100.0;
     let long_price = market_info.price - spread / 2.0;
     let short_price = market_info.price + spread / 2.0;
 
@@ -285,7 +373,7 @@ impl Bracketeer {
       immediate_or_cancel: false,
       max_ts: None,
       trigger_price: None,
-      trigger_condition: Default::default(),
+      trigger_condition: OrderTriggerCondition::Above,
       oracle_price_offset: None,
       auction_duration: None,
       auction_start_price: None,
@@ -304,7 +392,7 @@ impl Bracketeer {
       immediate_or_cancel: false,
       max_ts: None,
       trigger_price: None,
-      trigger_condition: Default::default(),
+      trigger_condition: OrderTriggerCondition::Below,
       oracle_price_offset: None,
       auction_duration: None,
       auction_start_price: None,
@@ -342,14 +430,14 @@ impl Bracketeer {
     Ok(keys)
   }
 
-  pub fn new_tx(&self) -> TrxBuilder<'_, Keypair, Vec<&Keypair>> {
+  pub fn new_tx(&self) -> KeypairTrx<'_> {
     self.drift.new_tx(true)
   }
 
   pub async fn place_orders(
     &self,
     orders: Vec<OrderParams>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     self
       .drift
@@ -362,9 +450,8 @@ impl Bracketeer {
     &self,
     market: Option<MarketId>,
     direction: Option<PositionDirection>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
-    info!("cancel orders...");
     self
       .drift
       .cancel_orders_ix(&self.cache().await, market, direction, trx)
@@ -375,9 +462,8 @@ impl Bracketeer {
   pub async fn cancel_orders_by_ids(
     &self,
     orders: Vec<&Order>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
-    info!("cancel orders by ids...");
     self
       .drift
       .cancel_orders_by_ids_ix(&self.cache().await, orders, trx)
@@ -388,12 +474,15 @@ impl Bracketeer {
   pub async fn close_positions(
     &self,
     markets: &[MarketId],
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
-    info!("close positions...");
     self
       .drift
       .close_perp_positions(&self.cache().await, markets, trx)
       .await
   }
+
+  // todo: modify_order instruction
+  //  if one order is filled and the oracle price is in the money, then adjust the open order to be right next to the oracle price to
+  //  increase the likelihood of the order being filled
 }

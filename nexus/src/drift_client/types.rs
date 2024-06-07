@@ -101,6 +101,11 @@ impl MarketId {
     kind: MarketType::Spot,
   };
 
+  pub const SOL_PERP: Self = Self {
+    index: 0,
+    kind: MarketType::Perp,
+  };
+
   pub fn kind_eq(&self, other: MarketType) -> bool {
     matches!(
       (self.kind, other),

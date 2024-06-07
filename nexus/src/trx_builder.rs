@@ -13,17 +13,20 @@ use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::message::{v0, Message, VersionedMessage};
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Signature;
+use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
 use solana_sdk::signers::Signers;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::{
-  TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding,
+  EncodedConfirmedTransactionWithStatusMeta, TransactionConfirmationStatus, TransactionStatus,
+  UiTransactionEncoding,
 };
 use std::sync::Arc;
 use tokio::time::MissedTickBehavior;
 
-use crate::{ConfirmTransactionConfig, MICRO_LAMPORTS_PER_LAMPORT};
+use crate::ConfirmTransactionConfig;
+
+pub type KeypairTrx<'a> = TrxBuilder<'a, Keypair, Vec<&'a Keypair>>;
 
 /// Error received when confirming a transaction
 #[derive(Debug, thiserror::Error)]
@@ -136,10 +139,7 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     window: Option<usize>,
     cu_limit: Option<u32>,
   ) -> anyhow::Result<()> {
-    let ul_per_cu = self
-      .recent_priority_fee(key, window)
-      .await?
-      .max(MICRO_LAMPORTS_PER_LAMPORT);
+    let ul_per_cu = self.recent_priority_fee(key, window).await?.max(200_000);
     let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_price(ul_per_cu);
     self.ixs.insert(0, cu_limit_ix);
     if let Some(cu_limit) = cu_limit {
@@ -366,7 +366,7 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
           result = Some(match err {
             None => Ok(slot),
             Some(error) => {
-              let tx = match self
+              let tx: EncodedConfirmedTransactionWithStatusMeta = match self
                 .rpc
                 .get_transaction_with_config(
                   &sig,

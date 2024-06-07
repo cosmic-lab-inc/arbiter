@@ -30,9 +30,7 @@ async fn main() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   init_logger();
 
-  // SOL-PERP
-  let market = MarketId::perp(0);
-  let mut baker = Bracketeer::new(0, market, None).await?;
+  let mut baker = Bracketeer::new(0, MarketId::SOL_PERP, None).await?;
   baker.start().await?;
 
   Ok(())
@@ -91,10 +89,9 @@ mod tests {
     let baker = Bracketeer::new(0, market_id, None).await?;
     let cache = Cache::new(200);
     let orderbook = Orderbook::new(vec![market_id]);
-    let (tx, _rx) = crossbeam::channel::unbounded::<TxStub>();
     let grpc = std::env::var("GRPC")?;
     let x_token = std::env::var("X_TOKEN")?;
-    let signer = read_keypair_from_env("WALLET")?;
+    let signer = read_keypair_from_env("SIGNER")?;
     let rpc_url = std::env::var("RPC_URL")?;
     let rpc = RpcClient::new(rpc_url);
 
@@ -158,7 +155,7 @@ mod tests {
     let _cache = cache.clone();
     tokio::task::spawn(async move {
       nexus
-        .stream(&_cache, Some(tx), Some(&_orderbook), Some(filter))
+        .stream(&_cache, None, Some(&_orderbook), Some(filter))
         .await?;
       Result::<_, anyhow::Error>::Ok(())
     });
@@ -172,17 +169,15 @@ mod tests {
       let price = DriftUtils::oracle_price(&market_id, &cache, None)?;
 
       let l3 = dlob.l3(&market_id, &cache)?;
-      let orders = dlob.market_orders(&market_id)?;
       drop(cache);
       drop(dlob);
       let pct_spread = trunc!(l3.spread / price * 100.0, 3);
       info!(
-        "price: {}, bid: {}, ask: {}, spread: {}%, orders: {}",
+        "${}, B: {}, A: {}, S: {}%",
         trunc!(price, 4),
         trunc!(l3.best_bid()?.price, 4),
         trunc!(l3.best_ask()?.price, 4),
         pct_spread,
-        orders
       );
       tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }

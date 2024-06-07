@@ -72,7 +72,7 @@ impl Imitator {
   ) -> anyhow::Result<Self> {
     let read_only = std::env::var("READ_ONLY")?.parse::<bool>()?;
     let retry_until_confirmed = std::env::var("RETRY_UNTIL_CONFIRMED")?.parse::<bool>()?;
-    let signer = read_keypair_from_env("WALLET")?;
+    let signer = read_keypair_from_env("SIGNER")?;
     let rpc_url = std::env::var("RPC_URL")?;
     let grpc = std::env::var("GRPC")?;
     let x_token = std::env::var("X_TOKEN")?;

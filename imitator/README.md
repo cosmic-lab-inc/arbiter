@@ -20,7 +20,7 @@ async fn epoch_demo() -> anyhow::Result<()> {
   // load a keypair from env as a buffer (e.g. [1,2,3,4,5,5,...])
   // during the demo phase make sure this has devnet SOL, 
   // if not you can get some here: https://faucet.solana.com/
-  let signer = EpochClient::read_keypair_from_env("WALLET")?;
+  let signer = EpochClient::read_keypair_from_env("SIGNER")?;
   let rpc_url = "https://api.devnet.solana.com".to_string();
   let client = Arc::new(EpochClient::new(signer, rpc_url, None));
 

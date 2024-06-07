@@ -642,29 +642,35 @@ impl DriftUtils {
     match prefix {
       Some(prefix) => {
         info!(
-          "{}: {} {} {} @ {} as {:?}, offset: {}, price w/o offset?: {}",
+          "{}: {} {} {} @ {} as {:?}",
           prefix,
           dir,
           base,
           order_price.name,
           trunc!(order_price.price(), 3),
           params.order_type,
-          trunc!(order_price.offset, 3),
-          trunc!(order_price.price_without_offset(), 3),
         );
       }
       None => {
         info!(
-          "{} {} {} @ {} as {:?}, offset: {}, limit?: {}",
+          "{} {} {} @ {} as {:?}",
           dir,
           base,
           order_price.name,
           trunc!(order_price.price(), 3),
           params.order_type,
-          trunc!(order_price.offset, 3),
-          trunc!(order_price.price_without_offset(), 3),
         );
       }
     }
+  }
+
+  pub fn order_price(order: &Order) -> f64 {
+    order.price as f64 / PRICE_PRECISION as f64
+  }
+
+  pub fn perp_position_price(pos: &PerpPosition) -> f64 {
+    let lq = pos.quote_entry_amount as f64 / QUOTE_PRECISION as f64;
+    let lb = pos.base_asset_amount as f64 / BASE_PRECISION as f64;
+    (lq / lb).abs()
   }
 }

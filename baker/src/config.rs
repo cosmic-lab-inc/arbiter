@@ -1,6 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Utc};
+use nexus::read_keypair_from_env;
 use serde::{Deserialize, Deserializer};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
@@ -14,6 +15,14 @@ pub struct BakerConfig {
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
+  pub pct_cancel_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct YamlConfig {
+  pub read_only: bool,
+  pub retry_until_confirmed: bool,
+  pub grpc: String,
   pub pct_cancel_threshold: f64,
 }
 
@@ -38,6 +47,18 @@ impl BakerConfig {
     let path = format!("{}/{}", dir, name);
     let path = PathBuf::from_str(&path)?;
     let contents = String::from_utf8(std::fs::read(path)?)?;
-    Ok(serde_yaml::from_str(&contents)?)
+    let yaml: YamlConfig = serde_yaml::from_str(&contents)?;
+    let x_token = std::env::var("X_TOKEN")?;
+    let signer = read_keypair_from_env("SIGNER")?;
+    let rpc_url = std::env::var("RPC_URL")?;
+    Ok(Self {
+      signer,
+      x_token,
+      rpc_url,
+      read_only: yaml.read_only,
+      retry_until_confirmed: yaml.retry_until_confirmed,
+      grpc: yaml.grpc,
+      pct_cancel_threshold: yaml.pct_cancel_threshold,
+    })
   }
 }

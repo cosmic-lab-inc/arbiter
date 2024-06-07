@@ -1,5 +1,5 @@
 use log::*;
-use simplelog::{ColorChoice, Config, TermLogger, TerminalMode};
+use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 pub fn init_logger() {
   let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -11,11 +11,11 @@ pub fn init_logger() {
     "error" => LevelFilter::Error,
     _ => LevelFilter::Info,
   };
-  TermLogger::init(
-    log_level,
-    Config::default(),
-    TerminalMode::Mixed,
-    ColorChoice::Auto,
-  )
-  .expect("Failed to initialize logger");
+
+  let mut cfg = ConfigBuilder::new();
+  cfg.set_time_offset(time::UtcOffset::from_hms(-4, 0, 0).unwrap());
+  let cfg = cfg.build();
+
+  TermLogger::init(log_level, cfg, TerminalMode::Mixed, ColorChoice::Auto)
+    .expect("Failed to initialize logger");
 }

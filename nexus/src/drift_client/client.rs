@@ -56,7 +56,7 @@ impl DriftClient {
     })
   }
 
-  pub fn new_tx(&self, with_lookup_tables: bool) -> TrxBuilder<'_, Keypair, Vec<&Keypair>> {
+  pub fn new_tx(&self, with_lookup_tables: bool) -> KeypairTrx<'_> {
     let alt = if with_lookup_tables {
       vec![self.program_data.lookup_table.clone()]
     } else {
@@ -415,10 +415,7 @@ impl DriftClient {
   // Instructions
   // ======================================================================
 
-  pub async fn initialize_user_stats_ix(
-    &self,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
-  ) -> anyhow::Result<()> {
+  pub async fn initialize_user_stats_ix(&self, trx: &mut KeypairTrx<'_>) -> anyhow::Result<()> {
     let accounts = accounts::InitializeUserStats {
       user_stats: DriftUtils::user_stats_pda(&self.signer.pubkey()),
       state: DriftUtils::state_pda(),
@@ -441,7 +438,7 @@ impl DriftClient {
     &self,
     sub_acct_id: u16,
     name: &str,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let accounts = accounts::InitializeUser {
       user: DriftUtils::user_pda(&self.signer.pubkey(), sub_acct_id),
@@ -475,7 +472,7 @@ impl DriftClient {
     spot_market_index: u16,
     user_token_account: Pubkey,
     reduce_only: Option<bool>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let accounts = self.build_accounts(
       accounts::Deposit {
@@ -513,7 +510,7 @@ impl DriftClient {
     maker_info: Option<User>,
     // For spot orders only
     fulfillment_type: Option<SpotFulfillmentType>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
@@ -578,7 +575,7 @@ impl DriftClient {
     &self,
     cache: &ReadCache<'_>,
     params: Vec<OrderParams>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
@@ -620,7 +617,7 @@ impl DriftClient {
     cache: &ReadCache<'_>,
     params: Vec<OrderParams>,
     market_filter: Option<&[MarketId]>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
@@ -719,7 +716,7 @@ impl DriftClient {
     cache: &ReadCache<'_>,
     market: Option<MarketId>,
     direction: Option<PositionDirection>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
@@ -762,7 +759,7 @@ impl DriftClient {
     &self,
     cache: &ReadCache<'_>,
     orders: Vec<&Order>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
@@ -797,9 +794,8 @@ impl DriftClient {
     &self,
     cache: &ReadCache<'_>,
     markets: &[MarketId],
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
-    info!("close positions...");
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
       .decoded;
@@ -818,45 +814,65 @@ impl DriftClient {
           }
         };
         let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
-        let direction = match base_amt > 0.0 {
-          true => PositionDirection::Long,
-          false => PositionDirection::Short,
+        info!("exposure: {}", base_amt);
+        let direction = match pos.base_asset_amount > 0 {
+          true => PositionDirection::Short,
+          false => PositionDirection::Long,
         };
-        let side = match direction {
-          PositionDirection::Long => "long",
-          PositionDirection::Short => "short",
-        };
-        info!("close position: {} {} {}", side, base_amt, name,);
+        info!(
+          "close position: {:?} {} {}",
+          direction,
+          base_amt.abs(),
+          name
+        );
 
         let order = OrderParams {
-          order_type: OrderType::Market,
+          order_type: OrderType::Oracle,
           market_type: MarketType::Perp,
-          direction: match direction {
-            PositionDirection::Long => PositionDirection::Short,
-            PositionDirection::Short => PositionDirection::Long,
-          },
+          direction,
           user_order_id: 0,
           base_asset_amount: pos.base_asset_amount.unsigned_abs(),
           price: 0,
           market_index: pos.market_index,
           reduce_only: true,
-          post_only: Default::default(),
+          post_only: PostOnlyParam::None,
           immediate_or_cancel: false,
           max_ts: None,
           trigger_price: None,
-          trigger_condition: Default::default(),
-          oracle_price_offset: None,
-          auction_duration: None,
-          auction_start_price: None,
-          auction_end_price: None,
+          trigger_condition: match direction {
+            PositionDirection::Long => OrderTriggerCondition::Above,
+            PositionDirection::Short => OrderTriggerCondition::Below,
+          },
+          oracle_price_offset: match direction {
+            PositionDirection::Long => Some(528588),
+            PositionDirection::Short => Some(-528588),
+          },
+          auction_duration: Some(30),
+          auction_start_price: match direction {
+            PositionDirection::Long => Some(120855),
+            PositionDirection::Short => Some(-120855),
+          },
+          auction_end_price: match direction {
+            PositionDirection::Long => Some(528588),
+            PositionDirection::Short => Some(-528588),
+          },
         };
+        // self.place_orders_ix(cache, vec![order], trx).await?;
         self
-          .place_and_take_order_ix(cache, order, Some(user), None, trx)
+          .place_and_take_order_ix(cache, order, None, None, trx)
           .await?;
       }
     }
     Ok(())
   }
+
+  // pub async fn modify_order_ix(
+  //   &self,
+  //   cache: &ReadCache<'_>,
+  //   order: OrderParams,
+  // ) -> anyhow::Result<()> {
+  //   Ok(())
+  // }
 
   // ======================================================================
   // Utilities

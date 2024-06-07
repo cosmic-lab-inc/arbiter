@@ -20,17 +20,17 @@ impl AmmUtils {
     };
 
     let SpreadReserves {
-      ask_reserves,
       bid_reserves,
+      ask_reserves,
     } = Self::calc_spread_reserves(&amm, oracle);
-    let ask = Self::calc_price(
-      ask_reserves.base_asset_reserve,
-      ask_reserves.quote_asset_reserve,
-      BigInt::from(amm.peg_multiplier),
-    );
     let bid = Self::calc_price(
       bid_reserves.base_asset_reserve,
       bid_reserves.quote_asset_reserve,
+      BigInt::from(amm.peg_multiplier),
+    );
+    let ask = Self::calc_price(
+      ask_reserves.base_asset_reserve,
+      ask_reserves.quote_asset_reserve,
       BigInt::from(amm.peg_multiplier),
     );
     BidAsk {
