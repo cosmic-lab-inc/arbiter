@@ -39,6 +39,7 @@ use solana_transaction_status::UiTransactionEncoding;
 use tokio::io::ReadBuf;
 use tokio::sync::RwLockReadGuard;
 use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::time::Instant;
 use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
 use yellowstone_grpc_proto::prelude::{
   subscribe_request_filter_accounts_filter_memcmp, CommitmentLevel, SubscribeRequestFilterAccounts,
@@ -61,7 +62,7 @@ pub struct Bracketeer {
   pub market: MarketId,
   pub cache: Cache,
   pub orderbook: Orderbook,
-  pct_spread_multiplier: f64,
+  pct_spread_brackets: Vec<f64>,
   pct_exit_deviation: f64,
   leverage: f64,
   pct_max_spread: f64,
@@ -80,7 +81,7 @@ impl Bracketeer {
       rpc_url,
       grpc,
       x_token,
-      pct_spread_multiplier,
+      pct_spread_brackets,
       pct_exit_deviation,
       leverage,
       pct_max_spread,
@@ -114,7 +115,7 @@ impl Bracketeer {
       cache: Cache::new(cache_depth),
       orderbook,
       market,
-      pct_spread_multiplier,
+      pct_spread_brackets,
       pct_exit_deviation,
       leverage,
       pct_max_spread,
@@ -200,6 +201,7 @@ impl Bracketeer {
     self.reset().await?;
     let run = AtomicBool::new(true);
 
+    let mut last_update = Instant::now();
     while run.load(Ordering::Relaxed) {
       let user = self
         .cache()
@@ -207,14 +209,28 @@ impl Bracketeer {
         .decoded_account::<User>(self.user(), None)?
         .decoded;
 
-      let mut long_order = user.orders.iter().find(|o| {
-        MarketId::from((o.market_index, o.market_type)) == self.market
-          && matches!(o.direction, PositionDirection::Long)
-      });
-      let mut short_order = user.orders.iter().find(|o| {
-        MarketId::from((o.market_index, o.market_type)) == self.market
-          && matches!(o.direction, PositionDirection::Short)
-      });
+      let long_orders: Vec<&Order> = user
+        .orders
+        .iter()
+        .filter(|o| {
+          MarketId::from((o.market_index, o.market_type)) == self.market
+            && matches!(o.direction, PositionDirection::Long)
+        })
+        .collect();
+      // take long order with the lowest bid price
+      let mut long_order = long_orders.into_iter().min_by_key(|o| o.price);
+
+      let short_orders: Vec<&Order> = user
+        .orders
+        .iter()
+        .filter(|o| {
+          MarketId::from((o.market_index, o.market_type)) == self.market
+            && matches!(o.direction, PositionDirection::Short)
+        })
+        .collect();
+      // take short order with the highest ask price
+      let mut short_order = short_orders.into_iter().max_by_key(|o| o.price);
+
       if Self::blank_order(long_order) {
         long_order = None;
       }
@@ -246,14 +262,8 @@ impl Bracketeer {
           let short_price = so.price as f64 / PRICE_PRECISION as f64;
           let short_price_pct_diff = market_info.price / short_price * 100.0 - 100.0;
 
-          let long_filled = matches!(lo.status, OrderStatus::Filled);
-          let short_filled = matches!(so.status, OrderStatus::Filled);
-
-          if long_filled && short_filled {
-            let pnl = Self::pct_pnl(lo, so);
-            info!("🟢 pnl: {}%", trunc!(pnl, 4));
-          } else if short_price_pct_diff > self.pct_exit_deviation
-            || long_price_pct_diff < self.pct_exit_deviation * -1.0
+          if short_price_pct_diff > self.pct_exit_deviation
+            || long_price_pct_diff < self.pct_exit_deviation.neg()
           {
             info!(
               "🔴 price moved {}% beyond spread orders, reset position",
@@ -314,7 +324,13 @@ impl Bracketeer {
         _ => {}
       }
 
+      if last_update.elapsed() > Duration::from_secs(60 * 2) {
+        info!("🔴 no activity for 2 minutes, reset position");
+        self.reset().await?;
+      }
+
       tokio::time::sleep(Duration::from_millis(200)).await;
+      last_update = Instant::now();
     }
 
     Ok(())
@@ -343,9 +359,10 @@ impl Bracketeer {
 
   /// Places a long and short at the oracle price to capitalize on maker fees
   async fn build_orders(&self) -> anyhow::Result<Vec<OrderParams>> {
-    let market_info = self
+    let price = self
       .drift
-      .market_info(self.market, &self.cache().await, None)?;
+      .market_info(self.market, &self.cache().await, None)?
+      .price;
     let l3 = self
       .orderbook()
       .await
@@ -354,35 +371,63 @@ impl Bracketeer {
     let quote_balance = self
       .drift
       .quote_balance(self.market, &self.cache().await, None)?;
-    let quote_balance = quote_balance * 0.98 * self.leverage;
-    let trade_alloc_ratio = 50.0 / 100.0;
-    let base_amt_f64 = quote_balance / market_info.price * trade_alloc_ratio;
-    let base_asset_amount = (base_amt_f64 * BASE_PRECISION as f64).round() as u64;
+    let total_quote = quote_balance * self.leverage;
 
-    let real_quote_spread = l3.spread * self.pct_spread_multiplier / 100.0;
-    let real_pct_spread = real_quote_spread / market_info.price * 100.0;
+    let min_quote = total_quote / 6.0;
+    let low_bid_base_f64 = min_quote * 2.0 / price;
+    let high_bid_base_f64 = min_quote / price;
+    let high_ask_base_f64 = min_quote * 2.0 / price;
+    let low_ask_base_f64 = min_quote / price;
+
+    let low_bid_base = DriftUtils::base_to_u64(low_bid_base_f64);
+    let high_bid_base = DriftUtils::base_to_u64(high_bid_base_f64);
+    let high_ask_base = DriftUtils::base_to_u64(high_ask_base_f64);
+    let low_ask_base = DriftUtils::base_to_u64(low_ask_base_f64);
+
+    let real_quote_spread = l3.spread;
 
     let max_pct_spread = self.pct_max_spread;
-    let max_quote_spread = max_pct_spread / 100.0 * market_info.price;
+    let max_quote_spread = max_pct_spread / 100.0 * price;
 
     let quote_spread = real_quote_spread.min(max_quote_spread);
-    let pct_spread = real_pct_spread.min(max_pct_spread);
+    let pct_spread = quote_spread / price * 100.0;
     info!(
-      "spread: ${}, {}%",
+      "spread: {}%, ${}",
+      trunc!(pct_spread, 4),
       trunc!(quote_spread, 4),
-      trunc!(pct_spread, 4)
     );
 
-    let long_price = market_info.price - quote_spread / 2.0;
-    let short_price = market_info.price + quote_spread / 2.0;
+    // closest to price
+    let bracket_1_spread_mul = self
+      .pct_spread_brackets
+      .first()
+      .ok_or(anyhow::anyhow!("pct_spread_brackets missing 0th index"))?
+      / 100.0;
+    // further from price
+    let bracket_2_spread_mul = self
+      .pct_spread_brackets
+      .get(1)
+      .ok_or(anyhow::anyhow!("pct_spread_brackets missing 1th index"))?
+      / 100.0;
 
-    let long = OrderParams {
+    // lowest pnl
+    let high_bid_price = price - quote_spread * bracket_1_spread_mul / 2.0;
+    let low_ask_price = price + quote_spread * bracket_1_spread_mul / 2.0;
+    // highest pnl
+    let low_bid_price = price - quote_spread * bracket_2_spread_mul / 2.0;
+    let high_ask_price = price + quote_spread * bracket_2_spread_mul / 2.0;
+    assert!(high_bid_price < price && high_bid_price > low_bid_price);
+    assert!(low_bid_price < price && low_bid_price < high_bid_price);
+    assert!(high_ask_price > price && high_ask_price > low_ask_price);
+    assert!(low_ask_price > price && low_ask_price < high_ask_price);
+
+    let low_bid = OrderParams {
       order_type: OrderType::Limit,
       market_type: self.market.kind,
       direction: PositionDirection::Long,
       user_order_id: 0,
-      base_asset_amount,
-      price: (long_price * PRICE_PRECISION as f64).round() as u64,
+      base_asset_amount: low_bid_base,
+      price: DriftUtils::price_to_u64(low_bid_price),
       market_index: self.market.index,
       reduce_only: false,
       post_only: PostOnlyParam::MustPostOnly,
@@ -395,13 +440,13 @@ impl Bracketeer {
       auction_start_price: None,
       auction_end_price: None,
     };
-    let short = OrderParams {
+    let high_ask = OrderParams {
       order_type: OrderType::Limit,
       market_type: self.market.kind,
       direction: PositionDirection::Short,
       user_order_id: 0,
-      base_asset_amount,
-      price: (short_price * PRICE_PRECISION as f64).round() as u64,
+      base_asset_amount: high_ask_base,
+      price: DriftUtils::price_to_u64(high_ask_price),
       market_index: self.market.index,
       reduce_only: false,
       post_only: PostOnlyParam::MustPostOnly,
@@ -414,7 +459,45 @@ impl Bracketeer {
       auction_start_price: None,
       auction_end_price: None,
     };
-    Ok(vec![long, short])
+    let high_bid = OrderParams {
+      order_type: OrderType::Limit,
+      market_type: self.market.kind,
+      direction: PositionDirection::Long,
+      user_order_id: 0,
+      base_asset_amount: high_bid_base,
+      price: DriftUtils::price_to_u64(high_bid_price),
+      market_index: self.market.index,
+      reduce_only: false,
+      post_only: PostOnlyParam::MustPostOnly,
+      immediate_or_cancel: false,
+      max_ts: None,
+      trigger_price: None,
+      trigger_condition: OrderTriggerCondition::Above,
+      oracle_price_offset: None,
+      auction_duration: None,
+      auction_start_price: None,
+      auction_end_price: None,
+    };
+    let low_ask = OrderParams {
+      order_type: OrderType::Limit,
+      market_type: self.market.kind,
+      direction: PositionDirection::Short,
+      user_order_id: 0,
+      base_asset_amount: low_ask_base,
+      price: DriftUtils::price_to_u64(low_ask_price),
+      market_index: self.market.index,
+      reduce_only: false,
+      post_only: PostOnlyParam::MustPostOnly,
+      immediate_or_cancel: false,
+      max_ts: None,
+      trigger_price: None,
+      trigger_condition: OrderTriggerCondition::Below,
+      oracle_price_offset: None,
+      auction_duration: None,
+      auction_start_price: None,
+      auction_end_price: None,
+    };
+    Ok(vec![low_bid, high_bid, low_ask, high_ask])
   }
 
   /// Stream these accounts from geyser for usage in the engine

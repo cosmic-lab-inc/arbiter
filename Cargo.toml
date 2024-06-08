@@ -5,6 +5,7 @@ members = [
     "bracketeer",
     "imitator",
     "nexus",
+    "uncross",
     "programs/*",
 ]
 

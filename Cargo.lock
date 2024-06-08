@@ -5948,6 +5948,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "uncross"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "crossbeam",
+ "csv",
+ "derive_more",
+ "dotenv",
+ "flate2",
+ "futures",
+ "heck 0.5.0",
+ "lazy_static",
+ "log",
+ "maplit",
+ "nexus",
+ "rayon",
+ "reqwest 0.12.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simplelog",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "spl-associated-token-account",
+ "spl-token",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "yellowstone-grpc-client",
+ "yellowstone-grpc-proto",
+]
+
+[[package]]
 name = "unicode-bidi"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"

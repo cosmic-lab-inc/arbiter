@@ -13,4 +13,3 @@ snapshots
 gcs_snapshots.json
 /keys
 **/*.png
-*.yaml

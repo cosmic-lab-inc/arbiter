@@ -287,7 +287,7 @@ impl Imitator {
     Ok(keys)
   }
 
-  pub fn new_tx(&self) -> TrxBuilder<'_, Keypair, Vec<&Keypair>> {
+  pub fn new_tx(&self) -> KeypairTrx<'_> {
     self.drift.new_tx(true)
   }
 
@@ -295,7 +295,7 @@ impl Imitator {
     &self,
     tx_slot: u64,
     orders: Vec<OrderParams>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let market_filter = self.market_filter.as_deref();
     self
@@ -309,7 +309,7 @@ impl Imitator {
     &self,
     market: Option<MarketId>,
     direction: Option<PositionDirection>,
-    trx: &mut TrxBuilder<'_, Keypair, Vec<&Keypair>>,
+    trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     info!("cancel orders...");
     let market_filter = self.market_filter.as_deref();

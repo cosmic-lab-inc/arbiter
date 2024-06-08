@@ -7,10 +7,10 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 #[derive(Debug, Deserialize)]
-pub struct BakerConfig {
+pub struct UncrossConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "BakerConfig::deserialize_keypair")]
+  #[serde(deserialize_with = "UncrossConfig::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
@@ -32,7 +32,7 @@ struct YamlConfig {
   pub pct_max_spread: f64,
 }
 
-impl BakerConfig {
+impl UncrossConfig {
   fn deserialize_keypair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Keypair, D::Error> {
     let kp_bytes: Vec<u8> = match Vec::deserialize(deserializer) {
       Ok(res) => res,

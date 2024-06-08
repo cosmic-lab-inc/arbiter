@@ -48,12 +48,12 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
-use crate::config::BakerConfig;
+use crate::config::UncrossConfig;
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
-pub struct Baker {
+pub struct Uncross {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -68,13 +68,13 @@ pub struct Baker {
   pct_max_spread: f64,
 }
 
-impl Baker {
+impl Uncross {
   pub async fn new(
     sub_account_id: u16,
     market: MarketId,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let BakerConfig {
+    let UncrossConfig {
       read_only,
       retry_until_confirmed,
       signer,
@@ -86,12 +86,12 @@ impl Baker {
       leverage,
       pct_max_spread,
       ..
-    } = BakerConfig::read()?;
+    } = UncrossConfig::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
-    info!("Baker using wallet: {}", signer.pubkey());
+    info!("Uncross using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),

@@ -312,15 +312,6 @@ impl L3Orderbook {
       .ok_or(anyhow::anyhow!("No bids"))
   }
 
-  pub fn worst_bid(&self) -> anyhow::Result<&OrderInfo> {
-    self
-      .bids
-      .iter()
-      .filter(|o| o.price < self.oracle_price)
-      .min_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-      .ok_or(anyhow::anyhow!("No bids"))
-  }
-
   pub fn best_ask(&self) -> anyhow::Result<&OrderInfo> {
     self
       .asks
@@ -330,13 +321,30 @@ impl L3Orderbook {
       .ok_or(anyhow::anyhow!("No asks"))
   }
 
-  pub fn worst_ask(&self) -> anyhow::Result<&OrderInfo> {
-    self
+  pub fn asks_below_oracle(&self, pct_cutoff: f64) -> anyhow::Result<Vec<&OrderInfo>> {
+    assert!(pct_cutoff >= 0.0);
+    let quote_cutoff = self.oracle_price * (1.0 - pct_cutoff / 100.0);
+    let mut asks = self
       .asks
       .iter()
-      .filter(|o| o.price > self.oracle_price)
-      .max_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-      .ok_or(anyhow::anyhow!("No asks"))
+      .filter(|o| o.price < self.oracle_price && o.price >= quote_cutoff)
+      .collect::<Vec<&OrderInfo>>();
+    // sort so the lowest price is first
+    asks.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
+    Ok(asks)
+  }
+
+  pub fn bids_above_oracle(&self, pct_cutoff: f64) -> anyhow::Result<Vec<&OrderInfo>> {
+    assert!(pct_cutoff >= 0.0);
+    let quote_cutoff = self.oracle_price * (1.0 + pct_cutoff / 100.0);
+    let mut bids = self
+      .bids
+      .iter()
+      .filter(|o| o.price > self.oracle_price && o.price <= quote_cutoff)
+      .collect::<Vec<&OrderInfo>>();
+    // sort so the highest price is first
+    bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
+    Ok(bids)
   }
 }
 

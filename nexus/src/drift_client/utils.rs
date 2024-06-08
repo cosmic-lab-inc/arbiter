@@ -673,4 +673,23 @@ impl DriftUtils {
     let lb = pos.base_asset_amount as f64 / BASE_PRECISION as f64;
     (lq / lb).abs()
   }
+
+  pub fn quote_to_u64(quote: f64) -> u64 {
+    (quote * QUOTE_PRECISION as f64).round() as u64
+  }
+  pub fn base_to_u64(base: f64) -> u64 {
+    (base * BASE_PRECISION as f64).round() as u64
+  }
+  pub fn price_to_u64(price: f64) -> u64 {
+    (price * PRICE_PRECISION as f64).round() as u64
+  }
+  pub fn quote_to_f64(quote: u64) -> f64 {
+    quote as f64 / QUOTE_PRECISION as f64
+  }
+  pub fn base_to_f64(base: u64) -> f64 {
+    base as f64 / BASE_PRECISION as f64
+  }
+  pub fn price_to_f64(price: u64) -> f64 {
+    price as f64 / PRICE_PRECISION as f64
+  }
 }
