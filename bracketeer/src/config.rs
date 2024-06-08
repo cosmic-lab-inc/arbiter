@@ -18,6 +18,7 @@ pub struct BracketeerConfig {
   pub pct_spread_multiplier: f64,
   pub pct_exit_deviation: f64,
   pub leverage: f64,
+  pub pct_max_spread: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +29,7 @@ struct YamlConfig {
   pub pct_spread_multiplier: f64,
   pub pct_exit_deviation: f64,
   pub leverage: f64,
+  pub pct_max_spread: f64,
 }
 
 impl BracketeerConfig {
@@ -65,6 +67,7 @@ impl BracketeerConfig {
       pct_spread_multiplier: yaml.pct_spread_multiplier,
       pct_exit_deviation: yaml.pct_exit_deviation,
       leverage: yaml.leverage,
+      pct_max_spread: yaml.pct_max_spread,
     })
   }
 }

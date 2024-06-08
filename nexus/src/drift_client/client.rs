@@ -814,7 +814,6 @@ impl DriftClient {
           }
         };
         let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
-        info!("exposure: {}", base_amt);
         let direction = match pos.base_asset_amount > 0 {
           true => PositionDirection::Short,
           false => PositionDirection::Long,

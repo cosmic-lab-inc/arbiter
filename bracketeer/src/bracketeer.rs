@@ -64,6 +64,7 @@ pub struct Bracketeer {
   pct_spread_multiplier: f64,
   pct_exit_deviation: f64,
   leverage: f64,
+  pct_max_spread: f64,
 }
 
 impl Bracketeer {
@@ -82,6 +83,7 @@ impl Bracketeer {
       pct_spread_multiplier,
       pct_exit_deviation,
       leverage,
+      pct_max_spread,
       ..
     } = BracketeerConfig::read()?;
 
@@ -115,6 +117,7 @@ impl Bracketeer {
       pct_spread_multiplier,
       pct_exit_deviation,
       leverage,
+      pct_max_spread,
     };
 
     let account_filter = this.account_filter().await?;
@@ -252,7 +255,7 @@ impl Bracketeer {
           } else if short_price_pct_diff > self.pct_exit_deviation
             || long_price_pct_diff < self.pct_exit_deviation * -1.0
           {
-            warn!(
+            info!(
               "🔴 price moved {}% beyond spread orders, reset position",
               self.pct_exit_deviation
             );
@@ -270,7 +273,7 @@ impl Bracketeer {
           let pct_diff = market_info.price / short_price * 100.0 - 100.0;
           // if price moves far above the ask, the bid likely won't fill
           if pct_diff > self.pct_exit_deviation {
-            warn!(
+            info!(
               "🔴 price moved {}% above short entry, reset position",
               self.pct_exit_deviation
             );
@@ -288,7 +291,7 @@ impl Bracketeer {
           let pct_diff = market_info.price / long_price * 100.0 - 100.0;
           // if price moves far below the bid, the ask likely won't fill
           if pct_diff < self.pct_exit_deviation.neg() {
-            warn!(
+            info!(
               "🔴 price moved -{}% below long entry, reset position",
               self.pct_exit_deviation
             );
@@ -356,9 +359,22 @@ impl Bracketeer {
     let base_amt_f64 = quote_balance / market_info.price * trade_alloc_ratio;
     let base_asset_amount = (base_amt_f64 * BASE_PRECISION as f64).round() as u64;
 
-    let spread = l3.spread * self.pct_spread_multiplier / 100.0;
-    let long_price = market_info.price - spread / 2.0;
-    let short_price = market_info.price + spread / 2.0;
+    let real_quote_spread = l3.spread * self.pct_spread_multiplier / 100.0;
+    let real_pct_spread = real_quote_spread / market_info.price * 100.0;
+
+    let max_pct_spread = self.pct_max_spread;
+    let max_quote_spread = max_pct_spread / 100.0 * market_info.price;
+
+    let quote_spread = real_quote_spread.min(max_quote_spread);
+    let pct_spread = real_pct_spread.min(max_pct_spread);
+    info!(
+      "spread: ${}, {}%",
+      trunc!(quote_spread, 4),
+      trunc!(pct_spread, 4)
+    );
+
+    let long_price = market_info.price - quote_spread / 2.0;
+    let short_price = market_info.price + quote_spread / 2.0;
 
     let long = OrderParams {
       order_type: OrderType::Limit,
