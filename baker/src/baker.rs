@@ -200,7 +200,7 @@ impl Baker {
 
   pub async fn start(&mut self) -> anyhow::Result<()> {
     self.drift.setup_user().await?;
-    self.reset().await?;
+    self.reset(true).await?;
     let run = AtomicBool::new(true);
 
     let mut last_update = Instant::now();
@@ -263,7 +263,7 @@ impl Baker {
               "🔴 price moved {}% beyond spread orders, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
         }
         (Some(_), None, None, Some(spos)) => {
@@ -281,7 +281,7 @@ impl Baker {
               "🔴 price moved {}% above short entry, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
         }
         (None, Some(_), Some(lpos), None) => {
@@ -299,13 +299,8 @@ impl Baker {
               "🔴 price moved -{}% below long entry, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
-        }
-        (None, None, Some(lpos), Some(spos)) => {
-          let lp = DriftUtils::perp_position_price(lpos);
-          let sp = DriftUtils::perp_position_price(spos);
-          info!("🟢 pnl: {}%", trunc!(sp / lp * 100.0 - 100.0, 4));
         }
         (None, None, None, None) => {
           info!("🟢 place orders");
@@ -321,7 +316,7 @@ impl Baker {
 
       if last_update.elapsed() > Duration::from_secs(60 * 2) {
         info!("🔴 no activity for 2 minutes, reset position");
-        self.reset().await?;
+        self.reset(true).await?;
       }
 
       tokio::time::sleep(Duration::from_millis(200)).await;
@@ -344,9 +339,9 @@ impl Baker {
     }
   }
 
-  async fn reset(&self) -> anyhow::Result<()> {
+  async fn reset(&self, retry: bool) -> anyhow::Result<()> {
     let mut trx = self.new_tx();
-    trx = trx.retry_until_confirmed();
+    trx.retry_until_confirmed = retry;
     self.cancel_orders(None, None, &mut trx).await?;
     self.close_positions(&[self.market], &mut trx).await?;
     trx.send_tx(id(), None).await
@@ -504,8 +499,4 @@ impl Baker {
       .close_perp_positions(&self.cache().await, markets, trx)
       .await
   }
-
-  // todo: modify_order instruction
-  //  if one order is filled and the oracle price is in the money, then adjust the open order to be right next to the oracle price to
-  //  increase the likelihood of the order being filled
 }

@@ -66,6 +66,7 @@ pub struct Bracketeer {
   pct_exit_deviation: f64,
   leverage: f64,
   pct_max_spread: f64,
+  pct_min_spread: f64,
 }
 
 impl Bracketeer {
@@ -85,6 +86,7 @@ impl Bracketeer {
       pct_exit_deviation,
       leverage,
       pct_max_spread,
+      pct_min_spread,
       ..
     } = BracketeerConfig::read()?;
 
@@ -119,6 +121,7 @@ impl Bracketeer {
       pct_exit_deviation,
       leverage,
       pct_max_spread,
+      pct_min_spread,
     };
 
     let account_filter = this.account_filter().await?;
@@ -153,30 +156,6 @@ impl Bracketeer {
     self.orderbook.read().await
   }
 
-  fn geyser_config(
-    &self,
-    grpc: String,
-    x_token: String,
-    account_filter: Vec<Pubkey>,
-  ) -> anyhow::Result<GeyserConfig> {
-    Ok(GeyserConfig {
-      grpc,
-      x_token,
-      slots: Some(SubscribeRequestFilterSlots {
-        filter_by_commitment: Some(true),
-      }),
-      accounts: Some(SubscribeRequestFilterAccounts {
-        account: account_filter.into_iter().map(|k| k.to_string()).collect(),
-        owner: vec![],
-        // subscribe to all Drift `User` accounts
-        filters: vec![],
-      }),
-      transactions: None,
-      blocks_meta: None,
-      commitment: CommitmentLevel::Processed,
-    })
-  }
-
   fn orderbook_geyser_config(&self, grpc: String, x_token: String) -> anyhow::Result<GeyserConfig> {
     let drift_program_id = id();
     Ok(GeyserConfig {
@@ -198,7 +177,7 @@ impl Bracketeer {
 
   pub async fn start(&mut self) -> anyhow::Result<()> {
     self.drift.setup_user().await?;
-    self.reset().await?;
+    self.reset(true).await?;
     let run = AtomicBool::new(true);
 
     let mut last_update = Instant::now();
@@ -269,7 +248,7 @@ impl Bracketeer {
               "🔴 price moved {}% beyond spread orders, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
         }
         (Some(_), None, None, Some(spos)) => {
@@ -287,7 +266,7 @@ impl Bracketeer {
               "🔴 price moved {}% above short entry, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
         }
         (None, Some(_), Some(lpos), None) => {
@@ -305,7 +284,7 @@ impl Bracketeer {
               "🔴 price moved -{}% below long entry, reset position",
               self.pct_exit_deviation
             );
-            self.reset().await?;
+            self.reset(false).await?;
           }
         }
         (None, None, Some(lpos), Some(spos)) => {
@@ -314,6 +293,7 @@ impl Bracketeer {
           info!("🟢 pnl: {}%", trunc!(sp / lp * 100.0 - 100.0, 4));
         }
         (None, None, None, None) => {
+          info!("🟢 place orders");
           // no open orders or positions, place new orders
           let mut trx = self.new_tx();
           self
@@ -326,7 +306,7 @@ impl Bracketeer {
 
       if last_update.elapsed() > Duration::from_secs(60 * 2) {
         info!("🔴 no activity for 2 minutes, reset position");
-        self.reset().await?;
+        self.reset(true).await?;
       }
 
       tokio::time::sleep(Duration::from_millis(200)).await;
@@ -349,9 +329,9 @@ impl Bracketeer {
     }
   }
 
-  async fn reset(&self) -> anyhow::Result<()> {
+  async fn reset(&self, retry: bool) -> anyhow::Result<()> {
     let mut trx = self.new_tx();
-    trx = trx.retry_until_confirmed();
+    trx.retry_until_confirmed = retry;
     self.cancel_orders(None, None, &mut trx).await?;
     self.close_positions(&[self.market], &mut trx).await?;
     trx.send_tx(id(), None).await
@@ -373,131 +353,73 @@ impl Bracketeer {
       .quote_balance(self.market, &self.cache().await, None)?;
     let total_quote = quote_balance * self.leverage;
 
-    let min_quote = total_quote / 6.0;
-    let low_bid_base_f64 = min_quote * 2.0 / price;
-    let high_bid_base_f64 = min_quote / price;
-    let high_ask_base_f64 = min_quote * 2.0 / price;
-    let low_ask_base_f64 = min_quote / price;
+    let num_orders = self.pct_spread_brackets.len() * 2;
+    let min_base = total_quote / price / num_orders as f64;
 
-    let low_bid_base = DriftUtils::base_to_u64(low_bid_base_f64);
-    let high_bid_base = DriftUtils::base_to_u64(high_bid_base_f64);
-    let high_ask_base = DriftUtils::base_to_u64(high_ask_base_f64);
-    let low_ask_base = DriftUtils::base_to_u64(low_ask_base_f64);
-
-    let real_quote_spread = l3.spread;
-
-    let max_pct_spread = self.pct_max_spread;
-    let max_quote_spread = max_pct_spread / 100.0 * price;
-
-    let quote_spread = real_quote_spread.min(max_quote_spread);
+    let max_quote_spread = self.pct_max_spread / 100.0 * price;
+    let min_quote_spread = self.pct_min_spread / 100.0 * price;
+    let quote_spread = min_quote_spread.max(l3.spread.min(max_quote_spread));
     let pct_spread = quote_spread / price * 100.0;
-    info!(
-      "spread: {}%, ${}",
-      trunc!(pct_spread, 4),
-      trunc!(quote_spread, 4),
-    );
 
-    // closest to price
-    let bracket_1_spread_mul = self
-      .pct_spread_brackets
-      .first()
-      .ok_or(anyhow::anyhow!("pct_spread_brackets missing 0th index"))?
-      / 100.0;
-    // further from price
-    let bracket_2_spread_mul = self
-      .pct_spread_brackets
-      .get(1)
-      .ok_or(anyhow::anyhow!("pct_spread_brackets missing 1th index"))?
-      / 100.0;
+    let mut orders = vec![];
+    for pct_spread_bracket in self.pct_spread_brackets.iter() {
+      let bid_base = DriftUtils::base_to_u64(min_base);
+      let ask_base = DriftUtils::base_to_u64(min_base);
 
-    // lowest pnl
-    let high_bid_price = price - quote_spread * bracket_1_spread_mul / 2.0;
-    let low_ask_price = price + quote_spread * bracket_1_spread_mul / 2.0;
-    // highest pnl
-    let low_bid_price = price - quote_spread * bracket_2_spread_mul / 2.0;
-    let high_ask_price = price + quote_spread * bracket_2_spread_mul / 2.0;
-    assert!(high_bid_price < price && high_bid_price > low_bid_price);
-    assert!(low_bid_price < price && low_bid_price < high_bid_price);
-    assert!(high_ask_price > price && high_ask_price > low_ask_price);
-    assert!(low_ask_price > price && low_ask_price < high_ask_price);
+      let bracket_mul = pct_spread_bracket / 100.0;
+      info!(
+        "spread: {}%, ${}",
+        trunc!(pct_spread * bracket_mul, 4),
+        trunc!(quote_spread * bracket_mul, 4),
+      );
 
-    let low_bid = OrderParams {
-      order_type: OrderType::Limit,
-      market_type: self.market.kind,
-      direction: PositionDirection::Long,
-      user_order_id: 0,
-      base_asset_amount: low_bid_base,
-      price: DriftUtils::price_to_u64(low_bid_price),
-      market_index: self.market.index,
-      reduce_only: false,
-      post_only: PostOnlyParam::MustPostOnly,
-      immediate_or_cancel: false,
-      max_ts: None,
-      trigger_price: None,
-      trigger_condition: OrderTriggerCondition::Above,
-      oracle_price_offset: None,
-      auction_duration: None,
-      auction_start_price: None,
-      auction_end_price: None,
-    };
-    let high_ask = OrderParams {
-      order_type: OrderType::Limit,
-      market_type: self.market.kind,
-      direction: PositionDirection::Short,
-      user_order_id: 0,
-      base_asset_amount: high_ask_base,
-      price: DriftUtils::price_to_u64(high_ask_price),
-      market_index: self.market.index,
-      reduce_only: false,
-      post_only: PostOnlyParam::MustPostOnly,
-      immediate_or_cancel: false,
-      max_ts: None,
-      trigger_price: None,
-      trigger_condition: OrderTriggerCondition::Below,
-      oracle_price_offset: None,
-      auction_duration: None,
-      auction_start_price: None,
-      auction_end_price: None,
-    };
-    let high_bid = OrderParams {
-      order_type: OrderType::Limit,
-      market_type: self.market.kind,
-      direction: PositionDirection::Long,
-      user_order_id: 0,
-      base_asset_amount: high_bid_base,
-      price: DriftUtils::price_to_u64(high_bid_price),
-      market_index: self.market.index,
-      reduce_only: false,
-      post_only: PostOnlyParam::MustPostOnly,
-      immediate_or_cancel: false,
-      max_ts: None,
-      trigger_price: None,
-      trigger_condition: OrderTriggerCondition::Above,
-      oracle_price_offset: None,
-      auction_duration: None,
-      auction_start_price: None,
-      auction_end_price: None,
-    };
-    let low_ask = OrderParams {
-      order_type: OrderType::Limit,
-      market_type: self.market.kind,
-      direction: PositionDirection::Short,
-      user_order_id: 0,
-      base_asset_amount: low_ask_base,
-      price: DriftUtils::price_to_u64(low_ask_price),
-      market_index: self.market.index,
-      reduce_only: false,
-      post_only: PostOnlyParam::MustPostOnly,
-      immediate_or_cancel: false,
-      max_ts: None,
-      trigger_price: None,
-      trigger_condition: OrderTriggerCondition::Below,
-      oracle_price_offset: None,
-      auction_duration: None,
-      auction_start_price: None,
-      auction_end_price: None,
-    };
-    Ok(vec![low_bid, high_bid, low_ask, high_ask])
+      // lowest pnl
+      let bid_price = price - quote_spread * bracket_mul / 2.0;
+      let ask_price = price + quote_spread * bracket_mul / 2.0;
+      assert!(bid_price < price && ask_price > price);
+
+      let bid = OrderParams {
+        order_type: OrderType::Limit,
+        market_type: self.market.kind,
+        direction: PositionDirection::Long,
+        user_order_id: 0,
+        base_asset_amount: bid_base,
+        price: DriftUtils::price_to_u64(bid_price),
+        market_index: self.market.index,
+        reduce_only: false,
+        post_only: PostOnlyParam::MustPostOnly,
+        immediate_or_cancel: false,
+        max_ts: None,
+        trigger_price: None,
+        trigger_condition: OrderTriggerCondition::Above,
+        oracle_price_offset: None,
+        auction_duration: None,
+        auction_start_price: None,
+        auction_end_price: None,
+      };
+      let ask = OrderParams {
+        order_type: OrderType::Limit,
+        market_type: self.market.kind,
+        direction: PositionDirection::Short,
+        user_order_id: 0,
+        base_asset_amount: ask_base,
+        price: DriftUtils::price_to_u64(ask_price),
+        market_index: self.market.index,
+        reduce_only: false,
+        post_only: PostOnlyParam::MustPostOnly,
+        immediate_or_cancel: false,
+        max_ts: None,
+        trigger_price: None,
+        trigger_condition: OrderTriggerCondition::Below,
+        oracle_price_offset: None,
+        auction_duration: None,
+        auction_start_price: None,
+        auction_end_price: None,
+      };
+      orders.push(bid);
+      orders.push(ask);
+    }
+    Ok(orders)
   }
 
   /// Stream these accounts from geyser for usage in the engine
@@ -580,8 +502,4 @@ impl Bracketeer {
       .close_perp_positions(&self.cache().await, markets, trx)
       .await
   }
-
-  // todo: modify_order instruction
-  //  if one order is filled and the oracle price is in the money, then adjust the open order to be right next to the oracle price to
-  //  increase the likelihood of the order being filled
 }

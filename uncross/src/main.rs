@@ -68,15 +68,21 @@ mod tests {
         let ask = asks_below.first().ok_or(anyhow::anyhow!("No ask"))?;
         if bid.price > ask.price {
           info!(
-            "bid: ${}, ask: ${}",
+            "bid: ${}, ask: ${}, bids: {}, asks: {}",
             trunc!(bid.price, 3),
-            trunc!(ask.price, 3)
+            trunc!(ask.price, 3),
+            bids_above.len(),
+            asks_below.len()
           );
 
-          let cache = client.cache().await;
-          let bid_user = cache.decoded_account::<User>(&bid.user, None)?;
-          let ask_user = cache.decoded_account::<User>(&ask.user, None)?;
-          drop(cache);
+          let bid_user = client
+            .cache()
+            .await
+            .decoded_account::<User>(&bid.user, None)?;
+          let ask_user = client
+            .cache()
+            .await
+            .decoded_account::<User>(&ask.user, None)?;
 
           let bid_maker = MakerInfo {
             maker: bid.user,
@@ -93,8 +99,9 @@ mod tests {
             .await?;
           info!("ixs");
 
-          let res = trx.simulate(id()).await?.value;
-          info!("{:#?}", res);
+          trx.retry_until_confirmed = true;
+          trx.read_only = true;
+          trx.send_tx(id(), None).await?;
         }
       }
 

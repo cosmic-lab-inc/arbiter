@@ -22,6 +22,7 @@ use nexus::drift_client::*;
 use nexus::drift_cpi::*;
 use nexus::*;
 
+mod config;
 mod imitator;
 
 #[tokio::main]
@@ -430,4 +431,35 @@ mod tests {
 
     Ok(())
   }
+}
+
+/// cargo test --package imitator --bin imitator my_pnl -- --exact --show-output
+#[tokio::test]
+async fn trader_pnl() -> anyhow::Result<()> {
+  init_logger();
+  dotenv::dotenv().ok();
+
+  // https://app.drift.trade/overview/portfolio?authority=F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
+  // authority: F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
+  let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
+  let market_filter = Some(vec![MarketId::SOL_PERP]);
+  let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+
+  let prefix = env!("CARGO_MANIFEST_DIR").to_string();
+
+  let user = imitator.user();
+  let data = DriftUtils::drift_historical_pnl(&imitator.client(), user, 100).await?;
+
+  if data.dataset().len() > 1 {
+    Plot::plot(
+      vec![data.dataset()],
+      &format!("{}/{}_pnl.png", prefix, copy_user),
+      &format!("{} Performance", user),
+      "Cum USDC PnL",
+      "Unix Seconds",
+    )?;
+    info!("{} done", shorten_address(user));
+  }
+
+  Ok(())
 }

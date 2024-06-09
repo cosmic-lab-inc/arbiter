@@ -58,8 +58,8 @@ pub struct TrxBuilder<'a, S: Signer + Sized, T: Signers> {
   /// add additional lookup tables (v0 only)
   lookup_tables: Vec<AddressLookupTableAccount>,
   prior_fee_added: bool,
-  read_only: bool,
-  retry_until_confirmed: bool,
+  pub read_only: bool,
+  pub retry_until_confirmed: bool,
   payer: &'a S,
   signers: T,
 }

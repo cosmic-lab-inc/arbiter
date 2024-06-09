@@ -46,6 +46,7 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
+use crate::config::ImitatorConfig;
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
@@ -61,6 +62,7 @@ pub struct Imitator {
   pub market_filter: Option<Vec<MarketId>>,
   pub cache: Cache,
   rx: Receiver<TxStub>,
+  leverage: f64,
 }
 
 impl Imitator {
@@ -70,12 +72,16 @@ impl Imitator {
     market_filter: Option<Vec<MarketId>>,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let read_only = std::env::var("READ_ONLY")?.parse::<bool>()?;
-    let retry_until_confirmed = std::env::var("RETRY_UNTIL_CONFIRMED")?.parse::<bool>()?;
-    let signer = read_keypair_from_env("SIGNER")?;
-    let rpc_url = std::env::var("RPC_URL")?;
-    let grpc = std::env::var("GRPC")?;
-    let x_token = std::env::var("X_TOKEN")?;
+    let ImitatorConfig {
+      read_only,
+      retry_until_confirmed,
+      signer,
+      rpc_url,
+      grpc,
+      x_token,
+      leverage,
+      ..
+    } = ImitatorConfig::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
@@ -106,6 +112,7 @@ impl Imitator {
       copy_user,
       market_filter,
       rx,
+      leverage,
     };
 
     let account_filter = this.account_filter().await?;

@@ -7,19 +7,15 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 #[derive(Debug, Deserialize)]
-pub struct BracketeerConfig {
+pub struct ImitatorConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "BracketeerConfig::deserialize_keypair")]
+  #[serde(deserialize_with = "ImitatorConfig::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
-  pub pct_spread_brackets: Vec<f64>,
-  pub pct_exit_deviation: f64,
   pub leverage: f64,
-  pub pct_max_spread: f64,
-  pub pct_min_spread: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,14 +23,10 @@ struct YamlConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
   pub grpc: String,
-  pub pct_spread_brackets: Vec<f64>,
-  pub pct_exit_deviation: f64,
   pub leverage: f64,
-  pub pct_max_spread: f64,
-  pub pct_min_spread: f64,
 }
 
-impl BracketeerConfig {
+impl ImitatorConfig {
   fn deserialize_keypair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Keypair, D::Error> {
     let kp_bytes: Vec<u8> = match Vec::deserialize(deserializer) {
       Ok(res) => res,
@@ -66,11 +58,7 @@ impl BracketeerConfig {
       read_only: yaml.read_only,
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
-      pct_spread_brackets: yaml.pct_spread_brackets,
-      pct_exit_deviation: yaml.pct_exit_deviation,
       leverage: yaml.leverage,
-      pct_max_spread: yaml.pct_max_spread,
-      pct_min_spread: yaml.pct_min_spread,
     })
   }
 }

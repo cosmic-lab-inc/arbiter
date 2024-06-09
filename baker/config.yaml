@@ -4,9 +4,9 @@ read_only: false
 # Retry sending orders until they are confirmed. Not recommended since orders can be out of date if the market moves.
 retry_until_confirmed: false
 # Bracket orders are placed at these percentages of the spread.
-pct_spread_multiplier: 70
+pct_spread_multiplier: 100
 # Use the real on-chain spread unless it is greater than this percentage.
-pct_max_spread: 0.07
-# Stop loss to exit position is below entry by this percentage.
+pct_max_spread: 0.04
+# Stop loss to exit position if below entry by this percentage.
 pct_exit_deviation: 0.1
-leverage: 1
+leverage: 4
