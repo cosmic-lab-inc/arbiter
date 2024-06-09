@@ -865,13 +865,79 @@ impl DriftClient {
     Ok(())
   }
 
-  // pub async fn modify_order_ix(
-  //   &self,
-  //   cache: &ReadCache<'_>,
-  //   order: OrderParams,
-  // ) -> anyhow::Result<()> {
-  //   Ok(())
-  // }
+  pub async fn arb_perp_ix(
+    &self,
+    cache: &ReadCache<'_>,
+    market: MarketId,
+    makers: Vec<MakerInfo>,
+    trx: &mut KeypairTrx<'_>,
+  ) -> anyhow::Result<()> {
+    let user = cache
+      .decoded_account::<User>(&self.sub_account, None)?
+      .decoded;
+
+    let mut user_accounts = vec![user];
+    let mut users = vec![&user];
+
+    for maker in makers.iter() {
+      user_accounts.push(maker.maker_user);
+      users.push(&maker.maker_user);
+    }
+
+    let ctx = jit_proxy_cpi::ArbPerpCtx {
+      state: DriftUtils::state_pda(),
+      user: self.sub_account,
+      user_stats: DriftUtils::user_stats_pda(&self.signer.pubkey()),
+      authority: self.signer.pubkey(),
+      drift_program: id(),
+    };
+
+    let mut remaining_accounts = self
+      .remaining_accounts(
+        cache,
+        RemainingAccountParams {
+          user_accounts,
+          readable_perp_market_indexes: None,
+          writable_perp_market_indexes: Some(vec![market.index]),
+          readable_spot_market_indexes: None,
+          writable_spot_market_indexes: None,
+          use_market_last_slot_cache: false,
+        },
+      )
+      .await?
+      .to_account_metas(None);
+
+    for maker in makers.iter() {
+      remaining_accounts.push(AccountMeta {
+        pubkey: maker.maker,
+        is_writable: true,
+        is_signer: false,
+      });
+      remaining_accounts.push(AccountMeta {
+        pubkey: maker.maker_user_stats,
+        is_writable: true,
+        is_signer: false,
+      });
+    }
+
+    let accounts: Vec<AccountMeta> = ctx
+      .to_account_metas(None)
+      .into_iter()
+      .chain(remaining_accounts)
+      .collect();
+
+    let ix_data = jit_proxy_cpi::ArbPerpParams {
+      market_index: market.index,
+    };
+
+    trx.add_ixs(vec![Instruction {
+      program_id: jit_proxy_cpi::id(),
+      accounts,
+      data: ix_data.data(),
+    }]);
+
+    Ok(())
+  }
 
   // ======================================================================
   // Utilities

@@ -96,7 +96,11 @@ impl Uncross {
       rpc_url,
       Duration::from_secs(90),
     ));
-    let orderbook = Orderbook::new(vec![market]);
+
+    let now = Instant::now();
+    let users = DriftUtils::users(&rpc).await?;
+    let orderbook = Orderbook::new(vec![market], &users).await?;
+    info!("orderbook loaded in {:?}", now.elapsed());
 
     let this = Self {
       read_only,
@@ -121,7 +125,7 @@ impl Uncross {
       pct_max_spread,
     };
 
-    let account_filter = this.account_filter().await?;
+    let account_filter = this.account_filter(users).await?;
     let mut filter = HashSet::new();
     for a in account_filter {
       filter.insert(a);
@@ -168,7 +172,6 @@ impl Uncross {
       accounts: Some(SubscribeRequestFilterAccounts {
         account: account_filter.into_iter().map(|k| k.to_string()).collect(),
         owner: vec![],
-        // subscribe to all Drift `User` accounts
         filters: vec![],
       }),
       transactions: None,
@@ -422,14 +425,17 @@ impl Uncross {
   }
 
   /// Stream these accounts from geyser for usage in the engine
-  pub async fn account_filter(&self) -> anyhow::Result<Vec<Pubkey>> {
+  pub async fn account_filter(
+    &self,
+    users: Vec<DecodedAcctCtx<User>>,
+  ) -> anyhow::Result<Vec<Pubkey>> {
+    let now = Instant::now();
     // accounts to subscribe to
     let perps = DriftUtils::perp_markets(&self.rpc()).await?;
     let spots = DriftUtils::spot_markets(&self.rpc()).await?;
     let perp_markets: Vec<Pubkey> = perps.iter().map(|p| p.key).collect();
     let spot_markets: Vec<Pubkey> = spots.iter().map(|s| s.key).collect();
-    let user = DriftUtils::user_pda(&self.signer.pubkey(), 0);
-    let users = [user];
+    let user_keys: Vec<Pubkey> = users.iter().map(|u| u.key).collect();
     let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
     let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
     let auths = [self.signer.pubkey()];
@@ -437,12 +443,13 @@ impl Uncross {
       .cache
       .write()
       .await
-      .load(&self.rpc(), &users, None, &auths)
+      .load_with_all_users(&self.rpc(), Some(users), None, &auths)
       .await?;
+    info!("cache loaded in {:?}", now.elapsed());
     let keys = perp_markets
       .iter()
       .chain(spot_markets.iter())
-      .chain(users.iter())
+      .chain(user_keys.iter())
       .chain(perp_oracles.iter())
       .chain(spot_oracles.iter())
       .cloned()
@@ -502,7 +509,14 @@ impl Uncross {
       .await
   }
 
-  // todo: modify_order instruction
-  //  if one order is filled and the oracle price is in the money, then adjust the open order to be right next to the oracle price to
-  //  increase the likelihood of the order being filled
+  pub async fn arb_perp(
+    &self,
+    makers: Vec<MakerInfo>,
+    trx: &mut KeypairTrx<'_>,
+  ) -> anyhow::Result<()> {
+    self
+      .drift
+      .arb_perp_ix(&self.cache().await, self.market, makers, trx)
+      .await
+  }
 }

@@ -24,11 +24,6 @@ fn accounts() {
 /// cargo test --package drift-cpi --lib instructions -- --exact --show-output
 #[test]
 fn instructions() {
-  // let a = PlacePerpOrder {
-  //
-  // }
-  // PlacePerpOrder::deserialize()
-
   let idl_path = "idl.json";
   let idl_str = std::fs::read_to_string(idl_path).unwrap();
   let idl = serde_json::from_str::<serde_json::Value>(&idl_str).unwrap();

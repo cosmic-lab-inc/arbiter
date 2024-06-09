@@ -15,7 +15,7 @@ authors = ["Cosmic Lab <epochsolana@gmail.com>"]
 repository = "https://github.com/cosmic-lab-inc"
 license = "Apache-2.0"
 edition = "2021"
-description = "Solana archival account state, easily accessible by anyone."
+description = "Solana arbitrage strategies"
 categories = ["cryptography::cryptocurrencies", "database"]
 keywords = ["solana"]
 

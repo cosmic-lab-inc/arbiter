@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
   init_logger();
 
   // SOL-PERP
-  let market = MarketId::perp(0);
+  let market = MarketId::SOL_PERP;
   let mut baker = Baker::new(0, market, None).await?;
   baker.start().await?;
 

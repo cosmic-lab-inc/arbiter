@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
   Ok(())
 }
 
-// #[cfg(tests)]
+#[cfg(tests)]
 mod tests {
   use super::*;
   use solana_client::nonblocking::rpc_client::RpcClient;

@@ -30,10 +30,21 @@ impl Clone for Orderbook {
 }
 
 impl Orderbook {
-  pub fn new(markets: Vec<MarketId>) -> Self {
-    Self {
-      orderbook: Arc::new(Mutex::new(InnerOrderbook::new(markets))),
-    }
+  pub async fn new(
+    markets: Vec<MarketId>,
+    users: &Vec<DecodedAcctCtx<User>>,
+  ) -> anyhow::Result<Self> {
+    Ok(Self {
+      orderbook: Arc::new(Mutex::new(InnerOrderbook::new(markets, users).await?)),
+    })
+  }
+
+  pub async fn new_from_rpc(markets: Vec<MarketId>, rpc: &RpcClient) -> anyhow::Result<Self> {
+    Ok(Self {
+      orderbook: Arc::new(Mutex::new(
+        InnerOrderbook::new_from_rpc(markets, rpc).await?,
+      )),
+    })
   }
 
   pub async fn read(&self) -> ReadOrderbook {
@@ -52,11 +63,25 @@ pub struct InnerOrderbook {
 }
 
 impl InnerOrderbook {
-  pub fn new(markets: Vec<MarketId>) -> Self {
-    Self {
+  pub async fn new(
+    markets: Vec<MarketId>,
+    users: &Vec<DecodedAcctCtx<User>>,
+  ) -> anyhow::Result<Self> {
+    let mut this = Self {
       markets,
       orderbook: HashMap::new(),
-    }
+    };
+    this.load(users)?;
+    Ok(this)
+  }
+
+  pub async fn new_from_rpc(markets: Vec<MarketId>, rpc: &RpcClient) -> anyhow::Result<Self> {
+    let mut this = Self {
+      markets,
+      orderbook: HashMap::new(),
+    };
+    this.load_from_rpc(rpc).await?;
+    Ok(this)
   }
 
   pub fn ready(&self, market: &MarketKey) -> bool {
@@ -164,7 +189,7 @@ impl InnerOrderbook {
     user: UserKey,
     order: Order,
   ) -> anyhow::Result<()> {
-    let node = DlobNode::new(order);
+    let node = DlobNode::new(user, order);
     if !node.filled() {
       self
         .orderbook
@@ -193,7 +218,7 @@ impl InnerOrderbook {
     Ok(())
   }
 
-  pub fn load(&mut self, users: Vec<DecodedAcctCtx<User>>) -> anyhow::Result<()> {
+  pub fn load(&mut self, users: &Vec<DecodedAcctCtx<User>>) -> anyhow::Result<()> {
     let markets = Arc::new(self.markets.clone());
     let results: Vec<(UserKey, Vec<Order>)> = users
       .into_par_iter()
@@ -228,8 +253,34 @@ impl InnerOrderbook {
 
   pub async fn load_from_rpc(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
     let users = DriftUtils::users(rpc).await?;
-    for u in users {
-      self.insert_user(u)?;
+    let markets = Arc::new(self.markets.clone());
+    let results: Vec<(UserKey, Vec<Order>)> = users
+      .into_par_iter()
+      .flat_map(|u| {
+        if u.decoded.has_open_order {
+          let orders = u
+            .decoded
+            .orders
+            .into_par_iter()
+            .flat_map(|o| {
+              if markets.contains(&MarketId::from((o.market_index, o.market_type))) {
+                Some(o)
+              } else {
+                None
+              }
+            })
+            .collect::<Vec<Order>>();
+          Some((u.key, orders))
+        } else {
+          None
+        }
+      })
+      .collect();
+    for (user, orders) in results {
+      for o in orders {
+        let market = MarketId::from((o.market_index, o.market_type)).key();
+        self.insert_order(market, user, o)?;
+      }
     }
     Ok(())
   }

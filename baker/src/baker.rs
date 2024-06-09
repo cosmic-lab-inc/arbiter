@@ -96,7 +96,9 @@ impl Baker {
       rpc_url,
       Duration::from_secs(90),
     ));
-    let orderbook = Orderbook::new(vec![market]);
+    let now = Instant::now();
+    let orderbook = Orderbook::new_from_rpc(vec![market], &rpc).await?;
+    info!("orderbook loaded in {:?}", now.elapsed());
 
     let this = Self {
       read_only,
@@ -306,6 +308,7 @@ impl Baker {
           info!("🟢 pnl: {}%", trunc!(sp / lp * 100.0 - 100.0, 4));
         }
         (None, None, None, None) => {
+          info!("🟢 place orders");
           // no open orders or positions, place new orders
           let mut trx = self.new_tx();
           self

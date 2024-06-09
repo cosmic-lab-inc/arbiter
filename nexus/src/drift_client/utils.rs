@@ -692,4 +692,51 @@ impl DriftUtils {
   pub fn price_to_f64(price: u64) -> f64 {
     price as f64 / PRICE_PRECISION as f64
   }
+
+  pub fn order_must_be_triggered(order: &Order) -> bool {
+    matches!(
+      order.order_type,
+      OrderType::TriggerMarket | OrderType::TriggerLimit
+    )
+  }
+
+  pub fn order_triggered(order: &Order) -> bool {
+    matches!(
+      order.trigger_condition,
+      OrderTriggerCondition::TriggeredAbove | OrderTriggerCondition::TriggeredBelow
+    )
+  }
+
+  pub fn order_is_limit(order: &Order) -> bool {
+    matches!(order.order_type, OrderType::Limit | OrderType::TriggerLimit)
+  }
+
+  pub fn order_auction_complete(order: &Order, slot: u64) -> anyhow::Result<bool> {
+    Ok(if order.auction_duration == 0 {
+      true
+    } else {
+      let slots_elapsed = slot.safe_sub(order.slot)?;
+      slots_elapsed.gt(&(order.auction_duration as u64))
+    })
+  }
+
+  pub fn order_is_resting_limit(order: &Order, slot: u64) -> anyhow::Result<bool> {
+    if !DriftUtils::order_is_limit(order) {
+      return Ok(false);
+    }
+
+    if matches!(order.order_type, OrderType::TriggerLimit) {
+      return match order.direction {
+        PositionDirection::Long if order.trigger_price < order.price => {
+          return Ok(false);
+        }
+        PositionDirection::Short if order.trigger_price > order.price => {
+          return Ok(false);
+        }
+        _ => DriftUtils::order_auction_complete(order, slot),
+      };
+    }
+
+    Ok(order.post_only || DriftUtils::order_auction_complete(order, slot)?)
+  }
 }

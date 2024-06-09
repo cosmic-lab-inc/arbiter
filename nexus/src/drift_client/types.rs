@@ -7,9 +7,10 @@ use num_bigint::BigInt;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::drift_client::{DriftUtils, ReadCache};
+use crate::Time;
 use drift_cpi::{
-  MarketType, OraclePriceData, OracleSource, Order, OrderType, PerpMarket, PositionDirection,
-  SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
+  MarketType, OraclePriceData, OracleSource, Order, OrderStatus, OrderType, PerpMarket,
+  PositionDirection, SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
 };
 
 #[derive(Clone)]
@@ -200,6 +201,7 @@ impl From<RemainingAccount> for AccountMeta {
 
 pub struct DlobNode {
   pub order: Order,
+  pub user: Pubkey,
 }
 
 impl PartialEq for DlobNode {
@@ -217,8 +219,8 @@ impl Hash for DlobNode {
 }
 
 impl DlobNode {
-  pub fn new(order: Order) -> Self {
-    Self { order }
+  pub fn new(user: Pubkey, order: Order) -> Self {
+    Self { user, order }
   }
 
   pub fn price(&self, cache: &ReadCache<'_>) -> anyhow::Result<f64> {
@@ -244,7 +246,7 @@ impl DlobNode {
 
   pub fn filled(&self) -> bool {
     self.order.base_asset_amount == self.order.base_asset_amount_filled
-      || matches!(self.order.status, drift_cpi::OrderStatus::Filled)
+      || matches!(self.order.status, OrderStatus::Filled)
   }
 
   pub fn base(&self) -> f64 {
@@ -267,11 +269,12 @@ impl DlobNode {
     if !self.is_bid() {
       return Err(anyhow::anyhow!("Order is not a bid"));
     }
-    // let price = cache.
     Ok(OrderInfo {
       price: self.price(cache)?,
       size: self.size(),
       slot: self.slot(),
+      user: self.user,
+      order: self.order,
     })
   }
 
@@ -283,6 +286,8 @@ impl DlobNode {
       price: self.price(cache)?,
       size: self.size(),
       slot: self.slot(),
+      user: self.user,
+      order: self.order,
     })
   }
 }
@@ -291,6 +296,8 @@ pub struct OrderInfo {
   pub price: f64,
   pub size: f64,
   pub slot: u64,
+  pub user: Pubkey,
+  pub order: Order,
 }
 
 pub struct L3Orderbook {
@@ -321,26 +328,66 @@ impl L3Orderbook {
       .ok_or(anyhow::anyhow!("No asks"))
   }
 
-  pub fn asks_below_oracle(&self, pct_cutoff: f64) -> anyhow::Result<Vec<&OrderInfo>> {
+  pub fn uncross_asks(
+    &self,
+    pct_cutoff: f64,
+    oracle_price: f64,
+    slot: u64,
+  ) -> anyhow::Result<Vec<&OrderInfo>> {
     assert!(pct_cutoff >= 0.0);
     let quote_cutoff = self.oracle_price * (1.0 - pct_cutoff / 100.0);
     let mut asks = self
       .asks
       .iter()
-      .filter(|o| o.price < self.oracle_price && o.price >= quote_cutoff)
+      .flat_map(|o| {
+        let a = !matches!(o.order.status, OrderStatus::Open);
+        let b = !matches!(o.order.market_type, MarketType::Perp);
+        let c = !DriftUtils::order_is_limit(&o.order)
+          || (DriftUtils::order_must_be_triggered(&o.order)
+            && !DriftUtils::order_triggered(&o.order));
+        let d = !DriftUtils::order_is_resting_limit(&o.order, slot)?;
+        let now = Time::now().to_unix();
+        let e = now > o.order.max_ts && o.order.max_ts != 0;
+        let f = !(o.price < oracle_price && o.price >= quote_cutoff);
+        if a || b || c || d || e || f {
+          Err(anyhow::anyhow!("Invalid order"))
+        } else {
+          Ok(o)
+        }
+      })
       .collect::<Vec<&OrderInfo>>();
     // sort so the lowest price is first
     asks.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
     Ok(asks)
   }
 
-  pub fn bids_above_oracle(&self, pct_cutoff: f64) -> anyhow::Result<Vec<&OrderInfo>> {
+  pub fn uncross_bids(
+    &self,
+    pct_cutoff: f64,
+    oracle_price: f64,
+    slot: u64,
+  ) -> anyhow::Result<Vec<&OrderInfo>> {
     assert!(pct_cutoff >= 0.0);
-    let quote_cutoff = self.oracle_price * (1.0 + pct_cutoff / 100.0);
+    let quote_cutoff = oracle_price * (1.0 + pct_cutoff / 100.0);
     let mut bids = self
       .bids
       .iter()
-      .filter(|o| o.price > self.oracle_price && o.price <= quote_cutoff)
+      .flat_map(|o| {
+        let a = !matches!(o.order.status, OrderStatus::Open);
+        let b = !matches!(o.order.market_type, MarketType::Perp);
+        let c = !DriftUtils::order_is_limit(&o.order)
+          || (DriftUtils::order_must_be_triggered(&o.order)
+            && !DriftUtils::order_triggered(&o.order));
+        let d = !DriftUtils::order_is_resting_limit(&o.order, slot)?;
+        let now = Time::now().to_unix();
+        let e = now > o.order.max_ts && o.order.max_ts != 0;
+        let f = !(o.price > self.oracle_price && o.price <= quote_cutoff);
+        if a || b || c || d || e || f {
+          Err(anyhow::anyhow!("Invalid order"))
+        } else {
+          Ok(o)
+        }
+      })
       .collect::<Vec<&OrderInfo>>();
     // sort so the highest price is first
     bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
@@ -461,4 +508,10 @@ impl BidAsk {
   pub fn mark(&self) -> f64 {
     (self.bid + self.ask) / 2.0
   }
+}
+
+pub struct MakerInfo {
+  pub maker: Pubkey,
+  pub maker_user_stats: Pubkey,
+  pub maker_user: User,
 }

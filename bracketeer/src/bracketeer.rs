@@ -91,12 +91,12 @@ impl Bracketeer {
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
-    info!("Baker using wallet: {}", signer.pubkey());
+    info!("Bracketeer using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),
     ));
-    let orderbook = Orderbook::new(vec![market]);
+    let orderbook = Orderbook::new_from_rpc(vec![market], &rpc).await?;
 
     let this = Self {
       read_only,

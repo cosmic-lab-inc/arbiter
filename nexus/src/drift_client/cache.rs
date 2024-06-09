@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anchor_lang::AccountDeserialize;
+use drift_cpi::User;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -58,14 +59,6 @@ impl Cache {
   }
 
   pub async fn read(&self) -> ReadCache {
-    // let now = std::time::Instant::now();
-    // log::info!("read lock...");
-    // let lock = self.cache.lock().await;
-    // // if time to acquire lock > 1ms, log warning
-    // if now.elapsed() > std::time::Duration::from_millis(1) {
-    //   log::warn!("read lock in {:?}", now.elapsed());
-    // }
-    // lock
     self.cache.lock().await
   }
 
@@ -295,7 +288,27 @@ impl InnerCache {
   ) -> anyhow::Result<()> {
     self.load_perp_markets(rpc).await?;
     self.load_spot_markets(rpc).await?;
-    self.load_select_users(rpc, users).await?;
+    self.load_select_users_from_rpc(rpc, users).await?;
+    self.load_user_stats(rpc, auths).await?;
+    self.load_oracles(rpc).await?;
+    if let Some(accounts) = accounts {
+      self.load_accounts(rpc, accounts).await?;
+    }
+    self.load_block(rpc).await?;
+    self.load_slot(rpc).await?;
+    Ok(())
+  }
+
+  pub async fn load_with_all_users(
+    &mut self,
+    rpc: &RpcClient,
+    users: Option<Vec<DecodedAcctCtx<User>>>,
+    accounts: Option<&[Pubkey]>,
+    auths: &[Pubkey],
+  ) -> anyhow::Result<()> {
+    self.load_perp_markets(rpc).await?;
+    self.load_spot_markets(rpc).await?;
+    self.load_users(rpc, users).await?;
     self.load_user_stats(rpc, auths).await?;
     self.load_oracles(rpc).await?;
     if let Some(accounts) = accounts {
@@ -336,7 +349,11 @@ impl InnerCache {
     Ok(())
   }
 
-  async fn load_select_users(&mut self, rpc: &RpcClient, filter: &[Pubkey]) -> anyhow::Result<()> {
+  async fn load_select_users_from_rpc(
+    &mut self,
+    rpc: &RpcClient,
+    filter: &[Pubkey],
+  ) -> anyhow::Result<()> {
     let res = rpc
       .get_multiple_accounts_with_commitment(filter, CommitmentConfig::processed())
       .await?;
@@ -349,6 +366,28 @@ impl InnerCache {
           key,
           account,
           slot: res.context.slot,
+        },
+      );
+    }
+    Ok(())
+  }
+
+  async fn load_users(
+    &mut self,
+    rpc: &RpcClient,
+    users: Option<Vec<DecodedAcctCtx<User>>>,
+  ) -> anyhow::Result<()> {
+    let users = match users {
+      Some(users) => users,
+      None => DriftUtils::users(rpc).await?,
+    };
+    for user in users {
+      self.ring_mut(user.key).insert(
+        user.slot,
+        AcctCtx {
+          key: user.key,
+          account: user.account,
+          slot: user.slot,
         },
       );
     }
