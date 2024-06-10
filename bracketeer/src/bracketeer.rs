@@ -53,6 +53,11 @@ use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
+struct OrderStub {
+  pub price: f64,
+  pub base: f64,
+}
+
 pub struct Bracketeer {
   read_only: bool,
   retry_until_confirmed: bool,
@@ -182,6 +187,7 @@ impl Bracketeer {
 
     let mut last_update = Instant::now();
     while run.load(Ordering::Relaxed) {
+      let mut did_act = false;
       let user = self
         .cache()
         .await
@@ -194,10 +200,9 @@ impl Bracketeer {
         .filter(|o| {
           MarketId::from((o.market_index, o.market_type)) == self.market
             && matches!(o.direction, PositionDirection::Long)
+            && o.base_asset_amount != 0
         })
         .collect();
-      // take long order with the lowest bid price
-      let mut long_order = long_orders.into_iter().min_by_key(|o| o.price);
 
       let short_orders: Vec<&Order> = user
         .orders
@@ -205,17 +210,40 @@ impl Bracketeer {
         .filter(|o| {
           MarketId::from((o.market_index, o.market_type)) == self.market
             && matches!(o.direction, PositionDirection::Short)
+            && o.base_asset_amount != 0
         })
         .collect();
-      // take short order with the highest ask price
-      let mut short_order = short_orders.into_iter().max_by_key(|o| o.price);
 
-      if Self::blank_order(long_order) {
-        long_order = None;
-      }
-      if Self::blank_order(short_order) {
-        short_order = None;
-      }
+      let long_order = match long_orders.is_empty() {
+        true => None,
+        false => Some(OrderStub {
+          price: long_orders
+            .iter()
+            .map(|o| DriftUtils::price_to_f64(o.price))
+            .sum::<f64>()
+            / long_orders.len() as f64,
+          base: long_orders
+            .iter()
+            .map(|o| DriftUtils::base_to_f64(o.base_asset_amount))
+            .sum::<f64>()
+            / long_orders.len() as f64,
+        }),
+      };
+      let short_order = match short_orders.is_empty() {
+        true => None,
+        false => Some(OrderStub {
+          price: short_orders
+            .iter()
+            .map(|o| DriftUtils::price_to_f64(o.price))
+            .sum::<f64>()
+            / short_orders.len() as f64,
+          base: short_orders
+            .iter()
+            .map(|o| DriftUtils::base_to_f64(o.base_asset_amount))
+            .sum::<f64>()
+            / short_orders.len() as f64,
+        }),
+      };
 
       let pos = user
         .perp_positions
@@ -236,10 +264,8 @@ impl Bracketeer {
           let market_info = self
             .drift
             .market_info(self.market, &self.cache().await, None)?;
-          let long_price = lo.price as f64 / PRICE_PRECISION as f64;
-          let long_price_pct_diff = market_info.price / long_price * 100.0 - 100.0;
-          let short_price = so.price as f64 / PRICE_PRECISION as f64;
-          let short_price_pct_diff = market_info.price / short_price * 100.0 - 100.0;
+          let long_price_pct_diff = market_info.price / lo.price * 100.0 - 100.0;
+          let short_price_pct_diff = market_info.price / so.price * 100.0 - 100.0;
 
           if short_price_pct_diff > self.pct_exit_deviation
             || long_price_pct_diff < self.pct_exit_deviation.neg()
@@ -249,6 +275,7 @@ impl Bracketeer {
               self.pct_exit_deviation
             );
             self.reset(false).await?;
+            did_act = true;
           }
         }
         (Some(_), None, None, Some(spos)) => {
@@ -267,6 +294,7 @@ impl Bracketeer {
               self.pct_exit_deviation
             );
             self.reset(false).await?;
+            did_act = true;
           }
         }
         (None, Some(_), Some(lpos), None) => {
@@ -275,7 +303,6 @@ impl Bracketeer {
             .market_info(self.market, &self.cache().await, None)?;
 
           let long_price = DriftUtils::perp_position_price(lpos);
-          debug!("long pos: ${}", trunc!(long_price, 3));
 
           let pct_diff = market_info.price / long_price * 100.0 - 100.0;
           // if price moves far below the bid, the ask likely won't fill
@@ -285,12 +312,8 @@ impl Bracketeer {
               self.pct_exit_deviation
             );
             self.reset(false).await?;
+            did_act = true;
           }
-        }
-        (None, None, Some(lpos), Some(spos)) => {
-          let lp = DriftUtils::perp_position_price(lpos);
-          let sp = DriftUtils::perp_position_price(spos);
-          info!("🟢 pnl: {}%", trunc!(sp / lp * 100.0 - 100.0, 4));
         }
         (None, None, None, None) => {
           info!("🟢 place orders");
@@ -300,17 +323,19 @@ impl Bracketeer {
             .place_orders(self.build_orders().await?, &mut trx)
             .await?;
           trx.send_tx(id(), None).await?;
+          did_act = true;
         }
         _ => {}
       }
 
+      if did_act {
+        last_update = Instant::now();
+      }
       if last_update.elapsed() > Duration::from_secs(60 * 2) {
         info!("🔴 no activity for 2 minutes, reset position");
         self.reset(true).await?;
       }
-
       tokio::time::sleep(Duration::from_millis(200)).await;
-      last_update = Instant::now();
     }
 
     Ok(())

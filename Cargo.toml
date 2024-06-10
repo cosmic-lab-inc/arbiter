@@ -6,6 +6,7 @@ members = [
     "imitator",
     "nexus",
     "uncross",
+    "switzerland",
     "programs/*",
 ]
 

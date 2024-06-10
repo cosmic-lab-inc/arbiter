@@ -7,19 +7,16 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 #[derive(Debug, Deserialize)]
-pub struct BakerConfig {
+pub struct SwitzerlandConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "BakerConfig::deserialize_keypair")]
+  #[serde(deserialize_with = "SwitzerlandConfig::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
-  pub pct_spread_multiplier: f64,
   pub pct_exit_deviation: f64,
   pub leverage: f64,
-  pub pct_max_spread: f64,
-  pub pct_min_spread: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,14 +24,11 @@ struct YamlConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
   pub grpc: String,
-  pub pct_spread_multiplier: f64,
   pub pct_exit_deviation: f64,
   pub leverage: f64,
-  pub pct_max_spread: f64,
-  pub pct_min_spread: f64,
 }
 
-impl BakerConfig {
+impl SwitzerlandConfig {
   fn deserialize_keypair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Keypair, D::Error> {
     let kp_bytes: Vec<u8> = match Vec::deserialize(deserializer) {
       Ok(res) => res,
@@ -66,11 +60,8 @@ impl BakerConfig {
       read_only: yaml.read_only,
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
-      pct_spread_multiplier: yaml.pct_spread_multiplier,
       pct_exit_deviation: yaml.pct_exit_deviation,
       leverage: yaml.leverage,
-      pct_max_spread: yaml.pct_max_spread,
-      pct_min_spread: yaml.pct_min_spread,
     })
   }
 }

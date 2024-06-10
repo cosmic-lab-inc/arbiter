@@ -48,7 +48,7 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
-use crate::config::BakerConfig;
+use crate::config::SwitzerlandConfig;
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
@@ -62,11 +62,8 @@ pub struct Baker {
   pub market: MarketId,
   pub cache: Cache,
   pub orderbook: Orderbook,
-  pct_spread_multiplier: f64,
   pct_exit_deviation: f64,
   leverage: f64,
-  pct_max_spread: f64,
-  pct_min_spread: f64,
 }
 
 impl Baker {
@@ -75,25 +72,22 @@ impl Baker {
     market: MarketId,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let BakerConfig {
+    let SwitzerlandConfig {
       read_only,
       retry_until_confirmed,
       signer,
       rpc_url,
       grpc,
       x_token,
-      pct_spread_multiplier,
       pct_exit_deviation,
       leverage,
-      pct_max_spread,
-      pct_min_spread,
       ..
-    } = BakerConfig::read()?;
+    } = SwitzerlandConfig::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
-    info!("Baker using wallet: {}", signer.pubkey());
+    info!("Switzerland using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),
@@ -119,11 +113,8 @@ impl Baker {
       cache: Cache::new(cache_depth),
       orderbook,
       market,
-      pct_spread_multiplier,
       pct_exit_deviation,
       leverage,
-      pct_max_spread,
-      pct_min_spread,
     };
 
     let account_filter = this.account_filter().await?;
@@ -230,13 +221,7 @@ impl Baker {
           let short_price = so.price as f64 / PRICE_PRECISION as f64;
           let short_price_pct_diff = market_info.price / short_price * 100.0 - 100.0;
 
-          let long_filled = matches!(lo.status, OrderStatus::Filled);
-          let short_filled = matches!(so.status, OrderStatus::Filled);
-
-          if long_filled && short_filled {
-            let pnl = Self::pct_pnl(lo, so);
-            info!("🟢 pnl: {}%", trunc!(pnl, 4));
-          } else if short_price_pct_diff > self.pct_exit_deviation
+          if short_price_pct_diff > self.pct_exit_deviation
             || long_price_pct_diff < self.pct_exit_deviation * -1.0
           {
             info!(
@@ -253,7 +238,6 @@ impl Baker {
             .market_info(self.market, &self.cache().await, None)?;
 
           let short_price = DriftUtils::perp_position_price(spos);
-          debug!("short pos: ${}", trunc!(short_price, 3));
 
           let pct_diff = market_info.price / short_price * 100.0 - 100.0;
           // if price moves far above the ask, the bid likely won't fill
@@ -301,8 +285,8 @@ impl Baker {
       if did_act {
         last_update = Instant::now();
       }
-      if last_update.elapsed() > Duration::from_secs(60 * 10) {
-        info!("🔴 no activity for 10 minutes, reset position");
+      if last_update.elapsed() > Duration::from_secs(60 * 2) {
+        info!("🔴 no activity for 2 minutes, reset position");
         self.reset(true).await?;
       }
       tokio::time::sleep(Duration::from_millis(200)).await;
@@ -347,29 +331,15 @@ impl Baker {
       .drift
       .quote_balance(self.market, &self.cache().await, None)?;
     let trade_alloc_ratio = 50.0 / 100.0;
-    let base_amt_f64 = quote_balance * self.leverage / price * trade_alloc_ratio;
-
-    let max_quote_spread = self.pct_max_spread / 100.0 * price;
-    let min_quote_spread = self.pct_min_spread / 100.0 * price;
-    let quote_spread =
-      min_quote_spread.max(l3.spread.min(max_quote_spread)) * self.pct_spread_multiplier / 100.0;
-    let pct_spread = quote_spread / price * 100.0;
-    info!(
-      "spread: {}%, ${}",
-      trunc!(pct_spread, 4),
-      trunc!(quote_spread, 4),
-    );
-
-    let long_price = price - quote_spread / 2.0;
-    let short_price = price + quote_spread / 2.0;
+    let base_amt = quote_balance * self.leverage / price * trade_alloc_ratio;
 
     let long = OrderParams {
       order_type: OrderType::Limit,
       market_type: self.market.kind,
       direction: PositionDirection::Long,
       user_order_id: 0,
-      base_asset_amount: DriftUtils::base_to_u64(base_amt_f64),
-      price: DriftUtils::price_to_u64(long_price),
+      base_asset_amount: DriftUtils::base_to_u64(base_amt),
+      price: DriftUtils::price_to_u64(price),
       market_index: self.market.index,
       reduce_only: false,
       post_only: PostOnlyParam::MustPostOnly,
@@ -387,8 +357,8 @@ impl Baker {
       market_type: self.market.kind,
       direction: PositionDirection::Short,
       user_order_id: 0,
-      base_asset_amount: DriftUtils::base_to_u64(base_amt_f64),
-      price: DriftUtils::price_to_u64(short_price),
+      base_asset_amount: DriftUtils::base_to_u64(base_amt),
+      price: DriftUtils::price_to_u64(price),
       market_index: self.market.index,
       reduce_only: false,
       post_only: PostOnlyParam::MustPostOnly,
