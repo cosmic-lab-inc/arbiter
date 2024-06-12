@@ -3,4 +3,4 @@ grpc: https://grpc.us.shyft.to
 read_only: false
 # Retry sending orders until they are confirmed. Not recommended since orders can be out of date if the market moves.
 retry_until_confirmed: false
-leverage: 5
+leverage: 0.05

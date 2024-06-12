@@ -52,7 +52,7 @@ mod tests {
     let mut trx = baker.new_tx();
     trx = trx.retry_until_confirmed();
     baker
-      .close_perp_positions(vec![market].as_slice(), &mut trx)
+      .close_perp_positions(vec![market].as_slice(), false, &mut trx)
       .await?;
     trx.send_tx(id(), None).await?;
 

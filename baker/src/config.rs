@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Utc};
@@ -6,20 +7,21 @@ use serde::{Deserialize, Deserializer};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct BakerConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "BakerConfig::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
   pub pct_spread_multiplier: f64,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
   pub pct_min_spread: f64,
+  pub stop_loss_is_maker: bool,
+  pub attempt_breakeven: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,10 +30,12 @@ struct YamlConfig {
   pub retry_until_confirmed: bool,
   pub grpc: String,
   pub pct_spread_multiplier: f64,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
   pub pct_min_spread: f64,
+  pub stop_loss_is_maker: bool,
+  pub attempt_breakeven: bool,
 }
 
 impl BakerConfig {
@@ -67,10 +71,12 @@ impl BakerConfig {
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
       pct_spread_multiplier: yaml.pct_spread_multiplier,
-      pct_exit_deviation: yaml.pct_exit_deviation,
+      pct_stop_loss: yaml.pct_stop_loss,
       leverage: yaml.leverage,
       pct_max_spread: yaml.pct_max_spread,
       pct_min_spread: yaml.pct_min_spread,
+      stop_loss_is_maker: yaml.stop_loss_is_maker,
+      attempt_breakeven: yaml.attempt_breakeven,
     })
   }
 }

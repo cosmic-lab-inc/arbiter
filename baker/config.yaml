@@ -6,9 +6,15 @@ retry_until_confirmed: false
 # Bracket orders are placed at these percentages of the spread.
 pct_spread_multiplier: 100
 # Use the real on-chain spread unless it is greater than this percentage.
-pct_max_spread: 0.02
+pct_max_spread: 0.25
 # Use the real on-chain spread unless it is less than this percentage.
-pct_min_spread: 0.02
+pct_min_spread: 0.15
 # Stop loss to exit position if below entry by this percentage.
-pct_exit_deviation: 0.02
-leverage: 1
+pct_stop_loss: 1.0
+# Multiply trading capital by this amount (leverage increases risk).
+leverage: 0.05
+# Stop loss as post only to profit the maker fee, rather than market exit and pay the taker fee.
+stop_loss_is_maker: false
+# If "stop_loss_is_maker" is true it will place exit at entry price is "attempt_breakeven" is true,
+# otherwise it will post only at market price at a loss.
+attempt_breakeven: false

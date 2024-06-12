@@ -6,7 +6,9 @@ pub struct RingMap<K, V> {
 }
 
 impl<K, V> RingMap<K, V>
-  where K: Eq + std::hash::Hash + Clone, {
+where
+  K: Eq + std::hash::Hash + Clone,
+{
   /// Create a new ring buffer with the specified capacity
   pub fn new(capacity: usize) -> Self {
     RingMap {
@@ -51,7 +53,11 @@ impl<K, V> RingMap<K, V>
     self.map.last()
   }
 
-  pub fn values(&self) -> impl Iterator<Item=&V> {
+  pub fn values(&self) -> impl Iterator<Item = &V> {
     self.map.values()
+  }
+
+  pub fn key_values(&self) -> impl Iterator<Item = (&K, &V)> {
+    self.map.iter()
   }
 }

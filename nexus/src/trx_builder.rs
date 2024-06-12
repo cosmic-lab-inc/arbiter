@@ -166,7 +166,7 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
 
   pub fn log_tx(sig: &Signature) {
     let url = "https://solana.fm/tx/";
-    log::info!("Signature: {}{}", url, sig)
+    info!("Signature: {}{}", url, sig)
   }
 
   /// Build the transaction message ready for signing and sending
@@ -378,8 +378,9 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
                 )
                 .await
               {
-                Ok(res) => res,
+                Ok(res) => Ok(res),
                 Err(_) => {
+                  // try again
                   self
                     .rpc
                     .get_transaction_with_config(
@@ -390,9 +391,9 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
                         max_supported_transaction_version: Some(0),
                       },
                     )
-                    .await?
+                    .await
                 }
-              };
+              }?;
               Err(TxError::TxError {
                 slot,
                 error,

@@ -63,7 +63,7 @@ pub struct Uncross {
   pub cache: Cache,
   pub orderbook: Orderbook,
   pct_spread_multiplier: f64,
-  pct_exit_deviation: f64,
+  pct_stop_loss: f64,
   leverage: f64,
   pct_max_spread: f64,
 }
@@ -82,7 +82,7 @@ impl Uncross {
       grpc,
       x_token,
       pct_spread_multiplier,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
       ..
@@ -120,7 +120,7 @@ impl Uncross {
       orderbook,
       market,
       pct_spread_multiplier,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
     };
@@ -257,12 +257,12 @@ impl Uncross {
           if long_filled && short_filled {
             let pnl = Self::pct_pnl(lo, so);
             info!("🟢 pnl: {}%", trunc!(pnl, 4));
-          } else if short_price_pct_diff > self.pct_exit_deviation
-            || long_price_pct_diff < self.pct_exit_deviation * -1.0
+          } else if short_price_pct_diff > self.pct_stop_loss
+            || long_price_pct_diff < self.pct_stop_loss * -1.0
           {
             info!(
               "🔴 price moved {}% beyond spread orders, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset().await?;
           }
@@ -277,10 +277,10 @@ impl Uncross {
 
           let pct_diff = market_info.price / short_price * 100.0 - 100.0;
           // if price moves far above the ask, the bid likely won't fill
-          if pct_diff > self.pct_exit_deviation {
+          if pct_diff > self.pct_stop_loss {
             info!(
               "🔴 price moved {}% above short entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset().await?;
           }
@@ -295,10 +295,10 @@ impl Uncross {
 
           let pct_diff = market_info.price / long_price * 100.0 - 100.0;
           // if price moves far below the bid, the ask likely won't fill
-          if pct_diff < self.pct_exit_deviation.neg() {
+          if pct_diff < self.pct_stop_loss.neg() {
             info!(
               "🔴 price moved -{}% below long entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset().await?;
           }
@@ -324,7 +324,7 @@ impl Uncross {
         self.reset().await?;
       }
 
-      tokio::time::sleep(Duration::from_millis(200)).await;
+      tokio::time::sleep(Duration::from_millis(400)).await;
       last_update = Instant::now();
     }
 
@@ -505,7 +505,7 @@ impl Uncross {
   ) -> anyhow::Result<()> {
     self
       .drift
-      .close_perp_positions(&self.cache().await, markets, trx)
+      .close_perp_positions(&self.cache().await, markets, false, trx)
       .await
   }
 

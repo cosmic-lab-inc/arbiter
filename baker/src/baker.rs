@@ -54,19 +54,21 @@ use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
 pub struct Baker {
-  read_only: bool,
-  retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
   pub rpc: Arc<RpcClient>,
   pub drift: DriftClient,
   pub market: MarketId,
   pub cache: Cache,
   pub orderbook: Orderbook,
+  pub read_only: bool,
+  pub retry_until_confirmed: bool,
   pct_spread_multiplier: f64,
-  pct_exit_deviation: f64,
+  pct_stop_loss: f64,
   leverage: f64,
   pct_max_spread: f64,
   pct_min_spread: f64,
+  stop_loss_is_maker: bool,
+  attempt_breakeven: bool,
 }
 
 impl Baker {
@@ -83,10 +85,12 @@ impl Baker {
       grpc,
       x_token,
       pct_spread_multiplier,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
       pct_min_spread,
+      stop_loss_is_maker,
+      attempt_breakeven,
       ..
     } = BakerConfig::read()?;
 
@@ -103,8 +107,6 @@ impl Baker {
     info!("orderbook loaded in {:?}", now.elapsed());
 
     let this = Self {
-      read_only,
-      retry_until_confirmed,
       drift: DriftClient::new(
         signer.clone(),
         rpc.clone(),
@@ -119,11 +121,15 @@ impl Baker {
       cache: Cache::new(cache_depth),
       orderbook,
       market,
+      read_only,
+      retry_until_confirmed,
       pct_spread_multiplier,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
       pct_min_spread,
+      stop_loss_is_maker,
+      attempt_breakeven,
     };
 
     let account_filter = this.account_filter().await?;
@@ -236,12 +242,12 @@ impl Baker {
           if long_filled && short_filled {
             let pnl = Self::pct_pnl(lo, so);
             info!("🟢 pnl: {}%", trunc!(pnl, 4));
-          } else if short_price_pct_diff > self.pct_exit_deviation
-            || long_price_pct_diff < self.pct_exit_deviation * -1.0
+          } else if short_price_pct_diff > self.pct_stop_loss
+            || long_price_pct_diff < self.pct_stop_loss * -1.0
           {
             info!(
               "🔴 price moved {}% beyond spread orders, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
@@ -257,10 +263,10 @@ impl Baker {
 
           let pct_diff = market_info.price / short_price * 100.0 - 100.0;
           // if price moves far above the ask, the bid likely won't fill
-          if pct_diff > self.pct_exit_deviation {
+          if pct_diff > self.pct_stop_loss {
             info!(
               "🔴 price moved {}% above short entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
@@ -276,10 +282,10 @@ impl Baker {
 
           let pct_diff = market_info.price / long_price * 100.0 - 100.0;
           // if price moves far below the bid, the ask likely won't fill
-          if pct_diff < self.pct_exit_deviation.neg() {
+          if pct_diff < self.pct_stop_loss.neg() {
             info!(
               "🔴 price moved -{}% below long entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
@@ -305,7 +311,7 @@ impl Baker {
         info!("🔴 no activity for 10 minutes, reset position");
         self.reset(true).await?;
       }
-      tokio::time::sleep(Duration::from_millis(200)).await;
+      tokio::time::sleep(Duration::from_millis(400)).await;
     }
 
     Ok(())
@@ -481,7 +487,13 @@ impl Baker {
   ) -> anyhow::Result<()> {
     self
       .drift
-      .close_perp_positions(&self.cache().await, markets, trx)
+      .close_perp_positions(
+        &self.cache().await,
+        markets,
+        self.stop_loss_is_maker,
+        self.attempt_breakeven,
+        trx,
+      )
       .await
   }
 }

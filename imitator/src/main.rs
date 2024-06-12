@@ -30,18 +30,12 @@ async fn main() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   init_logger();
 
-  // "bracket spread" market maker
-  // Example:
-  // short 14.78 SOL-PERP @ 169.49 as Limit, offset: 0.42, price w/o offset?: 169.06
-  // short 29.56 SOL-PERP @ 169.91 as Limit, offset: 0.85, price w/o offset?: 169.06
-  // short 44.33 SOL-PERP @ 170.33 as Limit, offset: 1.27, price w/o offset?: 169.06
-  let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
-
-  // "same price long-short" market maker
-  // Example:
-  // long 33.15 SOL-PERP @ 169.49 as Limit, offset: 0.0, price w/o offset?: 169.49
-  // short 33.15 SOL-PERP @ 169.49 as Limit, offset: 0.0, price w/o offset?: 169.49
+  // let copy_user = pubkey!("H5jfagEnMVNH3PMc2TU2F7tNuXE6b4zCwoL5ip1b4ZHi");
   // let copy_user = pubkey!("772JJ15pJV64Uit5BmV4CoJtMQHx9KRdHhizP7mAgjRQ");
+
+  // 5 brackets orders, starting at 0.08% spread and incrementing by 0.1%
+  // self trades if one or more orders are filled and can match against its own MM orders.
+  let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
 
   let market_filter = Some(vec![
     // SOL-PERP
@@ -431,35 +425,35 @@ mod tests {
 
     Ok(())
   }
-}
 
-/// cargo test --package imitator --bin imitator my_pnl -- --exact --show-output
-#[tokio::test]
-async fn trader_pnl() -> anyhow::Result<()> {
-  init_logger();
-  dotenv::dotenv().ok();
+  /// cargo test --package imitator --bin imitator my_pnl -- --exact --show-output
+  #[tokio::test]
+  async fn trader_pnl() -> anyhow::Result<()> {
+    init_logger();
+    dotenv::dotenv().ok();
 
-  // https://app.drift.trade/overview/portfolio?authority=F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
-  // authority: F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
-  let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
-  let market_filter = Some(vec![MarketId::SOL_PERP]);
-  let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    // https://app.drift.trade/overview/portfolio?authority=F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
+    // authority: F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
+    let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
+    let market_filter = Some(vec![MarketId::SOL_PERP]);
+    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
 
-  let prefix = env!("CARGO_MANIFEST_DIR").to_string();
+    let prefix = env!("CARGO_MANIFEST_DIR").to_string();
 
-  let user = imitator.user();
-  let data = DriftUtils::drift_historical_pnl(&imitator.client(), user, 100).await?;
+    let user = imitator.user();
+    let data = DriftUtils::drift_historical_pnl(&imitator.client(), user, 100).await?;
 
-  if data.dataset().len() > 1 {
-    Plot::plot(
-      vec![data.dataset()],
-      &format!("{}/{}_pnl.png", prefix, copy_user),
-      &format!("{} Performance", user),
-      "Cum USDC PnL",
-      "Unix Seconds",
-    )?;
-    info!("{} done", shorten_address(user));
+    if data.dataset().len() > 1 {
+      Plot::plot(
+        vec![data.dataset()],
+        &format!("{}/{}_pnl.png", prefix, copy_user),
+        &format!("{} Performance", user),
+        "Cum USDC PnL",
+        "Unix Seconds",
+      )?;
+      info!("{} done", shorten_address(user));
+    }
+
+    Ok(())
   }
-
-  Ok(())
 }

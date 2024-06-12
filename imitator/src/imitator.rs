@@ -201,9 +201,9 @@ impl Imitator {
         if ix.program == id() {
           let decoded_ix = InstructionType::decode(&ix.data[..])
             .map_err(|e| anyhow::anyhow!("Failed to decode instruction: {:?}", e))?;
-          let discrim: [u8; 8] = ix.data[..8].try_into()?;
-          let _name = InstructionType::discrim_to_name(discrim)
-            .map_err(|e| anyhow::anyhow!("Failed to get ix discrim: {:?}", e))?;
+          let name = InstructionType::discrim_to_name(ix.data[..8].try_into()?)
+            .map_err(|e| anyhow::anyhow!("Failed to decode discrim to name: {:?}", e))?;
+          info!("{}", name);
 
           match decoded_ix {
             InstructionType::PlacePerpOrder(ix) => {
@@ -213,7 +213,17 @@ impl Imitator {
                 kind: params.market_type,
               }) {
                 self.place_orders(tx.slot, vec![params], &mut trx).await?;
-                cu_limit = Some(100_000);
+                let price = self.drift.order_price(
+                  MarketId {
+                    index: params.market_index,
+                    kind: params.market_type,
+                  },
+                  &self.cache().await,
+                  Some(tx.slot),
+                  &params,
+                )?;
+                DriftUtils::log_order(&params, &price, Some("PlacePerpOrder"));
+                // cu_limit = Some(100_000);
               }
             }
             InstructionType::PlaceOrders(ix) => {
@@ -228,7 +238,7 @@ impl Imitator {
               }
               if !orders.is_empty() {
                 self.place_orders(tx.slot, orders, &mut trx).await?;
-                cu_limit = Some(cu_limit.unwrap_or(0) + 120_000);
+                // cu_limit = Some(cu_limit.unwrap_or(0) + 120_000);
               }
             }
             InstructionType::CancelOrders(ix) => {
@@ -238,15 +248,38 @@ impl Imitator {
                   self
                     .cancel_orders(Some(market), ix._direction, &mut trx)
                     .await?;
-                  cu_limit = Some(cu_limit.unwrap_or(0) + 40_000);
+                  // cu_limit = Some(cu_limit.unwrap_or(0) + 40_000);
+                  info!("CancelOrders");
                 }
               };
+            }
+            InstructionType::PlaceAndTakePerpOrder(ix) => {
+              let params = ix._params;
+              if self.allow_market(MarketId {
+                index: params.market_index,
+                kind: params.market_type,
+              }) {
+                let price = self.drift.order_price(
+                  MarketId {
+                    index: params.market_index,
+                    kind: params.market_type,
+                  },
+                  &self.cache().await,
+                  Some(tx.slot),
+                  &params,
+                )?;
+                DriftUtils::log_order(&params, &price, Some("PlaceAndTakePerpOrder"));
+                info!("PlaceAndTakePerpOrder: {:#?}", params);
+                info!("https://solana.fm/tx/{}", tx.signature);
+              }
             }
             _ => {}
           }
         }
       }
-      trx.send_tx(id(), cu_limit).await?;
+      if !self.read_only {
+        trx.send_tx(id(), cu_limit).await?;
+      }
     }
     Ok(())
   }

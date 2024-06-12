@@ -739,4 +739,14 @@ impl DriftUtils {
 
     Ok(order.post_only || DriftUtils::order_auction_complete(order, slot)?)
   }
+
+  pub fn auction_offset(price: f64, pct_offset: f64) -> i64 {
+    let bps = price / 10000.0;
+    let bps_offset = pct_offset * 100.0;
+    (bps * bps_offset).round() as i64
+  }
+
+  pub fn drift_user_portal(user: Pubkey) -> String {
+    format!("https://app.drift.trade/overview?userAccount={}", user)
+  }
 }

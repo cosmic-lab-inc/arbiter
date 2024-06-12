@@ -126,8 +126,11 @@ impl InnerOrderbook {
 
     // sort so bids have the highest price first
     bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
-    // highest slot in bids
-    let bid_max_slot = bids.iter().map(|b| b.slot).max().unwrap_or(0);
+    // get bid with highest slot and return OrderInfo
+    let latest_bid = bids
+      .iter()
+      .max_by(|a, b| a.slot.cmp(&b.slot))
+      .ok_or(anyhow::anyhow!("No bids found"))?;
 
     let mut asks: Vec<_> = self
       .orders(&market.key())?
@@ -145,11 +148,19 @@ impl InnerOrderbook {
 
     // sort so asks have the lowest price first
     asks.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
-    let ask_max_slot = asks.iter().map(|b| b.slot).max().unwrap_or(0);
+    let latest_ask = asks
+      .iter()
+      .max_by(|a, b| a.slot.cmp(&b.slot))
+      .ok_or(anyhow::anyhow!("No asks found"))?;
 
     let oracle_price = DriftUtils::oracle_price(market, cache, None)?;
 
-    let slot = bid_max_slot.max(ask_max_slot);
+    let slot = latest_bid.slot.max(latest_ask.slot);
+    let last_price = match latest_bid.slot {
+      x if x > latest_ask.slot => latest_bid.price,
+      x if x < latest_ask.slot => latest_ask.price,
+      _ => latest_bid.price,
+    };
 
     let best_bid = bids
       .iter()
@@ -173,6 +184,7 @@ impl InnerOrderbook {
       spread,
       slot,
       oracle_price,
+      last_price,
     })
   }
 
@@ -190,7 +202,7 @@ impl InnerOrderbook {
     order: Order,
   ) -> anyhow::Result<()> {
     let node = DlobNode::new(user, order);
-    if !node.filled() {
+    if !node.filled() && !node.canceled() && !node.expired() {
       self
         .orderbook
         .entry(market)

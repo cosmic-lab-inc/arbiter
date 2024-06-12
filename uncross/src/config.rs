@@ -16,7 +16,7 @@ pub struct UncrossConfig {
   pub grpc: String,
   pub x_token: String,
   pub pct_spread_multiplier: f64,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
 }
@@ -27,7 +27,7 @@ struct YamlConfig {
   pub retry_until_confirmed: bool,
   pub grpc: String,
   pub pct_spread_multiplier: f64,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
 }
@@ -65,7 +65,7 @@ impl UncrossConfig {
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
       pct_spread_multiplier: yaml.pct_spread_multiplier,
-      pct_exit_deviation: yaml.pct_exit_deviation,
+      pct_stop_loss: yaml.pct_stop_loss,
       leverage: yaml.leverage,
       pct_max_spread: yaml.pct_max_spread,
     })

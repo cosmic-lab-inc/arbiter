@@ -10,7 +10,7 @@ use crate::drift_client::{DriftUtils, ReadCache};
 use crate::Time;
 use drift_cpi::{
   MarketType, OraclePriceData, OracleSource, Order, OrderStatus, OrderType, PerpMarket,
-  PositionDirection, SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
+  PerpPosition, PositionDirection, SpotMarket, User, BASE_PRECISION, PRICE_PRECISION,
 };
 
 #[derive(Clone)]
@@ -206,13 +206,32 @@ pub struct DlobNode {
 
 impl PartialEq for DlobNode {
   fn eq(&self, other: &Self) -> bool {
-    self.order.order_id == other.order.order_id
-      && self.order.base_asset_amount == other.order.base_asset_amount
+    // check if direction enums match
+    let same_dir = (matches!(self.order.direction, PositionDirection::Long)
+      && matches!(other.order.direction, PositionDirection::Long))
+      || (matches!(self.order.direction, PositionDirection::Short)
+        && matches!(other.order.direction, PositionDirection::Short));
+    let same_id = self.order.order_id == other.order.order_id;
+    let same_market_type = (matches!(self.order.market_type, MarketType::Perp)
+      && matches!(other.order.market_type, MarketType::Perp))
+      || (matches!(self.order.market_type, MarketType::Spot)
+        && matches!(other.order.market_type, MarketType::Spot));
+    let same_market_index = self.order.market_index == other.order.market_index;
+    same_dir && same_id && same_market_type && same_market_index
   }
 }
 impl Eq for DlobNode {}
 impl Hash for DlobNode {
   fn hash<H: Hasher>(&self, state: &mut H) {
+    match self.order.direction {
+      PositionDirection::Long => 0.hash(state),
+      PositionDirection::Short => 1.hash(state),
+    };
+    match self.order.market_type {
+      MarketType::Perp => 0.hash(state),
+      MarketType::Spot => 1.hash(state),
+    };
+    self.order.market_index.hash(state);
     self.order.order_id.hash(state);
     self.order.base_asset_amount.hash(state);
   }
@@ -247,6 +266,14 @@ impl DlobNode {
   pub fn filled(&self) -> bool {
     self.order.base_asset_amount == self.order.base_asset_amount_filled
       || matches!(self.order.status, OrderStatus::Filled)
+  }
+
+  pub fn canceled(&self) -> bool {
+    matches!(self.order.status, OrderStatus::Canceled)
+  }
+
+  pub fn expired(&self) -> bool {
+    Time::now().to_unix() > self.order.max_ts && self.order.max_ts != 0
   }
 
   pub fn base(&self) -> f64 {
@@ -308,6 +335,7 @@ pub struct L3Orderbook {
   pub spread: f64,
   pub slot: u64,
   pub oracle_price: f64,
+  pub last_price: f64,
 }
 impl L3Orderbook {
   pub fn best_bid(&self) -> anyhow::Result<&OrderInfo> {
@@ -346,8 +374,7 @@ impl L3Orderbook {
           || (DriftUtils::order_must_be_triggered(&o.order)
             && !DriftUtils::order_triggered(&o.order));
         let d = !DriftUtils::order_is_resting_limit(&o.order, slot)?;
-        let now = Time::now().to_unix();
-        let e = now > o.order.max_ts && o.order.max_ts != 0;
+        let e = Time::now().to_unix() > o.order.max_ts && o.order.max_ts != 0;
         let f = !(o.price < oracle_price && o.price >= quote_cutoff);
         if a || b || c || d || e || f {
           Err(anyhow::anyhow!("Invalid order"))
@@ -392,6 +419,88 @@ impl L3Orderbook {
     // sort so the highest price is first
     bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
     Ok(bids)
+  }
+
+  /// Find maker asks below the pct_cutoff.
+  /// This is used to take profit for a short position
+  /// by placing a taker bid against this maker ask.
+  pub fn take_profit_maker_asks(
+    &self,
+    spos: &PerpPosition,
+    pct_cutoff: f64,
+    slot: u64,
+  ) -> anyhow::Result<Option<&OrderInfo>> {
+    // can only take profit long if the position is short
+    if spos.base_asset_amount > 0 {
+      return Ok(None);
+    }
+    let perp_entry = DriftUtils::perp_position_price(spos);
+    let quote_cutoff = perp_entry * (1.0 - pct_cutoff / 100.0);
+    let asks = self
+      .asks
+      .iter()
+      .flat_map(|o| {
+        let a = !matches!(o.order.status, OrderStatus::Open);
+        let b = !matches!(o.order.market_type, MarketType::Perp);
+        let c = !DriftUtils::order_is_limit(&o.order)
+          || (DriftUtils::order_must_be_triggered(&o.order)
+            && !DriftUtils::order_triggered(&o.order));
+        let d = !DriftUtils::order_is_resting_limit(&o.order, slot)?;
+        let e = Time::now().to_unix() > o.order.max_ts && o.order.max_ts != 0;
+        let f = o.price > quote_cutoff;
+        if a || b || c || d || e || f {
+          Err(anyhow::anyhow!("Invalid order"))
+        } else {
+          Ok(o)
+        }
+      })
+      .collect::<Vec<&OrderInfo>>();
+    // get ask with the lowest price
+    let lowest_ask = asks
+      .into_iter()
+      .min_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
+    Ok(lowest_ask)
+  }
+
+  /// Find maker bids above the pct_cutoff.
+  /// This is used to take profit for a long position
+  /// by placing a taker ask against this maker bid.
+  pub fn take_profit_maker_bids(
+    &self,
+    lpos: &PerpPosition,
+    pct_cutoff: f64,
+    slot: u64,
+  ) -> anyhow::Result<Option<&OrderInfo>> {
+    // can only take profit short if the position is long
+    if lpos.base_asset_amount < 0 {
+      return Ok(None);
+    }
+    let perp_entry = DriftUtils::perp_position_price(lpos);
+    let quote_cutoff = perp_entry * (1.0 + pct_cutoff / 100.0);
+    let bids = self
+      .bids
+      .iter()
+      .flat_map(|o| {
+        let a = !matches!(o.order.status, OrderStatus::Open);
+        let b = !matches!(o.order.market_type, MarketType::Perp);
+        let c = !DriftUtils::order_is_limit(&o.order)
+          || (DriftUtils::order_must_be_triggered(&o.order)
+            && !DriftUtils::order_triggered(&o.order));
+        let d = !DriftUtils::order_is_resting_limit(&o.order, slot)?;
+        let e = Time::now().to_unix() > o.order.max_ts && o.order.max_ts != 0;
+        let f = o.price < quote_cutoff;
+        if a || b || c || d || e || f {
+          Err(anyhow::anyhow!("Invalid order"))
+        } else {
+          Ok(o)
+        }
+      })
+      .collect::<Vec<&OrderInfo>>();
+    // get bids with the highest price
+    let highest_bid = bids
+      .into_iter()
+      .max_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
+    Ok(highest_bid)
   }
 }
 

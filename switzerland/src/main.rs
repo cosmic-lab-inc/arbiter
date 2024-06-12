@@ -23,6 +23,7 @@ use nexus::*;
 use switzerland::*;
 
 mod config;
+mod data;
 mod switzerland;
 
 #[tokio::main]
@@ -32,30 +33,8 @@ async fn main() -> anyhow::Result<()> {
 
   // SOL-PERP
   let market = MarketId::SOL_PERP;
-  let mut baker = Baker::new(0, market, None).await?;
-  baker.start().await?;
+  let mut client = Switzerland::new(0, market).await?;
+  client.start().await?;
 
   Ok(())
-}
-
-#[cfg(tests)]
-mod tests {
-  use super::*;
-
-  #[tokio::test]
-  async fn close_positions() -> anyhow::Result<()> {
-    dotenv::dotenv().ok();
-    init_logger();
-
-    let market = MarketId::perp(0);
-    let baker = Baker::new(0, market, None).await?;
-    let mut trx = baker.new_tx();
-    trx = trx.retry_until_confirmed();
-    baker
-      .close_perp_positions(vec![market].as_slice(), &mut trx)
-      .await?;
-    trx.send_tx(id(), None).await?;
-
-    Ok(())
-  }
 }

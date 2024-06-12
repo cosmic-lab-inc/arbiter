@@ -53,6 +53,8 @@ use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
+const TAKE_PROFIT_ID: u8 = 111;
+
 struct OrderStub {
   pub price: f64,
   pub base: f64,
@@ -68,10 +70,12 @@ pub struct Bracketeer {
   pub cache: Cache,
   pub orderbook: Orderbook,
   pct_spread_brackets: Vec<f64>,
-  pct_exit_deviation: f64,
+  pct_stop_loss: f64,
   leverage: f64,
   pct_max_spread: f64,
   pct_min_spread: f64,
+  stop_loss_is_maker: bool,
+  pct_take_profit: f64,
 }
 
 impl Bracketeer {
@@ -88,10 +92,12 @@ impl Bracketeer {
       grpc,
       x_token,
       pct_spread_brackets,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
       pct_min_spread,
+      stop_loss_is_maker,
+      pct_take_profit,
       ..
     } = BracketeerConfig::read()?;
 
@@ -103,7 +109,10 @@ impl Bracketeer {
       rpc_url,
       Duration::from_secs(90),
     ));
-    let orderbook = Orderbook::new_from_rpc(vec![market], &rpc).await?;
+    let now = Instant::now();
+    let users = DriftUtils::users(&rpc).await?;
+    let orderbook = Orderbook::new(vec![market], &users).await?;
+    info!("orderbook loaded in {:?}", now.elapsed());
 
     let this = Self {
       read_only,
@@ -123,13 +132,15 @@ impl Bracketeer {
       orderbook,
       market,
       pct_spread_brackets,
-      pct_exit_deviation,
+      pct_stop_loss,
       leverage,
       pct_max_spread,
       pct_min_spread,
+      stop_loss_is_maker,
+      pct_take_profit,
     };
 
-    let account_filter = this.account_filter().await?;
+    let account_filter = this.account_filter(users).await?;
     let mut filter = HashSet::new();
     for a in account_filter {
       filter.insert(a);
@@ -201,6 +212,7 @@ impl Bracketeer {
           MarketId::from((o.market_index, o.market_type)) == self.market
             && matches!(o.direction, PositionDirection::Long)
             && o.base_asset_amount != 0
+            && o.user_order_id != TAKE_PROFIT_ID
         })
         .collect();
 
@@ -211,8 +223,14 @@ impl Bracketeer {
           MarketId::from((o.market_index, o.market_type)) == self.market
             && matches!(o.direction, PositionDirection::Short)
             && o.base_asset_amount != 0
+            && o.user_order_id != TAKE_PROFIT_ID
         })
         .collect();
+
+      let take_profit_order = user
+        .orders
+        .iter()
+        .find(|o| o.user_order_id == TAKE_PROFIT_ID);
 
       let long_order = match long_orders.is_empty() {
         true => None,
@@ -260,64 +278,138 @@ impl Bracketeer {
       };
 
       match (long_order, short_order, long_pos, short_pos) {
+        // bid ask orders still open
         (Some(lo), Some(so), None, None) => {
-          let market_info = self
+          let price = self
             .drift
-            .market_info(self.market, &self.cache().await, None)?;
-          let long_price_pct_diff = market_info.price / lo.price * 100.0 - 100.0;
-          let short_price_pct_diff = market_info.price / so.price * 100.0 - 100.0;
+            .market_info(self.market, &self.cache().await, None)?
+            .price;
+          let long_price_pct_diff = price / lo.price * 100.0 - 100.0;
+          let short_price_pct_diff = price / so.price * 100.0 - 100.0;
 
-          if short_price_pct_diff > self.pct_exit_deviation
-            || long_price_pct_diff < self.pct_exit_deviation.neg()
+          if short_price_pct_diff > self.pct_stop_loss
+            || long_price_pct_diff < self.pct_stop_loss.neg()
           {
             info!(
               "🔴 price moved {}% beyond spread orders, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
           }
         }
+        // bid order open, ask order filled (short position)
         (Some(_), None, None, Some(spos)) => {
-          let market_info = self
-            .drift
-            .market_info(self.market, &self.cache().await, None)?;
-
-          let short_price = DriftUtils::perp_position_price(spos);
-          debug!("short pos: ${}", trunc!(short_price, 3));
-
-          let pct_diff = market_info.price / short_price * 100.0 - 100.0;
+          // check stop loss:
           // if price moves far above the ask, the bid likely won't fill
-          if pct_diff > self.pct_exit_deviation {
+          let price = self
+            .drift
+            .market_info(self.market, &self.cache().await, None)?
+            .price;
+          let short_price = DriftUtils::perp_position_price(spos);
+          let pct_diff = price / short_price * 100.0 - 100.0;
+          if pct_diff > self.pct_stop_loss {
             info!(
               "🔴 price moved {}% above short entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
           }
+
+          // check take profit:
+          // search for maker asks at a profitable level to "take" against to close this short for a profit
+          let l3 = self
+            .orderbook()
+            .await
+            .l3(&self.market, &self.cache().await)?;
+          // taker fee is 0.025%, profit threshold beyond that is defined in the config
+          let pct_cutoff = 0.025 + self.pct_take_profit;
+          let take_profit_ask =
+            l3.take_profit_maker_asks(spos, pct_cutoff, self.cache().await.slot)?;
+          if let Some(take_profit_ask) = take_profit_ask {
+            let new_tp_order = self.build_take_profit_order(spos, take_profit_ask).await?;
+            let maker_user = self
+              .cache()
+              .await
+              .decoded_account::<User>(&take_profit_ask.user, None)?
+              .decoded;
+
+            if let Some(existing_tp_order) = take_profit_order {
+              if existing_tp_order.price == new_tp_order.price
+                && existing_tp_order.base_asset_amount == new_tp_order.base_asset_amount
+              {
+                warn!("take profit order already exists");
+                continue;
+              }
+            }
+
+            info!("🟢 take profit on short");
+            let mut trx = self.new_tx();
+            self
+              .place_and_take_order(new_tp_order, Some(maker_user), &mut trx)
+              .await?;
+            trx.send_tx(id(), None).await?;
+            did_act = true;
+          }
         }
+        // ask order open, bid order filled (long position)
         (None, Some(_), Some(lpos), None) => {
-          let market_info = self
-            .drift
-            .market_info(self.market, &self.cache().await, None)?;
-
-          let long_price = DriftUtils::perp_position_price(lpos);
-
-          let pct_diff = market_info.price / long_price * 100.0 - 100.0;
           // if price moves far below the bid, the ask likely won't fill
-          if pct_diff < self.pct_exit_deviation.neg() {
+          let price = self
+            .drift
+            .market_info(self.market, &self.cache().await, None)?
+            .price;
+          let long_price = DriftUtils::perp_position_price(lpos);
+          let pct_diff = price / long_price * 100.0 - 100.0;
+          if pct_diff < self.pct_stop_loss.neg() {
             info!(
               "🔴 price moved -{}% below long entry, reset position",
-              self.pct_exit_deviation
+              self.pct_stop_loss
             );
             self.reset(false).await?;
             did_act = true;
           }
+
+          // check take profit:
+          // search for maker bids at a profitable level to "take" against to close this long for a profit
+          let l3 = self
+            .orderbook()
+            .await
+            .l3(&self.market, &self.cache().await)?;
+          // taker fee is 0.025%, profit beyond that is defined in the config
+          let pct_cutoff = 0.025 + self.pct_take_profit;
+          let take_profit_bid =
+            l3.take_profit_maker_bids(lpos, pct_cutoff, self.cache().await.slot)?;
+          if let Some(take_profit_bid) = take_profit_bid {
+            let new_tp_order = self.build_take_profit_order(lpos, take_profit_bid).await?;
+            let maker_user = self
+              .cache()
+              .await
+              .decoded_account::<User>(&take_profit_bid.user, None)?
+              .decoded;
+
+            if let Some(existing_tp_order) = take_profit_order {
+              if existing_tp_order.price == new_tp_order.price
+                && existing_tp_order.base_asset_amount == new_tp_order.base_asset_amount
+              {
+                warn!("take profit order already exists");
+                continue;
+              }
+            }
+
+            info!("🟢 take profit on long");
+            let mut trx = self.new_tx();
+            self
+              .place_and_take_order(new_tp_order, Some(maker_user), &mut trx)
+              .await?;
+            trx.send_tx(id(), None).await?;
+            did_act = true;
+          }
         }
+        // no orders or positions, start new trade
         (None, None, None, None) => {
           info!("🟢 place orders");
-          // no open orders or positions, place new orders
           let mut trx = self.new_tx();
           self
             .place_orders(self.build_orders().await?, &mut trx)
@@ -331,20 +423,14 @@ impl Bracketeer {
       if did_act {
         last_update = Instant::now();
       }
-      if last_update.elapsed() > Duration::from_secs(60 * 2) {
-        info!("🔴 no activity for 2 minutes, reset position");
+      if last_update.elapsed() > Duration::from_secs(60 * 5) {
+        info!("🔴 no activity for 5 minutes, reset position");
         self.reset(true).await?;
       }
-      tokio::time::sleep(Duration::from_millis(200)).await;
+      tokio::time::sleep(Duration::from_millis(400)).await;
     }
 
     Ok(())
-  }
-
-  fn pct_pnl(long: &Order, short: &Order) -> f64 {
-    let lp = DriftUtils::order_price(long);
-    let sp = DriftUtils::order_price(short);
-    trunc!(sp / lp * 100.0 - 100.0, 4)
   }
 
   fn blank_order(order: Option<&Order>) -> bool {
@@ -360,6 +446,49 @@ impl Bracketeer {
     self.cancel_orders(None, None, &mut trx).await?;
     self.close_positions(&[self.market], &mut trx).await?;
     trx.send_tx(id(), None).await
+  }
+
+  async fn build_take_profit_order(
+    &self,
+    pos: &PerpPosition,
+    maker: &OrderInfo,
+  ) -> anyhow::Result<OrderParams> {
+    // take profit order is opposite position direction
+    let tp_dir = match pos.base_asset_amount > 0 {
+      true => PositionDirection::Short,
+      false => PositionDirection::Long,
+    };
+    let base_asset_amount = pos
+      .base_asset_amount
+      .unsigned_abs()
+      .min(maker.order.base_asset_amount);
+    let tp_price = DriftUtils::price_to_u64(maker.price);
+    let trigger_condition = match pos.base_asset_amount > 0 {
+      // position is long so take profit is short, which means trigger below price
+      true => OrderTriggerCondition::Below,
+      // position is short so take profit is long, which means trigger above price
+      false => OrderTriggerCondition::Above,
+    };
+    let order = OrderParams {
+      order_type: OrderType::Limit,
+      market_type: self.market.kind,
+      direction: tp_dir,
+      user_order_id: 0,
+      base_asset_amount,
+      price: tp_price,
+      market_index: self.market.index,
+      reduce_only: false,
+      post_only: PostOnlyParam::None,
+      immediate_or_cancel: true,
+      max_ts: Some(Time::now().to_unix() + 15),
+      trigger_price: None,
+      trigger_condition,
+      oracle_price_offset: None,
+      auction_duration: None,
+      auction_start_price: None,
+      auction_end_price: None,
+    };
+    Ok(order)
   }
 
   /// Places a long and short at the oracle price to capitalize on maker fees
@@ -398,7 +527,6 @@ impl Bracketeer {
         trunc!(quote_spread * bracket_mul, 4),
       );
 
-      // lowest pnl
       let bid_price = price - quote_spread * bracket_mul / 2.0;
       let ask_price = price + quote_spread * bracket_mul / 2.0;
       assert!(bid_price < price && ask_price > price);
@@ -448,14 +576,16 @@ impl Bracketeer {
   }
 
   /// Stream these accounts from geyser for usage in the engine
-  pub async fn account_filter(&self) -> anyhow::Result<Vec<Pubkey>> {
+  pub async fn account_filter(
+    &self,
+    users: Vec<DecodedAcctCtx<User>>,
+  ) -> anyhow::Result<Vec<Pubkey>> {
     // accounts to subscribe to
     let perps = DriftUtils::perp_markets(&self.rpc()).await?;
     let spots = DriftUtils::spot_markets(&self.rpc()).await?;
     let perp_markets: Vec<Pubkey> = perps.iter().map(|p| p.key).collect();
     let spot_markets: Vec<Pubkey> = spots.iter().map(|s| s.key).collect();
-    let user = DriftUtils::user_pda(&self.signer.pubkey(), 0);
-    let users = [user];
+    let user_keys: Vec<Pubkey> = users.iter().map(|u| u.key).collect();
     let perp_oracles: Vec<Pubkey> = perps.iter().map(|p| p.decoded.amm.oracle).collect();
     let spot_oracles: Vec<Pubkey> = spots.iter().map(|s| s.decoded.oracle).collect();
     let auths = [self.signer.pubkey()];
@@ -463,12 +593,12 @@ impl Bracketeer {
       .cache
       .write()
       .await
-      .load(&self.rpc(), &users, None, &auths)
+      .load_with_all_users(&self.rpc(), Some(users), None, &auths)
       .await?;
     let keys = perp_markets
       .iter()
       .chain(spot_markets.iter())
-      .chain(users.iter())
+      .chain(user_keys.iter())
       .chain(perp_oracles.iter())
       .chain(spot_oracles.iter())
       .cloned()
@@ -524,7 +654,37 @@ impl Bracketeer {
   ) -> anyhow::Result<()> {
     self
       .drift
-      .close_perp_positions(&self.cache().await, markets, trx)
+      .close_perp_positions(
+        &self.cache().await,
+        markets,
+        self.stop_loss_is_maker,
+        false,
+        trx,
+      )
+      .await
+  }
+
+  pub async fn place_and_take_order(
+    &self,
+    order: OrderParams,
+    maker: Option<User>,
+    trx: &mut KeypairTrx<'_>,
+  ) -> anyhow::Result<()> {
+    self
+      .drift
+      .place_and_take_order_ix(&self.cache().await, order, maker, None, trx)
+      .await
+  }
+
+  pub async fn perp_take_profit(
+    &self,
+    pos: &PerpPosition,
+    tp_price: f64,
+    trx: &mut KeypairTrx<'_>,
+  ) -> anyhow::Result<()> {
+    self
+      .drift
+      .perp_take_profit(&self.cache().await, pos, tp_price, trx)
       .await
   }
 }

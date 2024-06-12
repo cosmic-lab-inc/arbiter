@@ -517,7 +517,7 @@ impl InnerCache {
 
   async fn load_block(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
     let slot = rpc
-      .get_slot_with_commitment(CommitmentConfig::finalized())
+      .get_slot_with_commitment(CommitmentConfig::confirmed())
       .await?;
     let config = RpcBlockConfig {
       encoding: Some(solana_transaction_status::UiTransactionEncoding::JsonParsed),
@@ -542,7 +542,7 @@ impl InnerCache {
 
   async fn load_slot(&mut self, rpc: &RpcClient) -> anyhow::Result<()> {
     let slot = rpc
-      .get_slot_with_commitment(CommitmentConfig::finalized())
+      .get_slot_with_commitment(CommitmentConfig::confirmed())
       .await?;
     self.slot = slot;
     Ok(())

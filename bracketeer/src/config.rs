@@ -15,11 +15,13 @@ pub struct BracketeerConfig {
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
+  pub stop_loss_is_maker: bool,
   pub pct_spread_brackets: Vec<f64>,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
   pub pct_min_spread: f64,
+  pub pct_take_profit: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,11 +29,13 @@ struct YamlConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
   pub grpc: String,
+  pub stop_loss_is_maker: bool,
   pub pct_spread_brackets: Vec<f64>,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
   pub pct_max_spread: f64,
   pub pct_min_spread: f64,
+  pub pct_take_profit: f64,
 }
 
 impl BracketeerConfig {
@@ -67,10 +71,12 @@ impl BracketeerConfig {
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
       pct_spread_brackets: yaml.pct_spread_brackets,
-      pct_exit_deviation: yaml.pct_exit_deviation,
+      pct_stop_loss: yaml.pct_stop_loss,
       leverage: yaml.leverage,
       pct_max_spread: yaml.pct_max_spread,
       pct_min_spread: yaml.pct_min_spread,
+      stop_loss_is_maker: yaml.stop_loss_is_maker,
+      pct_take_profit: yaml.pct_take_profit,
     })
   }
 }

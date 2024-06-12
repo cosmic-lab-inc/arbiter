@@ -15,8 +15,12 @@ pub struct SwitzerlandConfig {
   pub rpc_url: String,
   pub grpc: String,
   pub x_token: String,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
+  pub stop_loss_is_maker: bool,
+  pub zscore_threshold: f64,
+  pub zscore_window: usize,
+  pub cache_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,8 +28,12 @@ struct YamlConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
   pub grpc: String,
-  pub pct_exit_deviation: f64,
+  pub pct_stop_loss: f64,
   pub leverage: f64,
+  pub stop_loss_is_maker: bool,
+  pub zscore_threshold: f64,
+  pub zscore_window: usize,
+  pub cache_depth: usize,
 }
 
 impl SwitzerlandConfig {
@@ -60,8 +68,12 @@ impl SwitzerlandConfig {
       read_only: yaml.read_only,
       retry_until_confirmed: yaml.retry_until_confirmed,
       grpc: yaml.grpc,
-      pct_exit_deviation: yaml.pct_exit_deviation,
+      pct_stop_loss: yaml.pct_stop_loss,
       leverage: yaml.leverage,
+      stop_loss_is_maker: yaml.stop_loss_is_maker,
+      zscore_threshold: yaml.zscore_threshold,
+      zscore_window: yaml.zscore_window,
+      cache_depth: yaml.cache_depth,
     })
   }
 }

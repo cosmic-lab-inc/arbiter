@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
+use std::ops::{Deref, Div, Mul, Sub};
 use std::sync::Arc;
 
 use anchor_lang::{InstructionData, ToAccountMetas};
 use log::info;
+use num_bigint::BigInt;
+use num_traits::{Signed, ToPrimitive};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account_info::AccountInfo;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -512,6 +514,14 @@ impl DriftClient {
     fulfillment_type: Option<SpotFulfillmentType>,
     trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
+    let order_price = self.order_price(
+      MarketId::from((order.market_index, order.market_type)),
+      cache,
+      None,
+      &order,
+    )?;
+    DriftUtils::log_order(&order, &order_price, Some("PlaceAndTake"));
+
     let user = cache
       .decoded_account::<User>(&self.sub_account, None)?
       .decoded;
@@ -660,10 +670,10 @@ impl DriftClient {
       // there might be a bracket of multiple orders for the same market mint to copy a trade accurately
       // we must replicate the ratio of balances in each order but relative to our available assets
       for o in v {
-        // todo: remove after debug
         let market_id = MarketId::from((o.market_index, o.market_type));
         let copy_tx_oracle_price = self.order_price(market_id, cache, Some(tx_slot), o)?;
-        DriftUtils::log_order(o, &copy_tx_oracle_price, Some("Copy trade"));
+        let copy_order = o.clone();
+        // DriftUtils::log_order(&copy_order, &copy_tx_oracle_price, Some("Copy"));
 
         let market_info = self.market_info(market_id, cache, None)?;
         let quote_balance = self.quote_balance(market_id, cache, None)?;
@@ -695,7 +705,11 @@ impl DriftClient {
         }
 
         let current_oracle_price = self.order_price(market_id, cache, None, o)?;
-        DriftUtils::log_order(o, &current_oracle_price, Some("Our trade"));
+        let base = trunc!(
+          copy_order.base_asset_amount as f64 / BASE_PRECISION as f64,
+          2
+        );
+        DriftUtils::log_order(o, &current_oracle_price, Some(&format!("Copy {}", base)));
       }
     }
 
@@ -794,6 +808,8 @@ impl DriftClient {
     &self,
     cache: &ReadCache<'_>,
     markets: &[MarketId],
+    must_be_maker: bool,
+    attempt_breakeven: bool,
     trx: &mut KeypairTrx<'_>,
   ) -> anyhow::Result<()> {
     let user = cache
@@ -803,38 +819,50 @@ impl DriftClient {
     for pos in user.perp_positions.iter() {
       let market = MarketId::from((pos.market_index, MarketType::Perp));
       if markets.contains(&market) && pos.base_asset_amount != 0 {
-        let name = match market.kind {
-          MarketType::Perp => {
-            let acct = cache.decoded_account::<PerpMarket>(&market.key(), None)?;
-            DriftUtils::decode_name(&acct.decoded.name)
-          }
-          MarketType::Spot => {
-            let acct = cache.decoded_account::<SpotMarket>(&market.key(), None)?;
-            DriftUtils::decode_name(&acct.decoded.name)
-          }
-        };
+        let acct = cache.decoded_account::<PerpMarket>(&market.key(), None)?;
+        let name = DriftUtils::decode_name(&acct.decoded.name);
+
         let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
         let direction = match pos.base_asset_amount > 0 {
           true => PositionDirection::Short,
           false => PositionDirection::Long,
         };
+
+        let price = match must_be_maker {
+          false => 0.0,
+          true => match attempt_breakeven {
+            true => DriftUtils::perp_position_price(pos),
+            false => self.market_info(market, cache, None)?.price,
+          },
+        };
+
         info!(
-          "close position: {:?} {} {}",
+          "close position: {:?} {} {} @ {}",
           direction,
           base_amt.abs(),
-          name
+          name,
+          match must_be_maker {
+            true => "oracle auction".to_string(),
+            false => price.to_string(),
+          }
         );
 
         let order = OrderParams {
-          order_type: OrderType::Oracle,
+          order_type: match must_be_maker {
+            true => OrderType::Limit,
+            false => OrderType::Oracle,
+          },
           market_type: MarketType::Perp,
           direction,
           user_order_id: 0,
           base_asset_amount: pos.base_asset_amount.unsigned_abs(),
-          price: 0,
+          price: DriftUtils::price_to_u64(price),
           market_index: pos.market_index,
           reduce_only: true,
-          post_only: PostOnlyParam::None,
+          post_only: match must_be_maker {
+            true => PostOnlyParam::MustPostOnly,
+            false => PostOnlyParam::None,
+          },
           immediate_or_cancel: false,
           max_ts: None,
           trigger_price: None,
@@ -842,26 +870,97 @@ impl DriftClient {
             PositionDirection::Long => OrderTriggerCondition::Above,
             PositionDirection::Short => OrderTriggerCondition::Below,
           },
-          oracle_price_offset: match direction {
-            PositionDirection::Long => Some(528588),
-            PositionDirection::Short => Some(-528588),
+          oracle_price_offset: match must_be_maker {
+            true => None,
+            false => Some(match direction {
+              PositionDirection::Long => DriftUtils::auction_offset(price, 0.05) as i32,
+              PositionDirection::Short => DriftUtils::auction_offset(price, -0.05) as i32,
+            }),
           },
-          auction_duration: Some(30),
-          auction_start_price: match direction {
-            PositionDirection::Long => Some(120855),
-            PositionDirection::Short => Some(-120855),
+          auction_duration: match must_be_maker {
+            true => None,
+            false => Some(30),
           },
-          auction_end_price: match direction {
-            PositionDirection::Long => Some(528588),
-            PositionDirection::Short => Some(-528588),
+          auction_start_price: match must_be_maker {
+            true => None,
+            false => Some(match direction {
+              PositionDirection::Long => DriftUtils::auction_offset(price, 0.01),
+              PositionDirection::Short => DriftUtils::auction_offset(price, -0.01),
+            }),
+          },
+          auction_end_price: match must_be_maker {
+            true => None,
+            false => Some(match direction {
+              PositionDirection::Long => DriftUtils::auction_offset(price, 0.05),
+              PositionDirection::Short => DriftUtils::auction_offset(price, -0.05),
+            }),
           },
         };
-        // self.place_orders_ix(cache, vec![order], trx).await?;
-        self
-          .place_and_take_order_ix(cache, order, None, None, trx)
-          .await?;
+        match must_be_maker {
+          true => self.place_orders_ix(cache, vec![order], trx).await?,
+          false => {
+            self
+              .place_and_take_order_ix(cache, order, None, None, trx)
+              .await?;
+          }
+        }
       }
     }
+    Ok(())
+  }
+
+  pub async fn perp_take_profit(
+    &self,
+    cache: &ReadCache<'_>,
+    pos: &PerpPosition,
+    tp_price: f64,
+    trx: &mut KeypairTrx<'_>,
+  ) -> anyhow::Result<()> {
+    let market = MarketId::from((pos.market_index, MarketType::Perp));
+    let acct = cache.decoded_account::<PerpMarket>(&market.key(), None)?;
+    let name = DriftUtils::decode_name(&acct.decoded.name);
+
+    let base_amt = trunc!(pos.base_asset_amount as f64 / BASE_PRECISION as f64, 3);
+    let direction = match pos.base_asset_amount > 0 {
+      true => PositionDirection::Short,
+      false => PositionDirection::Long,
+    };
+
+    info!(
+      "🟢 take profit: {:?} {} {} @ {}",
+      direction,
+      base_amt.abs(),
+      name,
+      trunc!(tp_price, 3)
+    );
+
+    let order = OrderParams {
+      order_type: OrderType::Market,
+      market_type: MarketType::Perp,
+      direction,
+      user_order_id: 0,
+      base_asset_amount: pos.base_asset_amount.unsigned_abs(),
+      price: DriftUtils::price_to_u64(tp_price),
+      market_index: pos.market_index,
+      reduce_only: true,
+      post_only: PostOnlyParam::None,
+      immediate_or_cancel: false,
+      max_ts: None,
+      trigger_price: None,
+      trigger_condition: match direction {
+        PositionDirection::Long => OrderTriggerCondition::Above,
+        PositionDirection::Short => OrderTriggerCondition::Below,
+      },
+      oracle_price_offset: None,
+      auction_duration: None,
+      auction_start_price: None,
+      auction_end_price: None,
+    };
+
+    self
+      .place_and_take_order_ix(cache, order, None, None, trx)
+      .await?;
+
     Ok(())
   }
 
@@ -943,6 +1042,34 @@ impl DriftClient {
   // Utilities
   // ======================================================================
 
+  pub fn perp_oracle_price_data(
+    &self,
+    pm: PerpMarket,
+    cache: &ReadCache<'_>,
+  ) -> anyhow::Result<OraclePriceData> {
+    let oracle_key = pm.amm.oracle;
+    let oracle_source = pm.amm.oracle_source;
+    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
+    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
+    let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, cache.slot)
+      .map_err(|e| anyhow::anyhow!("Failed to perp get oracle price data: {:?}", e))?;
+    Ok(price_data)
+  }
+
+  pub fn spot_oracle_price_data(
+    &self,
+    pm: SpotMarket,
+    cache: &ReadCache<'_>,
+  ) -> anyhow::Result<OraclePriceData> {
+    let oracle_key = pm.oracle;
+    let oracle_source = pm.oracle_source;
+    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
+    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
+    let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, cache.slot)
+      .map_err(|e| anyhow::anyhow!("Failed to get spot oracle price data: {:?}", e))?;
+    Ok(price_data)
+  }
+
   pub fn perp_market_price(
     &self,
     cache: &ReadCache<'_>,
@@ -951,16 +1078,8 @@ impl DriftClient {
     // let cache = cache.read().await;
     let pm_key = DriftUtils::perp_market_pda(perp_market_index);
     let pm = cache.decoded_account::<PerpMarket>(&pm_key, None)?.decoded;
-    let oracle_key = pm.amm.oracle;
-    let oracle_source = pm.amm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
-
-    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
-
-    let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, cache.block(None)?.slot)
-      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let price_data = self.perp_oracle_price_data(pm, &cache)?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
-
     Ok(OrderPrice {
       price,
       name: DriftUtils::decode_name(&pm.name),
@@ -975,15 +1094,8 @@ impl DriftClient {
   ) -> anyhow::Result<OrderPrice> {
     let sm_key = DriftUtils::spot_market_pda(spot_market_index);
     let sm = cache.decoded_account::<SpotMarket>(&sm_key, None)?.decoded;
-    let oracle_key = sm.oracle;
-    let oracle_source = sm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
-    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
-
-    let price_data = get_oracle_price(&oracle_source, &oracle_acct_info, cache.block(None)?.slot)
-      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let price_data = self.spot_oracle_price_data(sm, &cache)?;
     let price = price_data.price as f64 / PRICE_PRECISION as f64;
-
     Ok(OrderPrice {
       price,
       name: DriftUtils::decode_name(&sm.name),
@@ -1232,12 +1344,51 @@ impl DriftClient {
     let pm = cache
       .decoded_account::<PerpMarket>(&market.key(), None)?
       .decoded;
-    let oracle_key = pm.amm.oracle;
-    let oracle_source = pm.amm.oracle_source;
-    let oracle_acct = cache.account(&oracle_key, None)?.account.clone();
-    let oracle_acct_info = oracle_acct.to_account_info(oracle_key, false, false, false);
-    let oracle = get_oracle_price(&oracle_source, &oracle_acct_info, cache.block(None)?.slot)
-      .map_err(|e| anyhow::anyhow!("Failed to get oracle price: {:?}", e))?;
+    let oracle = self.perp_oracle_price_data(pm, cache)?;
     Ok(AmmUtils::bid_ask_prices(pm, oracle, with_update))
+  }
+
+  pub fn perp_market_is_volatile(
+    &self,
+    cache: &ReadCache<'_>,
+    market: MarketId,
+    pct_volatility_threshold: Option<f64>,
+  ) -> anyhow::Result<bool> {
+    let pct_volatility_threshold = pct_volatility_threshold.unwrap_or(0.005);
+    let pm = cache
+      .decoded_account::<PerpMarket>(&market.key(), None)?
+      .decoded;
+    let twap_price = BigInt::from(pm.amm.historical_oracle_data.last_oracle_price_twap5min);
+    let last_price = BigInt::from(pm.amm.historical_oracle_data.last_oracle_price);
+    let oracle_data = self.perp_oracle_price_data(pm, cache)?;
+    let curr_price = BigInt::from(oracle_data.price);
+    let min_denom = twap_price
+      .clone()
+      .min(last_price.clone().min(curr_price.clone()));
+    let cvsl = (curr_price
+      .clone()
+      .sub(last_price.clone())
+      .mul(PRICE_PRECISION)
+      .div(min_denom.clone()))
+    .abs()
+      / PERCENTAGE_PRECISION;
+    let cvst = (curr_price
+      .sub(twap_price)
+      .mul(PRICE_PRECISION)
+      .div(min_denom.clone()))
+    .abs()
+      / PERCENTAGE_PRECISION;
+    let recent_std = BigInt::from(pm.amm.oracle_std)
+      .mul(PRICE_PRECISION)
+      .div(min_denom)
+      / PERCENTAGE_PRECISION;
+    if recent_std.to_f64().unwrap() > pct_volatility_threshold
+      || cvst.to_f64().unwrap() > pct_volatility_threshold
+      || cvsl.to_f64().unwrap() > pct_volatility_threshold
+    {
+      Ok(true)
+    } else {
+      Ok(false)
+    }
   }
 }
