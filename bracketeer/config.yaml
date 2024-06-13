@@ -1,4 +1,4 @@
-grpc: https://grpc.us.shyft.to
+grpc: https://grpc.us1.shyft.to
 # Test the code, monitor behavior, and simulate transactions without risking funds.
 read_only: false
 # Retry sending orders until they are confirmed. Not recommended since orders can be out of date if the market moves.

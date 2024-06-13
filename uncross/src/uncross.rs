@@ -505,7 +505,7 @@ impl Uncross {
   ) -> anyhow::Result<()> {
     self
       .drift
-      .close_perp_positions(&self.cache().await, markets, false, trx)
+      .close_perp_positions(&self.cache().await, markets, false, false, trx)
       .await
   }
 

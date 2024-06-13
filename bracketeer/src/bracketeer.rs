@@ -423,9 +423,10 @@ impl Bracketeer {
       if did_act {
         last_update = Instant::now();
       }
-      if last_update.elapsed() > Duration::from_secs(60 * 5) {
+      if last_update.elapsed() > Duration::from_secs(60 * 10) {
         info!("🔴 no activity for 5 minutes, reset position");
         self.reset(true).await?;
+        last_update = Instant::now();
       }
       tokio::time::sleep(Duration::from_millis(400)).await;
     }

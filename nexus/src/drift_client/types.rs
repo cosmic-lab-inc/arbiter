@@ -288,6 +288,10 @@ impl DlobNode {
     matches!(self.order.direction, PositionDirection::Long)
   }
 
+  pub fn is_valid(&self) -> bool {
+    !self.filled() && !self.canceled() && !self.expired()
+  }
+
   pub fn is_ask(&self) -> bool {
     matches!(self.order.direction, PositionDirection::Short)
   }

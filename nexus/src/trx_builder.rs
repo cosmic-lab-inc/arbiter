@@ -260,9 +260,20 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
     prior_fee_key: Pubkey,
     cu_limit: Option<u32>,
   ) -> anyhow::Result<(Signature, TransactionResult<Slot>)> {
+    let cu_limit = match cu_limit {
+      Some(cu_limit) => cu_limit,
+      None => {
+        let sim = self.simulate(prior_fee_key).await?;
+        let cu_consumed = sim.value.units_consumed.ok_or(anyhow::anyhow!(
+          "No compute units found in simulation response"
+        ))?;
+        (cu_consumed as f64 * 1.1).round() as u32
+      }
+    };
+
     if !self.prior_fee_added {
       self
-        .with_priority_fee(prior_fee_key, None, cu_limit)
+        .with_priority_fee(prior_fee_key, None, Some(cu_limit))
         .await?;
     }
 
@@ -379,20 +390,7 @@ impl<'a, S: Signer + Sized, T: Signers> TrxBuilder<'a, S, T> {
                 .await
               {
                 Ok(res) => Ok(res),
-                Err(_) => {
-                  // try again
-                  self
-                    .rpc
-                    .get_transaction_with_config(
-                      &sig,
-                      RpcTransactionConfig {
-                        encoding: None,
-                        commitment: Some(Self::tc_into_commitment(&config.min_confirmation)),
-                        max_supported_transaction_version: Some(0),
-                      },
-                    )
-                    .await
-                }
+                Err(_) => Err(TxError::Dropped),
               }?;
               Err(TxError::TxError {
                 slot,

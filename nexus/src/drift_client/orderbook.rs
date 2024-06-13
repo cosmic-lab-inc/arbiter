@@ -117,7 +117,7 @@ impl InnerOrderbook {
       .par_iter()
       .map(|o| {
         o.par_iter()
-          .filter(|o| o.is_bid())
+          .filter(|o| o.is_bid() && o.is_valid())
           .flat_map(|o| o.bid(cache))
           .collect::<Vec<OrderInfo>>()
       })
@@ -139,7 +139,7 @@ impl InnerOrderbook {
       .par_iter()
       .map(|o| {
         o.par_iter()
-          .filter(|o| o.is_ask())
+          .filter(|o| o.is_ask() && o.is_valid())
           .flat_map(|o| o.ask(cache))
           .collect::<Vec<OrderInfo>>()
       })

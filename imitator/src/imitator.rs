@@ -196,7 +196,6 @@ impl Imitator {
 
     while let Ok(tx) = self.rx.recv() {
       let mut trx = self.new_tx();
-      let mut cu_limit: Option<u32> = None;
       for ix in tx.ixs {
         if ix.program == id() {
           let decoded_ix = InstructionType::decode(&ix.data[..])
@@ -223,7 +222,6 @@ impl Imitator {
                   &params,
                 )?;
                 DriftUtils::log_order(&params, &price, Some("PlacePerpOrder"));
-                // cu_limit = Some(100_000);
               }
             }
             InstructionType::PlaceOrders(ix) => {
@@ -238,7 +236,6 @@ impl Imitator {
               }
               if !orders.is_empty() {
                 self.place_orders(tx.slot, orders, &mut trx).await?;
-                // cu_limit = Some(cu_limit.unwrap_or(0) + 120_000);
               }
             }
             InstructionType::CancelOrders(ix) => {
@@ -248,7 +245,6 @@ impl Imitator {
                   self
                     .cancel_orders(Some(market), ix._direction, &mut trx)
                     .await?;
-                  // cu_limit = Some(cu_limit.unwrap_or(0) + 40_000);
                   info!("CancelOrders");
                 }
               };
@@ -278,7 +274,7 @@ impl Imitator {
         }
       }
       if !self.read_only {
-        trx.send_tx(id(), cu_limit).await?;
+        trx.send_tx(id(), None).await?;
       }
     }
     Ok(())
