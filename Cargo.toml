@@ -6,11 +6,8 @@ members = [
     "imitator",
     "nexus",
     "uncross",
-    #    "switzerland",
-]
-exclude = [
-    "programs/drift_vaults",
-    "switzerland"
+    "switzerland",
+    "programs/*"
 ]
 
 [workspace.package]
@@ -20,7 +17,7 @@ repository = "https://github.com/cosmic-lab-inc"
 license = "Apache-2.0"
 edition = "2021"
 description = "Solana arbitrage strategies"
-categories = ["cryptography::cryptocurrencies", "database"]
+categories = ["cryptography::cryptocurrencies"]
 keywords = ["solana"]
 
 [workspace.dependencies]
@@ -65,3 +62,5 @@ yellowstone-grpc-proto = "1.11.0"
 #yellowstone-grpc-client = "1.15.0"
 #yellowstone-grpc-proto = "1.14.0"
 maplit = "1.0.2"
+
+# if target is mac m1, define compile c++ with "CXX=/opt/homebrew/bin/c++-14 cargo build"
