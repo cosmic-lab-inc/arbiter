@@ -34,8 +34,64 @@ pub fn get_oracle_price(
       has_sufficient_number_of_data_points: true,
     }),
     OracleSource::Prelaunch => get_prelaunch_price(price_oracle, clock_slot),
+    _ => Err(anyhow::anyhow!("Invalid oracle source")),
+    // todo: implement these
+    // OracleSource::PythPull | OracleSource::PythStableCoinPull => {
+    //   Ok(Some(get_pyth_twap(price_oracle, 1, true)?))
+    // }
+    // OracleSource::Pyth1KPull => Ok(Some(self.get_pyth_twap(price_oracle, 1000, true)?)),
+    // OracleSource::Pyth1MPull => Ok(Some(get_pyth_twap(price_oracle, 1000000, true)?)),
   }
 }
+
+// pub fn get_pyth_twap(
+//   price_oracle: &AccountInfo,
+//   multiple: u128,
+//   is_pull_oracle: bool,
+// ) -> anyhow::Result<i64> {
+//   let mut pyth_price_data: &[u8] = &price_oracle
+//     .try_borrow_data()
+//     .or(Err(anyhow::anyhow!("Unable to load oracle")))?;
+//
+//   let oracle_price: i64;
+//   let oracle_twap: i64;
+//   let oracle_exponent: i32;
+//
+//   if is_pull_oracle {
+//     let price_message =
+//       pyth_solana_receiver_sdk::price_update::PriceUpdateV2::try_deserialize(&mut pyth_price_data)
+//         .or(Err(anyhow::anyhow!("Unable to load oracle")))?;
+//     oracle_price = price_message.price_message.price;
+//     oracle_twap = price_message.price_message.ema_price;
+//     oracle_exponent = price_message.price_message.exponent;
+//   } else {
+//     let price_data = pyth_client::cast::<pyth_client::Price>(pyth_price_data);
+//     oracle_price = price_data.agg.price;
+//     oracle_twap = price_data.twap.val;
+//     oracle_exponent = price_data.expo;
+//   }
+//
+//   assert!(oracle_twap > oracle_price / 10);
+//
+//   let oracle_precision = 10_u128
+//     .pow(oracle_exponent.unsigned_abs())
+//     .safe_div(multiple)?;
+//
+//   let mut oracle_scale_mult = 1;
+//   let mut oracle_scale_div = 1;
+//
+//   if oracle_precision > PRICE_PRECISION {
+//     oracle_scale_div = oracle_precision.safe_div(PRICE_PRECISION)?;
+//   } else {
+//     oracle_scale_mult = PRICE_PRECISION.safe_div(oracle_precision)?;
+//   }
+//
+//   oracle_twap
+//     .cast::<i128>()?
+//     .safe_mul(oracle_scale_mult.cast()?)?
+//     .safe_div(oracle_scale_div.cast()?)?
+//     .cast::<i64>()
+// }
 
 pub fn get_pyth_price(
   price_oracle: &AccountInfo,

@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 // Tests
 // ============================================================================
 
-#[cfg(tests)]
+// #[cfg(tests)]
 mod tests {
   use super::*;
   use solana_client::nonblocking::rpc_client::RpcClient;
@@ -326,8 +326,8 @@ mod tests {
       if data.dataset().len() > 1 && data.avg_quote_pnl() > 0.0 {
         top_dogs.push(data.clone());
 
-        let json = serde_json::to_string(data.dataset().as_slice())?;
-        std::fs::write(&format!("{}/data/{}.json", prefix, user), json)?;
+        // let json = serde_json::to_string(data.dataset().as_slice())?;
+        // std::fs::write(&format!("{}/data/{}.json", prefix, user), json)?;
 
         Plot::plot(
           vec![data.dataset()],
@@ -426,32 +426,30 @@ mod tests {
     Ok(())
   }
 
-  /// cargo test --package imitator --bin imitator my_pnl -- --exact --show-output
+  /// cargo test --package imitator --bin imitator trader_pnl -- --exact --show-output
   #[tokio::test]
   async fn trader_pnl() -> anyhow::Result<()> {
     init_logger();
     dotenv::dotenv().ok();
 
-    // https://app.drift.trade/overview/portfolio?authority=F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
-    // authority: F3no8aqNZRSkxvMEARC4feHJfvvrST2ZrHzr2NBVyJUr
-    let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
+    // Circuit Trading "Supercharger Vault"
+    // https://app.drift.trade/SOL-PERP?userAccount=BRksHqLiq2gvQw1XxsZq6DXZjD3GB5a9J63tUBgd6QS9
+    let user = pubkey!("BRksHqLiq2gvQw1XxsZq6DXZjD3GB5a9J63tUBgd6QS9");
     let market_filter = Some(vec![MarketId::SOL_PERP]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Imitator::new(0, user, market_filter, None).await?;
+
+    let data = DriftUtils::drift_historical_pnl(&imitator.client(), &user, 100).await?;
 
     let prefix = env!("CARGO_MANIFEST_DIR").to_string();
-
-    let user = imitator.user();
-    let data = DriftUtils::drift_historical_pnl(&imitator.client(), user, 100).await?;
-
     if data.dataset().len() > 1 {
       Plot::plot(
         vec![data.dataset()],
-        &format!("{}/{}_pnl.png", prefix, copy_user),
+        &format!("{}/{}_pnl.png", prefix, user),
         &format!("{} Performance", user),
         "Cum USDC PnL",
         "Unix Seconds",
       )?;
-      info!("{} done", shorten_address(user));
+      info!("{} done", shorten_address(&user));
     }
 
     Ok(())
