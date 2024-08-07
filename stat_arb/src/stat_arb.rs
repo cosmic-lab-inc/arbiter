@@ -49,13 +49,13 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
-use crate::config::SwitzerlandConfig;
-use crate::data::{Dataset, XY};
+use crate::config::StatArbConfig;
+use crate::data::{Data, Dataset};
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
-pub struct Switzerland {
+pub struct StatArb {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -72,9 +72,9 @@ pub struct Switzerland {
   cache_depth: usize,
 }
 
-impl Switzerland {
+impl StatArb {
   pub async fn new(sub_account_id: u16, market: MarketId) -> anyhow::Result<Self> {
-    let SwitzerlandConfig {
+    let StatArbConfig {
       read_only,
       retry_until_confirmed,
       signer,
@@ -88,10 +88,10 @@ impl Switzerland {
       zscore_window,
       cache_depth,
       ..
-    } = SwitzerlandConfig::read()?;
+    } = StatArbConfig::read()?;
 
     let signer = Arc::new(signer);
-    info!("Switzerland using wallet: {}", signer.pubkey());
+    info!("StatArb using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),
@@ -361,8 +361,8 @@ impl Switzerland {
         .key_values()
         .flat_map(|(k, v)| {
           let price = self.drift.market_info(sol_ticker, &cache, Some(v.slot))?;
-          Result::<_, anyhow::Error>::Ok(XY {
-            x: *k,
+          Result::<_, anyhow::Error>::Ok(Data {
+            x: *k as i64,
             y: price.price,
           })
         })
@@ -374,8 +374,8 @@ impl Switzerland {
         .key_values()
         .flat_map(|(k, v)| {
           let price = self.drift.market_info(btc_ticker, &cache, Some(v.slot))?;
-          Result::<_, anyhow::Error>::Ok(XY {
-            x: *k,
+          Result::<_, anyhow::Error>::Ok(Data {
+            x: *k as i64,
             y: price.price,
           })
         })
@@ -395,7 +395,7 @@ impl Switzerland {
       x_series
         .data()
         .windows(2)
-        .map(|x| XY {
+        .map(|x| Data {
           x: x[1].x,
           y: x[1].y - x[0].y,
         })
@@ -450,7 +450,7 @@ impl Switzerland {
       Ok(res) => res,
     };
 
-    let z_0 = XY {
+    let z_0 = Data {
       x: latest_x.x,
       y: self.zscore(&spread)?,
     };

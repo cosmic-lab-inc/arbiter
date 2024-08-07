@@ -4,13 +4,15 @@ use std::collections::VecDeque;
 pub struct RingBuffer<T> {
   pub vec: VecDeque<T>,
   pub capacity: usize,
+  pub id: String,
 }
 
-impl<T> RingBuffer<T> {
-  pub fn new(capacity: usize) -> Self {
+impl<T: Clone> RingBuffer<T> {
+  pub fn new(capacity: usize, id: String) -> Self {
     Self {
       vec: VecDeque::with_capacity(capacity),
       capacity,
+      id,
     }
   }
 
@@ -43,5 +45,11 @@ impl<T> RingBuffer<T> {
 
   pub fn find(&self, f: impl Fn(&T) -> bool) -> Option<&T> {
     self.vec.iter().find(|t| f(t))
+  }
+
+  /// VecDeque is in reverse order, so we need to reverse it to get
+  /// first index as earliest element.
+  pub fn vec(&self) -> Vec<T> {
+    self.vec.iter().rev().cloned().collect::<Vec<T>>()
   }
 }

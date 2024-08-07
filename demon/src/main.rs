@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use anchor_lang::prelude::AccountInfo;
@@ -18,14 +19,14 @@ use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
+use demon::*;
 use nexus::drift_client::*;
 use nexus::drift_cpi::*;
 use nexus::*;
-use switzerland::*;
 
+mod backtest;
 mod config;
-mod data;
-mod switzerland;
+mod demon;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
   // SOL-PERP
   let market = MarketId::SOL_PERP;
-  let mut client = Switzerland::new(0, market).await?;
+  let mut client = Demon::new(0, market).await?;
   client.start().await?;
 
   Ok(())
@@ -86,4 +87,12 @@ async fn shannons_demon() {
     trunc!(avg_final_profit, 3),
     trunc!(avg_buy_and_hold_profit, 3)
   );
+}
+
+#[tokio::test]
+async fn delta_neutral_demon() {
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2019, 1, 1, None, None, None);
+  let csv = PathBuf::from("eth_1min.csv");
+  let mut series = Dataset::csv_series(&csv, Some(start_time), Some(end_time), String::new())?;
 }

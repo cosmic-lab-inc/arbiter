@@ -1,13 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
+    "programs/*",
     "baker",
     "bracketeer",
     "imitator",
     "nexus",
     "uncross",
-    "switzerland",
-    "programs/*"
+    "stat_arb",
+    "demon",
 ]
 
 [workspace.package]
@@ -59,8 +60,7 @@ spl-associated-token-account = { version = "2.2.0", features = ["no-entrypoint"]
 spl-token = { version = "4", features = ["no-entrypoint"] }
 yellowstone-grpc-client = "1.12.0"
 yellowstone-grpc-proto = "1.11.0"
-#yellowstone-grpc-client = "1.15.0"
-#yellowstone-grpc-proto = "1.14.0"
 maplit = "1.0.2"
+plotters = { version = "0.3.5" }
 
 # if target is mac m1, define compile c++ with "CXX=/opt/homebrew/bin/c++-14 cargo build"

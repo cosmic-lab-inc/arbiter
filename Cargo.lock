@@ -671,7 +671,7 @@ checksum = "7f6fd5ddaf0351dff5b8da21b2fb4ff8e08ddd02857f0bf69c47639106c0fff0"
 dependencies = [
  "asn1-rs-derive",
  "asn1-rs-impl",
- "displaydoc",
+ "displaydoc 0.2.4",
  "nom",
  "num-traits",
  "rusticata-macros",
@@ -1695,6 +1695,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8566979429cf69b49a5c740c60791108e86440e8be149bbea4fe54d2c32d6e2"
 
 [[package]]
+name = "demon"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang 0.29.0",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "crossbeam",
+ "csv",
+ "derive_more",
+ "dotenv",
+ "flate2",
+ "futures",
+ "heck 0.5.0",
+ "lazy_static",
+ "log",
+ "maplit",
+ "nexus",
+ "rand 0.8.5",
+ "rayon",
+ "reqwest 0.12.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simplelog",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "spl-associated-token-account",
+ "spl-token",
+ "statrs",
+ "thiserror",
+ "tokio",
+ "tradestats",
+ "uuid",
+ "yellowstone-grpc-client",
+ "yellowstone-grpc-proto",
+]
+
+[[package]]
 name = "der"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1710,7 +1754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbd676fbbab537128ef0278adb5576cf363cff6aa22a7b24effe97347cfab61e"
 dependencies = [
  "asn1-rs",
- "displaydoc",
+ "displaydoc 0.2.4",
  "nom",
  "num-bigint 0.4.5",
  "num-traits",
@@ -1807,6 +1851,17 @@ dependencies = [
  "libc",
  "redox_users",
  "winapi",
+]
+
+[[package]]
+name = "displaydoc"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adc2ab4d5a16117f9029e9a6b5e4e79f4c67f6519bc134210d4d4a04ba31f41b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2690,7 +2745,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db2fa452206ebee18c4b5c2274dbf1de17008e874b4dc4f0aea9d01ca79e4526"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "yoke",
  "zerofrom",
  "zerovec",
@@ -2702,7 +2757,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13acbb8371917fc971be86fc8057c41a64b521c184808a698c02acc242dbf637"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "litemap",
  "tinystr",
  "writeable",
@@ -2715,7 +2770,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01d11ac35de8e40fdeda00d9e1e9d92525f3f9d887cdd7aa81d727596788b54e"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "icu_locid",
  "icu_locid_transform_data",
  "icu_provider",
@@ -2735,7 +2790,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19ce3e0da2ec68599d193c93d088142efd7f9c5d6fc9b803774855747dc6a84f"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "icu_collections",
  "icu_normalizer_data",
  "icu_properties",
@@ -2759,7 +2814,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f8ac670d7422d7f76b32e17a5db556510825b29ec9154f235977c9caba61036"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "icu_collections",
  "icu_locid_transform",
  "icu_properties_data",
@@ -2780,7 +2835,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ed421c8a8ef78d3e2dbc98a973be2f3770cb42b606e3ab18d6237c4dfde68d9"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "icu_locid",
  "icu_provider_macros",
  "stable_deref_trait",
@@ -3127,6 +3182,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "linreg"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8c6fd2f0b9338b6d298dbcee4b4ec2a6ec2e88dc0a5f6f92d5cecd65afdf445"
+dependencies = [
+ "displaydoc 0.1.7",
+ "num-traits",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3367,6 +3432,7 @@ dependencies = [
  "indexmap 2.2.6",
  "jit-proxy-cpi",
  "lazy_static",
+ "linreg",
  "log",
  "maplit",
  "num-bigint 0.4.5",
@@ -5887,6 +5953,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
+name = "stat_arb"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang 0.29.0",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "crossbeam",
+ "csv",
+ "derive_more",
+ "dotenv",
+ "flate2",
+ "futures",
+ "heck 0.5.0",
+ "lazy_static",
+ "log",
+ "maplit",
+ "nexus",
+ "rand 0.8.5",
+ "rayon",
+ "reqwest 0.12.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simplelog",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "spl-associated-token-account",
+ "spl-token",
+ "statrs",
+ "thiserror",
+ "tokio",
+ "tradestats",
+ "uuid",
+ "yellowstone-grpc-client",
+ "yellowstone-grpc-proto",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5937,50 +6047,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "solana-sdk",
-]
-
-[[package]]
-name = "switzerland"
-version = "0.1.0"
-dependencies = [
- "anchor-lang 0.29.0",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "crossbeam",
- "csv",
- "derive_more",
- "dotenv",
- "flate2",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "maplit",
- "nexus",
- "rand 0.8.5",
- "rayon",
- "reqwest 0.12.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "solana-transaction-status",
- "spl-associated-token-account",
- "spl-token",
- "statrs",
- "thiserror",
- "tokio",
- "tradestats",
- "uuid",
- "yellowstone-grpc-client",
- "yellowstone-grpc-proto",
 ]
 
 [[package]]
@@ -6169,7 +6235,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9117f5d4db391c1cf6927e7bea3db74b9a1c1add8f7eda9ffd5364f40f57b82f"
 dependencies = [
- "displaydoc",
+ "displaydoc 0.2.4",
  "zerovec",
 ]
 
