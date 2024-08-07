@@ -223,8 +223,8 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
   let capacity = window + 1;
   let threshold = 2.0;
   let stop_loss = Some(5.0);
-  let fee = 0.02;
-  let slippage = 0.0;
+  let fee = 0.25;
+  let slippage = 0.01;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
   let short_selling = true;
@@ -299,7 +299,7 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
         .clone();
       Plot::plot(
         vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "stat_arb_btc_30m_backtest.png",
+        "btc_30m_backtest.png",
         &format!("{} Stat Arb Backtest", x_ticker),
         "% ROI",
         "Unix Millis",
@@ -315,7 +315,7 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
         .clone();
       Plot::plot(
         vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "stat_arb_eth_30m_backtest.png",
+        "eth_30m_backtest.png",
         &format!("{} Stat Arb Backtest", y_ticker),
         "% ROI",
         "Unix Millis",
