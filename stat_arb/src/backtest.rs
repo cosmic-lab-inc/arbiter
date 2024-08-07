@@ -65,7 +65,12 @@ impl StatArbBacktest {
       / (window_data.len() - 1) as f64;
     let std_dev: f64 = var.sqrt();
     if std_dev == 0.0 {
-      return Err(anyhow::anyhow!("Standard deviation is zero"));
+      return Err(anyhow::anyhow!(
+        "Standard deviation is zero with var {}, mean {}, and len {}",
+        var,
+        mean,
+        window_data.len()
+      ));
     }
     let z_score = (series[series.len() - 1] - mean) / std_dev;
     Ok(z_score)
@@ -109,16 +114,6 @@ impl StatArbBacktest {
           x: x_0.x(),
           y: Self::zscore(&spread, self.window)?,
         };
-        // let z_1 = Data {
-        //   x: x_0.x(),
-        //   y: Self::zscore(&lag_spread, self.window)?
-        // };
-
-        // original
-        // let enter_long = z_0.y() < -self.zscore_threshold;
-        // let exit_long = z_0.y() > 0.0 && z_1.y() < 0.0;
-        // let enter_short = z_0.y() > self.zscore_threshold;
-        // let exit_short = z_0.y() < 0.0 && z_1.y() > 0.0;
 
         // good
         let exit_long = z_0.y() < -self.zscore_threshold;
@@ -138,24 +133,41 @@ impl StatArbBacktest {
         };
 
         let mut signals = vec![];
-
         // process exits before any new entries
+        // if exit_long {
+        //   signals.push(Signal::ExitLong(x_info.clone()));
+        //   signals.push(Signal::ExitLong(y_info.clone()));
+        // }
+        // if exit_short {
+        //   signals.push(Signal::ExitShort(x_info.clone()));
+        //   signals.push(Signal::ExitShort(y_info.clone()));
+        // }
+        //
+        // if enter_long {
+        //   signals.push(Signal::EnterLong(x_info.clone()));
+        //   signals.push(Signal::EnterLong(y_info.clone()));
+        // }
+        // if enter_short {
+        //   signals.push(Signal::EnterShort(x_info.clone()));
+        //   signals.push(Signal::EnterShort(y_info.clone()));
+        // }
+
         if exit_long {
           signals.push(Signal::ExitLong(x_info.clone()));
-          signals.push(Signal::ExitLong(y_info.clone()))
+          signals.push(Signal::EnterLong(y_info.clone()));
         }
         if exit_short {
           signals.push(Signal::ExitShort(x_info.clone()));
-          signals.push(Signal::ExitShort(y_info.clone()))
+          signals.push(Signal::EnterShort(y_info.clone()));
         }
 
         if enter_long {
           signals.push(Signal::EnterLong(x_info.clone()));
-          signals.push(Signal::EnterLong(y_info.clone()))
+          signals.push(Signal::ExitLong(y_info.clone()));
         }
         if enter_short {
           signals.push(Signal::EnterShort(x_info.clone()));
-          signals.push(Signal::EnterShort(y_info.clone()))
+          signals.push(Signal::ExitShort(y_info.clone()));
         }
         Ok(signals)
       }
@@ -212,17 +224,17 @@ impl Strategy<Data> for StatArbBacktest {
 // ==========================================================================================
 
 #[tokio::test]
-async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
+async fn btc_eth_1m_stat_arb() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let start_time = Time::new(2023, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 4, 30, None, None, None);
+  let start_time = Time::new(2017, 12, 1, None, None, None);
+  let end_time = Time::new(2018, 1, 1, None, None, None);
 
-  let window = 9;
+  let window = 100;
   let capacity = window + 1;
   let threshold = 2.0;
-  let stop_loss = Some(5.0);
+  let stop_loss = None; //Some(5.0);
   let fee = 0.25;
   let slippage = 0.01;
   let bet = Bet::Percent(100.0);
@@ -232,35 +244,33 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
   let x_ticker = "BTCUSDT".to_string();
   let y_ticker = "ETHUSDT".to_string();
 
-  let btc_path = format!(
-    "{}/data/btcusdt_30m.csv",
-    workspace_dir().as_os_str().to_str().unwrap()
-  );
-  println!("btc path: {}", btc_path);
-  let btc_csv = PathBuf::from(btc_path);
+  let btc_csv = workspace_path("data/btc_1m.csv");
   let mut x_series =
     Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), x_ticker.clone())?;
 
-  let eth_path = format!(
-    "{}/data/ethusdt_30m.csv",
-    workspace_dir().as_os_str().to_str().unwrap()
-  );
-  let eth_csv = PathBuf::from(eth_path);
+  let eth_csv = workspace_path("data/eth_1m.csv");
   let mut y_series =
     Dataset::csv_series(&eth_csv, Some(start_time), Some(end_time), y_ticker.clone())?;
 
   Dataset::align(&mut x_series, &mut y_series)?;
   assert_eq!(x_series.len(), y_series.len());
 
+  // let original_spread = spread_dynamic(&x_series.y(), &y_series.y())
+  //   .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
+  // println!(
+  //   "Original Spread Hurst: {}",
+  //   trunc!(hurst(original_spread.clone()), 2)
+  // );
+
   // normalize data using percent change from first price in time series
-  let x = Dataset::normalize_series(&x_series)?;
-  let y = Dataset::normalize_series(&y_series)?;
-  let spread: Vec<f64> = spread_dynamic(&x.y(), &y.y())
-    .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
-  println!(
-    "Spread Hurst Exponent: {}",
-    trunc!(hurst(spread.clone()), 2)
-  );
+  // let x = x_series.normalize_series()?;
+  // let y = y_series.normalize_series()?;
+  // let normalized_spread: Vec<f64> = spread_dynamic(&x.y(), &y.y())
+  //   .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
+  // println!(
+  //   "Normalized Spread Hurst: {}",
+  //   trunc!(hurst(normalized_spread.clone()), 2)
+  // );
 
   let strat = StatArbBacktest::new(
     capacity,
@@ -280,17 +290,22 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
     .insert(y_ticker.clone(), y_series.data().clone());
   println!(
     "Backtest BTC candles: {}",
-    backtest.series.get(&x_ticker).unwrap().len()
+    backtest.get_series(&x_ticker)?.len()
   );
   println!(
     "Backtest ETH candles: {}",
-    backtest.series.get(&y_ticker).unwrap().len()
+    backtest.get_series(&y_ticker)?.len()
   );
 
+  let now = Time::now();
   let summary = backtest.backtest()?;
   let all_buy_and_hold = backtest.buy_and_hold()?;
+  println!(
+    "backtest finished in {}s",
+    Time::now().to_unix() - now.to_unix()
+  );
 
-  if let Some(trades) = backtest.trades.get(&x_ticker) {
+  if let Ok(trades) = backtest.get_trades(&x_ticker) {
     if trades.len() > 1 {
       summary.print(&x_ticker);
       let x_bah = all_buy_and_hold
@@ -299,7 +314,7 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
         .clone();
       Plot::plot(
         vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "btc_30m_backtest.png",
+        "btc_1m_backtest.png",
         &format!("{} Stat Arb Backtest", x_ticker),
         "% ROI",
         "Unix Millis",
@@ -315,13 +330,222 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
         .clone();
       Plot::plot(
         vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "eth_30m_backtest.png",
+        "eth_1m_backtest.png",
         &format!("{} Stat Arb Backtest", y_ticker),
         "% ROI",
         "Unix Millis",
       )?;
     }
   }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn btc_eth_30m_spread() -> anyhow::Result<()> {
+  use super::*;
+  dotenv::dotenv().ok();
+
+  let start_time = Time::new(2023, 2, 1, None, None, None);
+  let end_time = Time::new(2024, 4, 30, None, None, None);
+
+  let window = 100;
+  let x_ticker = "BTCUSDT".to_string();
+  let y_ticker = "ETHUSDT".to_string();
+
+  let mut backtest = Backtest::default();
+  let btc_csv = workspace_path("data/btcusdt_30m.csv");
+  let mut x_series =
+    Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), x_ticker.clone())?;
+  let eth_csv = workspace_path("data/ethusdt_30m.csv");
+  let mut y_series =
+    Dataset::csv_series(&eth_csv, Some(start_time), Some(end_time), y_ticker.clone())?;
+
+  Dataset::align(&mut x_series, &mut y_series)?;
+  // Append to backtest data
+  backtest
+    .series
+    .insert(x_ticker.clone(), x_series.data().clone());
+  backtest
+    .series
+    .insert(y_ticker.clone(), y_series.data().clone());
+
+  println!(
+    "Backtest BTC candles: {}",
+    backtest.series.get(&x_ticker).unwrap().len()
+  );
+  println!(
+    "Backtest ETH candles: {}",
+    backtest.series.get(&y_ticker).unwrap().len()
+  );
+
+  let original_spread = spread_dynamic(&x_series.y(), &y_series.y())
+    .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
+  println!(
+    "Original Spread Hurst: {}",
+    trunc!(hurst(original_spread.clone()), 2)
+  );
+  let original_spread_halflife = half_life(&original_spread).unwrap();
+  println!(
+    "Original Spread half life: {} bars",
+    original_spread_halflife.abs().round() as usize
+  );
+
+  // normalize data using percent change from first price in time series
+  let x = x_series.clone().normalize_series()?;
+  let y = y_series.clone().normalize_series()?;
+  assert_eq!(x.len(), y.len());
+  let normalized_spread: Vec<f64> = spread_dynamic(&x.y(), &y.y())
+    .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
+  println!(
+    "Normalized Spread Hurst: {}",
+    trunc!(hurst(normalized_spread.clone()), 2)
+  );
+  let normalized_spread_halflife = half_life(&normalized_spread).unwrap();
+  println!(
+    "Normalized Spread half life: {} bars",
+    normalized_spread_halflife.abs().round() as usize
+  );
+
+  Plot::plot(
+    vec![x.data().clone(), y.data().clone()],
+    "btc_eth_30m_normalized.png",
+    "BTC & ETH Percent Changes",
+    "Percent from Origin",
+    "Unix Millis",
+  )?;
+
+  let correlation = rolling_correlation(&x.y(), &y.y(), window)
+    .map_err(|e| anyhow::anyhow!("Error calculating rolling correlation: {}", e))?;
+  assert_eq!(correlation.len(), y.len());
+  assert_eq!(correlation.len(), x.len());
+  let correlation = Dataset::new(
+    correlation
+      .iter()
+      .enumerate()
+      .map(|(i, x)| Data { x: i as i64, y: *x })
+      .collect(),
+  );
+  Plot::plot(
+    vec![correlation.data().clone()],
+    "btc_eth_30m_correlation.png",
+    "BTC/ETH Correlation",
+    "Correlation",
+    "Time",
+  )?;
+
+  let zscore: Vec<f64> = rolling_zscore(&normalized_spread, window).unwrap();
+  assert_eq!(zscore.len(), normalized_spread.len());
+  let zscore = Dataset::new(
+    zscore
+      .iter()
+      .enumerate()
+      .map(|(i, x)| Data { x: i as i64, y: *x })
+      .collect(),
+  );
+  Plot::plot(
+    vec![zscore.data().clone()],
+    "btc_eth_30m_spread_zscore.png",
+    "BTC/ETH Spread Z Score",
+    "Z Score",
+    "Time",
+  )?;
+
+  Ok(())
+}
+
+// TODO: figure out how to properly test this (standard or dynamic spread?, etc)
+#[tokio::test]
+async fn btc_eth_1m_cointegration() -> anyhow::Result<()> {
+  use super::*;
+  dotenv::dotenv().ok();
+
+  let start_time = Time::new(2023, 1, 1, None, None, None);
+  let end_time = Time::new(2024, 4, 30, None, None, None);
+
+  let x_ticker = "BTCUSDT".to_string();
+  let y_ticker = "ETHUSDT".to_string();
+
+  let mut backtest = Backtest::default();
+  let btc_csv = workspace_path("data/btc_1m.csv");
+  let mut x_series =
+    Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), x_ticker.clone())?;
+  let eth_csv = workspace_path("data/eth_1m.csv");
+  let mut y_series =
+    Dataset::csv_series(&eth_csv, Some(start_time), Some(end_time), y_ticker.clone())?;
+
+  Dataset::align(&mut x_series, &mut y_series)?;
+  // Append to backtest data
+  backtest
+    .series
+    .insert(x_ticker.clone(), x_series.data().clone());
+  backtest
+    .series
+    .insert(y_ticker.clone(), y_series.data().clone());
+
+  println!(
+    "Backtest BTC candles: {}",
+    backtest.series.get(&x_ticker).unwrap().len()
+  );
+  println!(
+    "Backtest ETH candles: {}",
+    backtest.series.get(&y_ticker).unwrap().len()
+  );
+
+  // normalize data using percent change from first price in time series
+  let x = Dataset::new(backtest.get_series(&x_ticker)?.clone()).normalize_series()?;
+  let y = Dataset::new(backtest.get_series(&y_ticker)?.clone()).normalize_series()?;
+  assert_eq!(x.len(), y.len());
+
+  let dynamic_kalman_hedge = Dataset::new(
+    dynamic_hedge_kalman_filter(&x.y(), &y.y())
+      .map_err(|e| anyhow::anyhow!("Error calculating dynamic hedge ratio: {}", e))?
+      .iter()
+      .enumerate()
+      .map(|(i, x)| Data { x: i as i64, y: *x })
+      .collect(),
+  );
+
+  let coint = engle_granger_cointegration_test(&x.y(), &y.y())
+    .map_err(|e| anyhow::anyhow!("Error calculating Engle-Granger cointegration test: {}", e))?;
+  println!("Engle-Granger Cointegration Test: {:#?}", coint);
+
+  let spread: Vec<f64> = spread_standard(&x.y(), &y.y())
+    .map_err(|e| anyhow::anyhow!("Error calculating dynamic spread: {}", e))?;
+  assert_eq!(spread.len(), y.len());
+  assert_eq!(spread.len(), x.len());
+
+  let half_life: f64 = half_life(&spread).unwrap();
+  println!(
+    "Spread half life: {} bars",
+    half_life.abs().round() as usize
+  );
+  let window = 100;
+  // let window = half_life.abs().round() as usize;
+
+  let roll_coint = Dataset::new(
+    rolling_cointegration(&x.y(), &y.y(), window)
+      .map_err(|e| anyhow::anyhow!("Error calculating rolling cointegration: {}", e))?
+      .iter()
+      .enumerate()
+      .map(|(i, x)| Data { x: i as i64, y: *x })
+      .collect(),
+  );
+
+  Plot::plot(
+    vec![dynamic_kalman_hedge.data().clone()],
+    "btc_eth_1m_dynamic_kalman_hedge.png",
+    "BTC/ETH Dynamic Kalman Filter Hedge",
+    "Hedge Ratio",
+    "Time",
+  )?;
+  Plot::plot(
+    vec![roll_coint.data().clone()],
+    "btc_eth_1m_rolling_coint.png",
+    "BTC/ETH Rolling Cointegration",
+    "Cointegration",
+    "Time",
+  )?;
 
   Ok(())
 }
@@ -476,212 +700,48 @@ async fn btc_eth_30m_spread_attributes() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn btc_eth_30m_spread() -> anyhow::Result<()> {
-  use super::*;
-  dotenv::dotenv().ok();
+async fn date_ranges() -> anyhow::Result<()> {
+  let btc_ticker = "BTC".to_string();
+  let btc_csv = workspace_path("data/btc_1m.csv");
+  let btc_series = Dataset::csv_series(&btc_csv, None, None, btc_ticker.clone())?;
 
-  let start_time = Time::new(2023, 2, 1, None, None, None);
-  let end_time = Time::new(2024, 4, 30, None, None, None);
-
-  let window = 10;
-  let x_ticker = "BTCUSDT".to_string();
-  let y_ticker = "ETHUSDT".to_string();
-
-  let mut backtest = Backtest::default();
-  let btc_csv = PathBuf::from("btcusdt_30m.csv");
-  let mut x_series =
-    Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), x_ticker.clone())?;
-  let eth_csv = PathBuf::from("ethusdt_30m.csv");
-  let mut y_series =
-    Dataset::csv_series(&eth_csv, Some(start_time), Some(end_time), y_ticker.clone())?;
-
-  Dataset::align(&mut x_series, &mut y_series)?;
-  // Append to backtest data
-  backtest
-    .series
-    .insert(x_ticker.clone(), x_series.data().clone());
-  backtest
-    .series
-    .insert(y_ticker.clone(), y_series.data().clone());
-
+  let btc_start_ts = btc_series.0.first().unwrap().x();
+  let btc_start = Time::from_unix_ms(btc_start_ts);
+  let btc_end_ts = btc_series.0.last().unwrap().x();
+  let btc_end = Time::from_unix_ms(btc_end_ts);
   println!(
-    "Backtest BTC candles: {}",
-    backtest.series.get(&x_ticker).unwrap().len()
+    "BTC date range: {} - {}",
+    btc_start.to_string(),
+    btc_end.to_string()
   );
+
+  let eth_ticker = "ETH".to_string();
+  let eth_csv = workspace_path("data/eth_1m.csv");
+  let eth_series = Dataset::csv_series(&eth_csv, None, None, eth_ticker.clone())?;
+
+  let eth_start_ts = eth_series.0.first().unwrap().x();
+  let eth_start = Time::from_unix_ms(eth_start_ts);
+  let eth_end_ts = eth_series.0.last().unwrap().x();
+  let eth_end = Time::from_unix_ms(eth_end_ts);
   println!(
-    "Backtest ETH candles: {}",
-    backtest.series.get(&y_ticker).unwrap().len()
+    "ETH date range: {} - {}",
+    eth_start.to_string(),
+    eth_end.to_string()
   );
 
-  // normalize data using percent change from first price in time series
-  let x = x_series.clone().normalize_series()?;
-  let y = y_series.clone().normalize_series()?;
-  assert_eq!(x.len(), y.len());
+  let sol_ticker = "SOL".to_string();
+  let sol_csv = workspace_path("data/sol_1m.csv");
+  let sol_series = Dataset::csv_series(&sol_csv, None, None, sol_ticker.clone())?;
 
-  Plot::plot(
-    vec![x.data().clone(), y.data().clone()],
-    "btc_eth_30m_normalized.png",
-    "BTC & ETH Percent Changes",
-    "Percent from Origin",
-    "Unix Millis",
-  )?;
-
-  let correlation = rolling_correlation(&x.y(), &y.y(), window)
-    .map_err(|e| anyhow::anyhow!("Error calculating rolling correlation: {}", e))?;
-  assert_eq!(correlation.len(), y.len());
-  assert_eq!(correlation.len(), x.len());
-  let correlation = Dataset::new(
-    correlation
-      .iter()
-      .enumerate()
-      .map(|(i, x)| Data { x: i as i64, y: *x })
-      .collect(),
-  );
-  Plot::plot(
-    vec![correlation.data().clone()],
-    "btc_eth_30m_correlation.png",
-    "BTC/ETH Correlation",
-    "Correlation",
-    "Time",
-  )?;
-
-  let spread: Vec<f64> = spread_dynamic(&x.y(), &y.y())
-    .map_err(|e| anyhow::anyhow!("Error calculating spread: {}", e))?;
-  let spread_data = Dataset::new(
-    spread
-      .iter()
-      .enumerate()
-      .map(|(i, y)| {
-        let x = x.x()[i];
-        Data { x, y: *y }
-      })
-      .collect(),
-  );
-  Plot::plot(
-    vec![spread_data.data().clone()],
-    "btc_eth_30m_spread.png",
-    "BTC/ETH Spread",
-    "Spread",
-    "Unix Millis",
-  )?;
-
-  assert_eq!(spread.len(), y.len());
-  assert_eq!(spread.len(), x.len());
-  let zscore: Vec<f64> = rolling_zscore(&spread, window).unwrap();
-  assert_eq!(zscore.len(), spread.len());
-  let zscore = Dataset::new(
-    zscore
-      .iter()
-      .enumerate()
-      .map(|(i, x)| Data { x: i as i64, y: *x })
-      .collect(),
-  );
-  Plot::plot(
-    vec![zscore.data().clone()],
-    // vec![spread_data.data().clone(), zscore.data().clone()],
-    "btc_eth_30m_spread_zscore.png",
-    "BTC/ETH Spread Z Score",
-    "Z Score",
-    "Time",
-  )?;
-
-  let half_life: f64 = half_life(&spread).unwrap();
-  let half_life = half_life.abs().round() as usize;
-  println!("Spread half life: {} bars", half_life);
-
-  Ok(())
-}
-
-#[tokio::test]
-async fn btc_eth_30m_cointegration() -> anyhow::Result<()> {
-  use super::*;
-  dotenv::dotenv().ok();
-
-  let start_time = Time::new(2023, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 4, 30, None, None, None);
-
-  let x_ticker = "BTCUSDT".to_string();
-  let y_ticker = "ETHUSDT".to_string();
-
-  let mut backtest = Backtest::default();
-  let btc_csv = PathBuf::from("btcusdt_30m.csv");
-  let mut x_series =
-    Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), x_ticker.clone())?;
-  let eth_csv = PathBuf::from("ethusdt_30m.csv");
-  let mut y_series =
-    Dataset::csv_series(&eth_csv, Some(start_time), Some(end_time), y_ticker.clone())?;
-
-  Dataset::align(&mut x_series, &mut y_series)?;
-  // Append to backtest data
-  backtest
-    .series
-    .insert(x_ticker.clone(), x_series.data().clone());
-  backtest
-    .series
-    .insert(y_ticker.clone(), y_series.data().clone());
-
+  let sol_start_ts = *sol_series.x().first().unwrap();
+  let sol_start = Time::from_unix_ms(sol_start_ts);
+  let sol_end_ts = *sol_series.x().last().unwrap();
+  let sol_end = Time::from_unix_ms(sol_end_ts);
   println!(
-    "Backtest BTC candles: {}",
-    backtest.series.get(&x_ticker).unwrap().len()
+    "SOL date range: {} - {}",
+    sol_start.to_string(),
+    sol_end.to_string()
   );
-  println!(
-    "Backtest ETH candles: {}",
-    backtest.series.get(&y_ticker).unwrap().len()
-  );
-
-  // normalize data using percent change from first price in time series
-  let x = Dataset::new(backtest.series.get(&x_ticker).unwrap().clone()).normalize_series()?;
-  let y = Dataset::new(backtest.series.get(&y_ticker).unwrap().clone()).normalize_series()?;
-
-  assert_eq!(x.len(), y.len());
-
-  assert_eq!(x.len(), y.len());
-
-  let dynamic_kalman_hedge = Dataset::new(
-    dynamic_hedge_kalman_filter(&x.y(), &y.y())
-      .map_err(|e| anyhow::anyhow!("Error calculating dynamic hedge ratio: {}", e))?
-      .iter()
-      .enumerate()
-      .map(|(i, x)| Data { x: i as i64, y: *x })
-      .collect(),
-  );
-
-  let coint = engle_granger_cointegration_test(&x.y(), &y.y())
-    .map_err(|e| anyhow::anyhow!("Error calculating Engle-Granger cointegration test: {}", e))?;
-  println!("Engle-Granger Cointegration Test: {:#?}", coint);
-
-  let spread: Vec<f64> = spread_standard(&x.y(), &y.y())
-    .map_err(|e| anyhow::anyhow!("Error calculating dynamic spread: {}", e))?;
-  assert_eq!(spread.len(), y.len());
-  assert_eq!(spread.len(), x.len());
-
-  let half_life: f64 = half_life(&spread).unwrap();
-  // let window = 20;
-  let window = half_life.abs().round() as usize;
-
-  let roll_coint = Dataset::new(
-    rolling_cointegration(&x.y(), &y.y(), window)
-      .map_err(|e| anyhow::anyhow!("Error calculating rolling cointegration: {}", e))?
-      .iter()
-      .enumerate()
-      .map(|(i, x)| Data { x: i as i64, y: *x })
-      .collect(),
-  );
-
-  Plot::plot(
-    vec![dynamic_kalman_hedge.data().clone()],
-    "btc_eth_30m_dynamic_kalman_hedge.png",
-    "BTC/ETH Dynamic Kalman Filter Hedge",
-    "Hedge Ratio",
-    "Time",
-  )?;
-  Plot::plot(
-    vec![roll_coint.data().clone()],
-    "btc_eth_30m_rolling_coint.png",
-    "BTC/ETH Rolling Cointegration",
-    "Cointegration",
-    "Time",
-  )?;
 
   Ok(())
 }

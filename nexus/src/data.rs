@@ -1,4 +1,5 @@
 use crate::{Bar, Time};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
@@ -105,11 +106,17 @@ impl Dataset {
     let mut bars = vec![];
 
     for record in csv.records().flatten() {
-      let date = Time::from_unix(
-        record[0]
-          .parse::<i64>()
-          .expect("failed to parse candle UNIX timestamp into i64"),
-      );
+      let is_unix_ts = record[0].parse::<i64>();
+      let is_date = record[0].parse::<String>();
+      let date = if let Ok(unix_ts) = is_unix_ts {
+        Ok(Time::from_unix(unix_ts))
+      } else if let Ok(date) = is_date {
+        // format is: 2020-08-11 06:00:00
+        let dt = NaiveDateTime::parse_from_str(&date, "%Y-%m-%d %H:%M:%S")?;
+        Ok(Time::from_naive_date(dt))
+      } else {
+        Err(anyhow::anyhow!("Invalid date format: {:?}", &record[0]))
+      }?;
       let volume = None;
       bars.push(Bar {
         date,

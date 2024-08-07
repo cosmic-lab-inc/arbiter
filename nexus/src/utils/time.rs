@@ -1,4 +1,7 @@
-use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Timelike, Utc, Weekday};
+use chrono::{
+  DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
+  Weekday,
+};
 use log::error;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -33,7 +36,7 @@ impl Time {
     day: u32,
     hour: Option<u32>,
     minute: Option<u32>,
-    second: Option<u32>
+    second: Option<u32>,
   ) -> Self {
     Self {
       year,
@@ -41,7 +44,18 @@ impl Time {
       day: Day::from_num(day),
       hour,
       minute,
-      second
+      second,
+    }
+  }
+
+  pub fn from_naive_date(date: NaiveDateTime) -> Self {
+    Self {
+      year: date.year(),
+      month: Month::from_num(date.month()),
+      day: Day::from_num(date.day()),
+      hour: Some(date.hour()),
+      minute: Some(date.minute()),
+      second: Some(date.second()),
     }
   }
 
@@ -93,7 +107,7 @@ impl Time {
       day,
       hour: None,
       minute: None,
-      second: None
+      second: None,
     }
   }
 
@@ -101,14 +115,13 @@ impl Time {
     let year = date[..4].parse::<i32>().unwrap();
     let month = Month::from_num(date[5..7].parse::<u32>().unwrap());
     let day = Day::from_num(date[8..10].parse::<u32>().unwrap());
-
     Self {
       year,
       month,
       day,
       hour: None,
       minute: None,
-      second: None
+      second: None,
     }
   }
 
@@ -172,13 +185,12 @@ impl Time {
 
   /// Increment Time by a number of days
   pub fn delta_date(&self, days: i64) -> Self {
-    let chrono_date =
-      NaiveDate::from_ymd_opt(self.year, self.month.to_num(), self.day.to_num())
-        .expect("failed to convert Time to chrono::NaiveDate");
+    let chrono_date = NaiveDate::from_ymd_opt(self.year, self.month.to_num(), self.day.to_num())
+      .expect("failed to convert Time to chrono::NaiveDate");
     // convert NaiveDate to NaiveDateTime
-    let chrono_date = chrono::NaiveDateTime::new(
+    let chrono_date = NaiveDateTime::new(
       chrono_date,
-      chrono::NaiveTime::from_hms_opt(self.hour.unwrap_or(0), self.minute.unwrap_or(0), 0)
+      NaiveTime::from_hms_opt(self.hour.unwrap_or(0), self.minute.unwrap_or(0), 0)
         .expect("failed to create NaiveTime"),
     );
 
@@ -188,8 +200,7 @@ impl Time {
 
   /// Check if Time is within range of dates
   pub fn within_range(&self, start: Self, stop: Self) -> bool {
-    self.to_naive_date() >= start.to_naive_date()
-      && self.to_naive_date() <= stop.to_naive_date()
+    self.to_naive_date() >= start.to_naive_date() && self.to_naive_date() <= stop.to_naive_date()
   }
 
   /// Difference in days between two dates
@@ -214,7 +225,7 @@ impl Time {
       date.naive_utc().day(),
       Some(date.naive_utc().hour()),
       Some(date.naive_utc().minute()),
-      Some(date.naive_utc().second())
+      Some(date.naive_utc().second()),
     )
   }
 
@@ -226,20 +237,22 @@ impl Time {
       date.naive_utc().day(),
       Some(date.naive_utc().hour()),
       Some(date.naive_utc().minute()),
-      Some(date.naive_utc().second())
+      Some(date.naive_utc().second()),
     )
   }
 
   pub fn to_unix(&self) -> i64 {
-    self.to_datetime()
-        .expect("Failed to convert Time to DateTime")
-        .timestamp()
+    self
+      .to_datetime()
+      .expect("Failed to convert Time to DateTime")
+      .timestamp()
   }
 
   pub fn to_unix_ms(&self) -> i64 {
-    self.to_datetime()
-        .expect("Failed to convert Time to DateTime")
-        .timestamp_millis()
+    self
+      .to_datetime()
+      .expect("Failed to convert Time to DateTime")
+      .timestamp_millis()
   }
 
   pub fn from_unix_msec(unix: i64) -> Self {
@@ -250,7 +263,7 @@ impl Time {
       date.naive_utc().day(),
       Some(date.naive_utc().hour()),
       Some(date.naive_utc().minute()),
-      Some(date.naive_utc().second())
+      Some(date.naive_utc().second()),
     )
   }
 }
@@ -388,7 +401,8 @@ impl Month {
       Month::October => "10",
       Month::November => "11",
       Month::December => "12",
-    }.to_string()
+    }
+    .to_string()
   }
 
   pub fn days_per_month(&self) -> u32 {
@@ -625,6 +639,7 @@ impl Day {
       Day::TwentyNine => "29",
       Day::Thirty => "30",
       Day::ThirtyOne => "31",
-    }.to_string()
+    }
+    .to_string()
   }
 }

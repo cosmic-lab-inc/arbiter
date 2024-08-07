@@ -107,6 +107,20 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     }
   }
 
+  pub fn get_series(&self, ticker: &str) -> anyhow::Result<&Vec<Data>> {
+    self
+      .series
+      .get(ticker)
+      .ok_or(anyhow::anyhow!("Ticker {} not found in series", ticker))
+  }
+
+  pub fn get_trades(&self, ticker: &str) -> anyhow::Result<&Vec<Trade>> {
+    self
+      .trades
+      .get(ticker)
+      .ok_or(anyhow::anyhow!("Ticker {} not found in trades", ticker))
+  }
+
   pub fn add_data(&mut self, data: Data, ticker: String) {
     let mut series = self.series.get(&ticker).unwrap_or(&vec![]).clone();
     series.push(data);
