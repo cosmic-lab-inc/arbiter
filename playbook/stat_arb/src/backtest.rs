@@ -2,8 +2,7 @@
 
 use crate::math::hurst;
 use crate::trade::{Bet, Signal, SignalInfo};
-use crate::Backtest;
-use crate::Strategy;
+use crate::{Backtest, Dataset, Strategy};
 use log::warn;
 use nexus::*;
 use rayon::prelude::*;
@@ -65,12 +64,19 @@ impl StatArbBacktest {
       / (window_data.len() - 1) as f64;
     let std_dev: f64 = var.sqrt();
     if std_dev == 0.0 {
-      return Err(anyhow::anyhow!(
+      // return Err(anyhow::anyhow!(
+      //   "Standard deviation is zero with var {}, mean {}, and len {}",
+      //   var,
+      //   mean,
+      //   window_data.len()
+      // ));
+      warn!(
         "Standard deviation is zero with var {}, mean {}, and len {}",
         var,
         mean,
         window_data.len()
-      ));
+      );
+      return Ok(0.0);
     }
     let z_score = (series[series.len() - 1] - mean) / std_dev;
     Ok(z_score)
@@ -116,8 +122,10 @@ impl StatArbBacktest {
         };
 
         // good
-        let exit_long = z_0.y() < -self.zscore_threshold;
-        let enter_long = z_0.y() > self.zscore_threshold;
+        // let exit_long = z_0.y() < -self.zscore_threshold;
+        // let enter_long = z_0.y() > self.zscore_threshold;
+        let enter_long = z_0.y() < -self.zscore_threshold;
+        let exit_long = z_0.y() > self.zscore_threshold;
         let exit_short = exit_long;
         let enter_short = enter_long;
 
@@ -134,41 +142,41 @@ impl StatArbBacktest {
 
         let mut signals = vec![];
         // process exits before any new entries
-        // if exit_long {
-        //   signals.push(Signal::ExitLong(x_info.clone()));
-        //   signals.push(Signal::ExitLong(y_info.clone()));
-        // }
-        // if exit_short {
-        //   signals.push(Signal::ExitShort(x_info.clone()));
-        //   signals.push(Signal::ExitShort(y_info.clone()));
-        // }
-        //
-        // if enter_long {
-        //   signals.push(Signal::EnterLong(x_info.clone()));
-        //   signals.push(Signal::EnterLong(y_info.clone()));
-        // }
-        // if enter_short {
-        //   signals.push(Signal::EnterShort(x_info.clone()));
-        //   signals.push(Signal::EnterShort(y_info.clone()));
-        // }
-
         if exit_long {
           signals.push(Signal::ExitLong(x_info.clone()));
-          signals.push(Signal::EnterLong(y_info.clone()));
+          signals.push(Signal::ExitLong(y_info.clone()));
         }
         if exit_short {
           signals.push(Signal::ExitShort(x_info.clone()));
-          signals.push(Signal::EnterShort(y_info.clone()));
+          signals.push(Signal::ExitShort(y_info.clone()));
         }
 
         if enter_long {
           signals.push(Signal::EnterLong(x_info.clone()));
-          signals.push(Signal::ExitLong(y_info.clone()));
+          signals.push(Signal::EnterLong(y_info.clone()));
         }
         if enter_short {
           signals.push(Signal::EnterShort(x_info.clone()));
-          signals.push(Signal::ExitShort(y_info.clone()));
+          signals.push(Signal::EnterShort(y_info.clone()));
         }
+
+        // if exit_long {
+        //   signals.push(Signal::ExitLong(x_info.clone()));
+        //   signals.push(Signal::EnterLong(y_info.clone()));
+        // }
+        // if exit_short {
+        //   signals.push(Signal::ExitShort(x_info.clone()));
+        //   signals.push(Signal::EnterShort(y_info.clone()));
+        // }
+        //
+        // if enter_long {
+        //   signals.push(Signal::EnterLong(x_info.clone()));
+        //   signals.push(Signal::ExitLong(y_info.clone()));
+        // }
+        // if enter_short {
+        //   signals.push(Signal::EnterShort(x_info.clone()));
+        //   signals.push(Signal::ExitShort(y_info.clone()));
+        // }
         Ok(signals)
       }
     }
@@ -229,9 +237,9 @@ async fn btc_eth_1m_stat_arb() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
 
   let start_time = Time::new(2017, 12, 1, None, None, None);
-  let end_time = Time::new(2018, 1, 1, None, None, None);
+  let end_time = Time::new(2018, 2, 1, None, None, None);
 
-  let window = 100;
+  let window = 9;
   let capacity = window + 1;
   let threshold = 2.0;
   let stop_loss = None; //Some(5.0);
