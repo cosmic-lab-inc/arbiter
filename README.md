@@ -44,3 +44,9 @@ Run arbiter to test the transaction subscription with Helius:
 ```bash
 cargo run -p arbiter
 ```
+
+## Backtesting
+
+Download BTCUSD and ETHUSD 1 minute data from
+Kaggle [here](https://www.kaggle.com/datasets/kaanxtr/btc-price-1m?resource=download).
+Store the BTC CSV under `data/btc_1m.csv` and the ETH CSV under `data/eth_1m.csv`.

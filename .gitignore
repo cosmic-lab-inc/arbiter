@@ -11,3 +11,4 @@ snapshots
 *.zst
 gcs_snapshots.json
 /keys
+**/data
