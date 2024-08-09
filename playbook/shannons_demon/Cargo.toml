@@ -1,5 +1,5 @@
 [package]
-name = "demon"
+name = "shannons_demon"
 version = { workspace = true }
 edition = { workspace = true }
 

@@ -147,6 +147,31 @@ impl Dataset {
     Ok(Dataset::new(data))
   }
 
+  /// Read candles from CSV file.
+  /// Handles duplicate candles and sorts candles by date.
+  /// Expects date of candle to be in UNIX timestamp format.
+  /// CSV format: date,open,high,low,close,volume
+  pub fn write_csv(bars: Vec<Bar>, path: PathBuf) -> anyhow::Result<()> {
+    // write time,open,high,low,close headers to CSV file
+    let mut wtr = csv::Writer::from_writer(
+      File::create(path).expect("Failed to create CSV file. Check if the file path is correct."),
+    );
+    wtr.write_record(["time", "open", "high", "low", "close"])?;
+
+    // convert each Bar to a CSV record
+    for bar in bars {
+      wtr.write_record(&[
+        bar.date.to_unix().to_string(),
+        bar.open.to_string(),
+        bar.high.to_string(),
+        bar.low.to_string(),
+        bar.close.to_string(),
+      ])?;
+    }
+
+    Ok(())
+  }
+
   /// Redefine each price point as a percentage change relative to the starting price.
   pub fn normalize_series(&self) -> anyhow::Result<Dataset> {
     let mut series = self.0.to_vec();

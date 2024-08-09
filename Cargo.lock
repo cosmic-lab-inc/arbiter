@@ -868,45 +868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "baker"
-version = "0.1.0"
-dependencies = [
- "anchor-lang 0.29.0",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "crossbeam",
- "csv",
- "derive_more",
- "dotenv",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "nexus",
- "rayon",
- "reqwest 0.12.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "solana-transaction-status",
- "spl-associated-token-account",
- "spl-token",
- "thiserror",
- "tokio",
- "uuid",
- "yellowstone-grpc-client",
- "yellowstone-grpc-proto",
-]
-
-[[package]]
 name = "base64"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1689,48 +1650,6 @@ name = "data-encoding"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8566979429cf69b49a5c740c60791108e86440e8be149bbea4fe54d2c32d6e2"
-
-[[package]]
-name = "demon"
-version = "0.1.0"
-dependencies = [
- "anchor-lang 0.29.0",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "crossbeam",
- "csv",
- "derive_more",
- "dotenv",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "nexus",
- "rand 0.8.5",
- "rayon",
- "reqwest 0.12.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "solana-transaction-status",
- "spl-associated-token-account",
- "spl-token",
- "statrs",
- "thiserror",
- "tokio",
- "tradestats",
- "uuid",
- "yellowstone-grpc-client",
- "yellowstone-grpc-proto",
-]
 
 [[package]]
 name = "der"
@@ -4876,6 +4795,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "shannons_demon"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang 0.29.0",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "crossbeam",
+ "csv",
+ "derive_more",
+ "dotenv",
+ "futures",
+ "heck 0.5.0",
+ "lazy_static",
+ "log",
+ "nexus",
+ "rand 0.8.5",
+ "rayon",
+ "reqwest 0.12.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simplelog",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "spl-associated-token-account",
+ "spl-token",
+ "statrs",
+ "thiserror",
+ "tokio",
+ "tradestats",
+ "uuid",
+ "yellowstone-grpc-client",
+ "yellowstone-grpc-proto",
+]
+
+[[package]]
 name = "shell-words"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6624,45 +6585,6 @@ dependencies = [
  "crunchy",
  "hex",
  "static_assertions",
-]
-
-[[package]]
-name = "uncross"
-version = "0.1.0"
-dependencies = [
- "anchor-lang 0.29.0",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "crossbeam",
- "csv",
- "derive_more",
- "dotenv",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "nexus",
- "rayon",
- "reqwest 0.12.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "solana-transaction-status",
- "spl-associated-token-account",
- "spl-token",
- "thiserror",
- "tokio",
- "uuid",
- "yellowstone-grpc-client",
- "yellowstone-grpc-proto",
 ]
 
 [[package]]
