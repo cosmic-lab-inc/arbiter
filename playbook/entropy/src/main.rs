@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
 
   // SOL-PERP
   let market = MarketId::SOL_PERP;
-  let mut client = StatArb::new(0, market).await?;
+  let mut client = Entropy::new(0, market).await?;
   client.start().await?;
 
   Ok(())

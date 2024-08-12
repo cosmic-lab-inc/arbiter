@@ -65,5 +65,7 @@ uuid = { version = "1.3.0", features = [
 derive_more = "0.99.17"
 statrs = "0.16.0"
 tradestats = "0.1.14"
+rustfft = "6.2.0"
+ndarray = "0.16.0"
 
 # if target is mac m1, define compile c++ with "CXX=/opt/homebrew/bin/c++-14 cargo build"

@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+/// Last "capacity" data from current datum.
+/// 0th index is the newest datum, last index is oldest datum.
 #[derive(Debug, Clone)]
 pub struct RingBuffer<T> {
   pub vec: VecDeque<T>,

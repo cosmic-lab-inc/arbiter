@@ -104,11 +104,11 @@ impl Strategy<Data> for DemonBacktest {
 }
 
 // ==========================================================================================
-//                                 StatArb 30m Backtests
+//                                 ShannonsDemon 30m Backtests
 // ==========================================================================================
 
 #[tokio::test]
-async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
+async fn btc_eth_30m_shannons_demon() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 

@@ -64,12 +64,6 @@ impl StatArbBacktest {
       / (window_data.len() - 1) as f64;
     let std_dev: f64 = var.sqrt();
     if std_dev == 0.0 {
-      // return Err(anyhow::anyhow!(
-      //   "Standard deviation is zero with var {}, mean {}, and len {}",
-      //   var,
-      //   mean,
-      //   window_data.len()
-      // ));
       warn!(
         "Standard deviation is zero with var {}, mean {}, and len {}",
         var,
@@ -1174,8 +1168,8 @@ async fn btc_eth_1h_cointegration() -> anyhow::Result<()> {
   );
 
   // normalize data using percent change from first price in time series
-  let x = Dataset::new(backtest.get_series(&x_ticker)?.clone());
-  let y = Dataset::new(backtest.get_series(&y_ticker)?.clone());
+  let x = Dataset::new(backtest.get_series(&x_ticker)?.clone()).normalize_series()?;
+  let y = Dataset::new(backtest.get_series(&y_ticker)?.clone()).normalize_series()?;
   assert_eq!(x.len(), y.len());
 
   let coint = engle_granger_cointegration_test(&x.y(), &y.y())
@@ -1394,10 +1388,10 @@ async fn btc_eth_1d_cointegration() -> anyhow::Result<()> {
   );
 
   // normalize data using percent change from first price in time series
-  // let x = Dataset::new(backtest.get_series(&x_ticker)?.clone()).normalize_series()?;
-  // let y = Dataset::new(backtest.get_series(&y_ticker)?.clone()).normalize_series()?;
-  let x = Dataset::new(backtest.get_series(&x_ticker)?.clone());
-  let y = Dataset::new(backtest.get_series(&y_ticker)?.clone());
+  let x = Dataset::new(backtest.get_series(&x_ticker)?.clone()).normalize_series()?;
+  let y = Dataset::new(backtest.get_series(&y_ticker)?.clone()).normalize_series()?;
+  // let x = Dataset::new(backtest.get_series(&x_ticker)?.clone());
+  // let y = Dataset::new(backtest.get_series(&y_ticker)?.clone());
   assert_eq!(x.len(), y.len());
 
   let coint = engle_granger_cointegration_test(&x.y(), &y.y())

@@ -17,13 +17,13 @@ use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
-use imitator::*;
+use client::*;
 use nexus::drift_client::*;
 use nexus::drift_cpi::*;
 use nexus::*;
 
+mod client;
 mod config;
-mod imitator;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

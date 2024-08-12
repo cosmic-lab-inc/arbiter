@@ -17,12 +17,12 @@ use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
-use bracketeer::*;
+use client::*;
 use nexus::drift_client::*;
 use nexus::drift_cpi::*;
 use nexus::*;
 
-mod bracketeer;
+mod client;
 mod config;
 
 #[tokio::main]
