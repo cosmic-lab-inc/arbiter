@@ -1,3 +1,5 @@
+use log::warn;
+
 /// Corrected R over S Hurst exponent
 /// Hurst <0.5: mean-reverting
 /// Hurst =0.5: random walk
@@ -78,40 +80,34 @@ pub fn half(n: &[u64], original_length: u64) -> Vec<u64> {
   result
 }
 
-// pub fn shannon_entropy(prices: &[f64], period: usize, patterns: usize) -> f64 {
-//   if prices.len() < period {
-//     panic!("Period is longer than the number of prices available");
-//   }
-//
-//   // Create a map to count occurrences of each price pattern
-//   let mut pattern_counts: HashMap<String, usize> = HashMap::new();
-//
-//   // Iterate through the price data to create patterns
-//   for i in 0..=prices.len() - period {
-//     let pattern = prices[i..i + period]
-//       .chunks(patterns)
-//       .map(|chunk| chunk.iter().sum::<f64>() / chunk.len() as f64)
-//       .collect::<Vec<_>>();
-//     // convert Vec<f64> to String
-//     let key = pattern
-//       .iter()
-//       .map(|x| x.to_string())
-//       .collect::<Vec<String>>()
-//       .join("");
-//     *pattern_counts.entry(key).or_insert(0) += 1;
-//   }
-//
-//   // Calculate the total number of patterns
-//   let total_patterns = pattern_counts.values().sum::<usize>() as f64;
-//
-//   // Calculate entropy
-//   let entropy = pattern_counts.values().fold(0.0, |acc, &count| {
-//     let probability = count as f64 / total_patterns;
-//     acc - probability * probability.log2()
-//   });
-//
-//   entropy
-// }
+/// ZScore of last index in a spread time series
+pub fn zscore(series: &[f64], window: usize) -> anyhow::Result<f64> {
+  // Guard: Ensure correct window size
+  if window > series.len() {
+    return Err(anyhow::anyhow!("Window size is greater than vector length"));
+  }
+
+  // last z score
+  let window_data: &[f64] = &series[series.len() - window..];
+  let mean: f64 = window_data.iter().sum::<f64>() / window_data.len() as f64;
+  let var: f64 = window_data
+    .iter()
+    .map(|&val| (val - mean).powi(2))
+    .sum::<f64>()
+    / (window_data.len() - 1) as f64;
+  let std_dev: f64 = var.sqrt();
+  if std_dev == 0.0 {
+    warn!(
+      "Standard deviation is zero with var {}, mean {}, and len {}",
+      var,
+      mean,
+      window_data.len()
+    );
+    return Ok(0.0);
+  }
+  let z_score = (series[series.len() - 1] - mean) / std_dev;
+  Ok(z_score)
+}
 
 /// Translate from Zorro's `ShannonEntropy` indicator, written in C: https://financial-hacker.com/is-scalping-irrational/
 /// pattern_size = number of bits. If bits is 3, and the result is 3, then the time series is perfectly random.

@@ -504,7 +504,7 @@ fn entropy_two_step_prediction() -> anyhow::Result<()> {
 // ==========================================================================================
 
 #[test]
-fn entropy_1h_backtest() -> anyhow::Result<()> {
+fn entropy_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
@@ -517,7 +517,9 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
 
   let start_time = Time::new(2017, 7, 1, None, None, None);
   let end_time = Time::new(2024, 7, 1, None, None, None);
-  let btc_csv = workspace_path("data/btc_1h.csv");
+  let timeframe = "1h";
+
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
@@ -537,7 +539,7 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
     .series
     .insert(ticker.clone(), series.data().clone());
 
-  backtest.execute("Entropy Backtest", "1h")?;
+  backtest.execute("Entropy Backtest", timeframe)?;
 
   Ok(())
 }
