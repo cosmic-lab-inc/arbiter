@@ -154,6 +154,10 @@ impl Strategy<Data> for EntropyBacktest {
   fn stop_loss_pct(&self) -> Option<f64> {
     self.stop_loss_pct
   }
+
+  fn title(&self) -> String {
+    "entropy".to_string()
+  }
 }
 
 // ==========================================================================================
@@ -522,35 +526,18 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   let patterns = 3;
 
   let strat = EntropyBacktest::new(capacity, period, patterns, ticker.clone(), stop_loss);
-  let mut backtest = Backtest::new(strat, 1000.0, fee, slippage, bet, leverage, short_selling);
+  let mut backtest = Backtest::builder(strat)
+    .fee(fee)
+    .slippage(slippage)
+    .bet(bet)
+    .leverage(leverage)
+    .short_selling(short_selling);
+
   backtest
     .series
     .insert(ticker.clone(), series.data().clone());
 
-  let now = Time::now();
-  let summary = backtest.backtest()?;
-  let all_buy_and_hold = backtest.buy_and_hold()?;
-  println!(
-    "backtest finished in {}s",
-    Time::now().to_unix() - now.to_unix()
-  );
-
-  if let Ok(trades) = backtest.get_trades(&ticker) {
-    if trades.len() > 1 {
-      summary.print(&ticker);
-      let x_bah = all_buy_and_hold
-        .get(&ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&ticker)?.data().clone(), x_bah],
-        "btc_1h_backtest.png",
-        &format!("{} Entropy Backtest", ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
+  backtest.execute("Entropy Backtest", "1h")?;
 
   Ok(())
 }

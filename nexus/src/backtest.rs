@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 #![allow(clippy::unnecessary_cast)]
 
-use crate::{trunc, Bet, Data, Dataset, RingBuffer, Signal, Summary, Time, Trade, TradeAction};
+use crate::{
+  trunc, Bet, Data, Dataset, Plot, RingBuffer, Signal, Summary, Time, Trade, TradeAction,
+};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -16,6 +18,7 @@ pub trait Strategy<T>: Clone {
   /// Returns a reference to the bar cache
   fn cache(&self, ticker: Option<String>) -> Option<&RingBuffer<Data>>;
   fn stop_loss_pct(&self) -> Option<f64>;
+  fn title(&self) -> String;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,6 +39,9 @@ impl Strategy<f64> for EmptyStrategy {
   }
   fn stop_loss_pct(&self) -> Option<f64> {
     None
+  }
+  fn title(&self) -> String {
+    "empty".to_string()
   }
 }
 impl EmptyStrategy {
@@ -106,6 +112,45 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       _data: PhantomData,
     }
   }
+
+  pub fn builder(strategy: S) -> Self {
+    Backtest::new(strategy, 1000.0, 0.0, 0.0, Bet::Percent(100.0), 1, false)
+  }
+
+  pub fn strategy(mut self, value: S) -> Self {
+    self.strategy = value;
+    self
+  }
+  pub fn capital(mut self, value: f64) -> Self {
+    self.capital = value;
+    self
+  }
+  pub fn fee(mut self, value: f64) -> Self {
+    self.fee = value;
+    self
+  }
+  pub fn slippage(mut self, value: f64) -> Self {
+    self.slippage = value;
+    self
+  }
+  pub fn bet(mut self, value: Bet) -> Self {
+    self.bet = value;
+    self
+  }
+  pub fn leverage(mut self, value: u8) -> Self {
+    self.leverage = value;
+    self
+  }
+  pub fn short_selling(mut self, value: bool) -> Self {
+    self.short_selling = value;
+    self
+  }
+  // let stop_loss = None;
+  // let fee = 0.0;
+  // let slippage = 0.0;
+  // let bet = Bet::Percent(100.0);
+  // let leverage = 1;
+  // let short_selling = false;
 
   pub fn get_series(&self, ticker: &str) -> anyhow::Result<&Vec<Data>> {
     self
@@ -530,5 +575,42 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       pct_per_trade,
       trades: self.trades.clone(),
     })
+  }
+
+  pub fn execute(&mut self, plot_title: &str, timeframe: &str) -> anyhow::Result<Summary> {
+    let now = Time::now();
+    let summary = self.backtest()?;
+    let all_buy_and_hold = self.buy_and_hold()?;
+
+    for (ticker, _) in self.series.iter() {
+      if let Some(trades) = self.trades.get(ticker) {
+        if trades.len() > 1 {
+          summary.print(ticker);
+          let ticker_bah = all_buy_and_hold
+            .get(ticker)
+            .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
+            .clone();
+          Plot::plot(
+            vec![summary.cum_pct(ticker)?.data().clone(), ticker_bah],
+            &format!(
+              "{}_{}_{}_backtest.png",
+              self.strategy.title(),
+              ticker.to_ascii_lowercase(),
+              timeframe
+            ),
+            &format!("{} {}", ticker, plot_title),
+            "% ROI",
+            "Unix Millis",
+          )?;
+        }
+      }
+    }
+    println!(
+      "{} {} backtest finished in {}s",
+      self.strategy.title(),
+      timeframe,
+      Time::now().to_unix() - now.to_unix()
+    );
+    Ok(summary)
   }
 }

@@ -252,6 +252,10 @@ impl Strategy<Data> for StatArbBacktest {
   fn stop_loss_pct(&self) -> Option<f64> {
     self.stop_loss_pct
   }
+
+  fn title(&self) -> String {
+    "stat_arb".to_string()
+  }
 }
 
 // ==========================================================================================
@@ -473,7 +477,13 @@ async fn btc_eth_1m_stat_arb() -> anyhow::Result<()> {
     y_ticker.clone(),
     stop_loss,
   );
-  let mut backtest = Backtest::new(strat, 1000.0, fee, slippage, bet, leverage, short_selling);
+  let mut backtest = Backtest::builder(strat)
+    .fee(fee)
+    .slippage(slippage)
+    .bet(bet)
+    .leverage(leverage)
+    .short_selling(short_selling);
+
   // Append to backtest data
   backtest
     .series
@@ -490,46 +500,7 @@ async fn btc_eth_1m_stat_arb() -> anyhow::Result<()> {
     backtest.get_series(&y_ticker)?.len()
   );
 
-  let now = Time::now();
-  let summary = backtest.backtest()?;
-  let all_buy_and_hold = backtest.buy_and_hold()?;
-  println!(
-    "backtest finished in {}s",
-    Time::now().to_unix() - now.to_unix()
-  );
-
-  if let Ok(trades) = backtest.get_trades(&x_ticker) {
-    if trades.len() > 1 {
-      summary.print(&x_ticker);
-      let x_bah = all_buy_and_hold
-        .get(&x_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "btc_1m_backtest.png",
-        &format!("{} Stat Arb Backtest", x_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
-  if let Some(trades) = backtest.trades.get(&y_ticker) {
-    if trades.len() > 1 {
-      summary.print(&y_ticker);
-      let y_bah = all_buy_and_hold
-        .get(&y_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "eth_1m_backtest.png",
-        &format!("{} Stat Arb Backtest", y_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
+  backtest.execute("Stat Arb Backtest", "1m")?;
 
   Ok(())
 }
@@ -698,7 +669,13 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
     y_ticker.clone(),
     stop_loss,
   );
-  let mut backtest = Backtest::new(strat, 1000.0, fee, slippage, bet, leverage, short_selling);
+  let mut backtest = Backtest::builder(strat)
+    .fee(fee)
+    .slippage(slippage)
+    .bet(bet)
+    .leverage(leverage)
+    .short_selling(short_selling);
+
   // Append to backtest data
   backtest
     .series
@@ -715,46 +692,7 @@ async fn btc_eth_30m_stat_arb() -> anyhow::Result<()> {
     backtest.get_series(&y_ticker)?.len()
   );
 
-  let now = Time::now();
-  let summary = backtest.backtest()?;
-  let all_buy_and_hold = backtest.buy_and_hold()?;
-  println!(
-    "backtest finished in {}s",
-    Time::now().to_unix() - now.to_unix()
-  );
-
-  if let Ok(trades) = backtest.get_trades(&x_ticker) {
-    if trades.len() > 1 {
-      summary.print(&x_ticker);
-      let x_bah = all_buy_and_hold
-        .get(&x_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "btc_30m_backtest.png",
-        &format!("{} Stat Arb Backtest", x_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
-  if let Some(trades) = backtest.trades.get(&y_ticker) {
-    if trades.len() > 1 {
-      summary.print(&y_ticker);
-      let y_bah = all_buy_and_hold
-        .get(&y_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "eth_30m_backtest.png",
-        &format!("{} Stat Arb Backtest", y_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
+  backtest.execute("Stat Arb Backtest", "30m")?;
 
   Ok(())
 }
@@ -1074,7 +1012,12 @@ async fn btc_eth_1h_stat_arb() -> anyhow::Result<()> {
     y_ticker.clone(),
     stop_loss,
   );
-  let mut backtest = Backtest::new(strat, 1000.0, fee, slippage, bet, leverage, short_selling);
+  let mut backtest = Backtest::builder(strat)
+    .fee(fee)
+    .slippage(slippage)
+    .bet(bet)
+    .leverage(leverage)
+    .short_selling(short_selling);
   // Append to backtest data
   backtest
     .series
@@ -1091,46 +1034,7 @@ async fn btc_eth_1h_stat_arb() -> anyhow::Result<()> {
     backtest.get_series(&y_ticker)?.len()
   );
 
-  let now = Time::now();
-  let summary = backtest.backtest()?;
-  let all_buy_and_hold = backtest.buy_and_hold()?;
-  println!(
-    "backtest finished in {}s",
-    Time::now().to_unix() - now.to_unix()
-  );
-
-  if let Ok(trades) = backtest.get_trades(&x_ticker) {
-    if trades.len() > 1 {
-      summary.print(&x_ticker);
-      let x_bah = all_buy_and_hold
-        .get(&x_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "btc_1h_backtest.png",
-        &format!("{} Stat Arb Backtest", x_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
-  if let Some(trades) = backtest.trades.get(&y_ticker) {
-    if trades.len() > 1 {
-      summary.print(&y_ticker);
-      let y_bah = all_buy_and_hold
-        .get(&y_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "eth_1h_backtest.png",
-        &format!("{} Stat Arb Backtest", y_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
+  backtest.execute("Stat Arb Backtest", "1h")?;
 
   Ok(())
 }
@@ -1294,7 +1198,12 @@ async fn btc_eth_1d_stat_arb() -> anyhow::Result<()> {
     y_ticker.clone(),
     stop_loss,
   );
-  let mut backtest = Backtest::new(strat, 1000.0, fee, slippage, bet, leverage, short_selling);
+  let mut backtest = Backtest::builder(strat)
+    .fee(fee)
+    .slippage(slippage)
+    .bet(bet)
+    .leverage(leverage)
+    .short_selling(short_selling);
   // Append to backtest data
   backtest
     .series
@@ -1311,46 +1220,7 @@ async fn btc_eth_1d_stat_arb() -> anyhow::Result<()> {
     backtest.get_series(&y_ticker)?.len()
   );
 
-  let now = Time::now();
-  let summary = backtest.backtest()?;
-  let all_buy_and_hold = backtest.buy_and_hold()?;
-  println!(
-    "backtest finished in {}s",
-    Time::now().to_unix() - now.to_unix()
-  );
-
-  if let Ok(trades) = backtest.get_trades(&x_ticker) {
-    if trades.len() > 1 {
-      summary.print(&x_ticker);
-      let x_bah = all_buy_and_hold
-        .get(&x_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&x_ticker)?.data().clone(), x_bah],
-        "btc_1d_backtest.png",
-        &format!("{} Stat Arb Backtest", x_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
-  if let Some(trades) = backtest.trades.get(&y_ticker) {
-    if trades.len() > 1 {
-      summary.print(&y_ticker);
-      let y_bah = all_buy_and_hold
-        .get(&y_ticker)
-        .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
-        .clone();
-      Plot::plot(
-        vec![summary.cum_pct(&y_ticker)?.data().clone(), y_bah],
-        "eth_1d_backtest.png",
-        &format!("{} Stat Arb Backtest", y_ticker),
-        "% ROI",
-        "Unix Millis",
-      )?;
-    }
-  }
+  backtest.execute("Stat Arb Backtest", "1d")?;
 
   Ok(())
 }
