@@ -231,7 +231,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   }
 
   fn enter_trade(&mut self, ticker: &str, price: f64, entry_qty: f64) -> anyhow::Result<()> {
-    let mut qty = entry_qty;
+    let qty = entry_qty;
     let available_base_amt = *self.assets.get(CASH_TICKER).unwrap() / price;
     if qty.abs() > available_base_amt {
       // qty = available_base_amt;
@@ -255,7 +255,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     exit_price: f64,
     exit_qty: f64,
   ) -> anyhow::Result<()> {
-    let mut qty = exit_qty;
+    let qty = exit_qty;
     let base_amt = self.assets.get(ticker).unwrap();
 
     if qty.abs() > *base_amt {

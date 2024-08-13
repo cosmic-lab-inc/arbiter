@@ -88,11 +88,3 @@ async fn shannons_demon() {
     trunc!(avg_buy_and_hold_profit, 3)
   );
 }
-
-#[tokio::test]
-async fn delta_neutral_demon() {
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2019, 1, 1, None, None, None);
-  let csv = PathBuf::from("eth_1min.csv");
-  let mut series = Dataset::csv_series(&csv, Some(start_time), Some(end_time), String::new())?;
-}
