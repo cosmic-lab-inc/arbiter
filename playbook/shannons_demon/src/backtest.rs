@@ -25,9 +25,7 @@ pub struct DemonBacktest {
   pub x_rebal_pct: f64,
   pub y_rebal_pct: f64,
 
-  pub equity: f64,
-  pub x_base: f64,
-  pub y_base: f64,
+  assets: Assets,
 
   pub last_rebal_price: f64,
 }
@@ -52,9 +50,7 @@ impl DemonBacktest {
       stop_loss_pct,
       x_rebal_pct,
       y_rebal_pct,
-      equity: 0.0,
-      x_base: 0.0,
-      y_base: 0.0,
+      assets: Assets::new(),
       last_rebal_price: 0.0,
     }
   }
@@ -100,15 +96,29 @@ impl DemonBacktest {
           y: zscore(&spread, self.window)?,
         };
 
-        let x_info = SignalInfo {
+        let x_enter_info = SignalInfo {
           price: x_0.y(),
           date: Time::from_unix_ms(x_0.x()),
           ticker: self.x.id.clone(),
+          quantity: self.assets.cash() / x_0.y(),
         };
-        let y_info = SignalInfo {
+        let y_enter_info = SignalInfo {
           price: y_0.y(),
           date: Time::from_unix_ms(y_0.x()),
           ticker: self.y.id.clone(),
+          quantity: self.assets.cash() / y_0.y(),
+        };
+        let x_exit_info = SignalInfo {
+          price: x_0.y(),
+          date: Time::from_unix_ms(x_0.x()),
+          ticker: self.x.id.clone(),
+          quantity: *self.assets.get(&self.x.id).unwrap_or(&0.0),
+        };
+        let y_exit_info = SignalInfo {
+          price: y_0.y(),
+          date: Time::from_unix_ms(y_0.x()),
+          ticker: self.y.id.clone(),
+          quantity: *self.assets.get(&self.y.id).unwrap_or(&0.0),
         };
 
         let mut signals = vec![];
@@ -120,20 +130,20 @@ impl DemonBacktest {
         let enter_short = enter_long;
 
         if exit_long {
-          signals.push(Signal::ExitLong(x_info.clone()));
-          signals.push(Signal::ExitLong(y_info.clone()));
+          signals.push(Signal::ExitLong(x_exit_info.clone()));
+          signals.push(Signal::ExitLong(y_exit_info.clone()));
         }
         if exit_short {
-          signals.push(Signal::ExitShort(x_info.clone()));
-          signals.push(Signal::ExitShort(y_info.clone()));
+          signals.push(Signal::ExitShort(x_exit_info.clone()));
+          signals.push(Signal::ExitShort(y_exit_info.clone()));
         }
         if enter_long {
-          signals.push(Signal::EnterLong(x_info.clone()));
-          signals.push(Signal::EnterLong(y_info.clone()));
+          signals.push(Signal::EnterLong(x_enter_info.clone()));
+          signals.push(Signal::EnterLong(y_enter_info.clone()));
         }
         if enter_short {
-          signals.push(Signal::EnterShort(x_info.clone()));
-          signals.push(Signal::EnterShort(y_info.clone()));
+          signals.push(Signal::EnterShort(x_enter_info.clone()));
+          signals.push(Signal::EnterShort(y_enter_info.clone()));
         }
 
         Ok(signals)
@@ -148,7 +158,7 @@ impl Strategy<Data> for DemonBacktest {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    equity: Option<f64>,
+    assets: &Assets,
   ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.x.id {
@@ -163,9 +173,7 @@ impl Strategy<Data> for DemonBacktest {
         });
       }
     }
-    if let Some(equity) = equity {
-      self.equity = equity;
-    }
+    self.assets = assets.clone();
     self.signal(ticker)
   }
 

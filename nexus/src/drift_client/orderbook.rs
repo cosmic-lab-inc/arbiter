@@ -126,7 +126,7 @@ impl InnerOrderbook {
 
     // sort so bids have the highest price first
     bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
-    // get bid with highest slot and return OrderInfo
+    // get bid with the highest slot and return OrderInfo
     let latest_bid = bids
       .iter()
       .max_by(|a, b| a.slot.cmp(&b.slot))

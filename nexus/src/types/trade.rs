@@ -3,6 +3,7 @@
 use crate::{trunc, Dataset, Time};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Bet {
@@ -41,6 +42,7 @@ pub struct SignalInfo {
   pub price: f64,
   pub date: Time,
   pub ticker: String,
+  pub quantity: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +85,13 @@ impl Signal {
   }
 }
 
+pub struct Signals {
+  pub enter_long: bool,
+  pub exit_long: bool,
+  pub enter_short: bool,
+  pub exit_short: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TradeAction {
   EnterLong,
@@ -99,6 +108,16 @@ impl TradeAction {
     matches!(self, TradeAction::ExitLong | TradeAction::ExitShort)
   }
 }
+impl Hash for TradeAction {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    match self {
+      TradeAction::EnterLong => "EnterLong".hash(state),
+      TradeAction::ExitLong => "ExitLong".hash(state),
+      TradeAction::EnterShort => "EnterShort".hash(state),
+      TradeAction::ExitShort => "ExitShort".hash(state),
+    }
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct Trade {
@@ -108,6 +127,25 @@ pub struct Trade {
   /// base asset quantity
   pub quantity: f64,
   pub price: f64,
+}
+impl PartialEq for Trade {
+  fn eq(&self, other: &Self) -> bool {
+    self.ticker == other.ticker
+      && self.date == other.date
+      && self.side == other.side
+      && self.quantity == other.quantity
+      && self.price == other.price
+  }
+}
+impl Eq for Trade {}
+impl Hash for Trade {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.ticker.hash(state);
+    self.date.to_unix_ms().hash(state);
+    self.side.hash(state);
+    self.quantity.to_bits().hash(state);
+    self.price.to_bits().hash(state);
+  }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -338,5 +376,49 @@ impl Summary {
       / len as f64
       * 100.0;
     trunc!(win_rate, 3)
+  }
+}
+
+pub const CASH_TICKER: &str = "USD";
+
+/// key is ticker, value is owned asset quantity
+#[derive(Debug, Clone)]
+pub struct Assets(HashMap<String, f64>);
+
+impl Assets {
+  pub fn new() -> Self {
+    Self(HashMap::new())
+  }
+
+  pub fn cash(&self) -> f64 {
+    *self.0.get(CASH_TICKER).unwrap_or(&0.0)
+  }
+
+  pub fn equity(&self, prices: HashMap<String, f64>) -> f64 {
+    let mut cum_equity = 0.0;
+    for (ticker, quantity) in self.0.iter() {
+      let price = match ticker == CASH_TICKER {
+        true => 1.0,
+        false => prices.get(ticker).unwrap_or(&0.0).clone(),
+      };
+      cum_equity += price * *quantity;
+    }
+    cum_equity
+  }
+
+  pub fn get(&self, ticker: &str) -> Option<&f64> {
+    self.0.get(ticker)
+  }
+
+  pub fn get_mut(&mut self, ticker: &str) -> Option<&mut f64> {
+    self.0.get_mut(ticker)
+  }
+
+  pub fn insert(&mut self, ticker: &str, quantity: f64) -> Option<f64> {
+    self.0.insert(ticker.to_string(), quantity)
+  }
+
+  pub fn remove(&mut self, ticker: &str) -> Option<f64> {
+    self.0.remove(ticker)
   }
 }

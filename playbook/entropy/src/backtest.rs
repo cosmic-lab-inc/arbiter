@@ -19,6 +19,7 @@ pub struct EntropyBacktest {
   pub period: usize,
   pub patterns: usize,
   pub cache: RingBuffer<Data>,
+  assets: Assets,
   pub stop_loss_pct: Option<f64>,
 }
 
@@ -34,8 +35,60 @@ impl EntropyBacktest {
       period,
       patterns,
       cache: RingBuffer::new(capacity, ticker),
+      assets: Assets::new(),
       stop_loss_pct,
     }
+  }
+
+  fn generate_signals(&self) -> anyhow::Result<Signals> {
+    let series = Dataset::new(self.cache.vec());
+
+    let last_index = series.len() - 1;
+    let mut upup = series.y().clone();
+    let mut dndn = series.y().clone();
+    let mut updn = series.y().clone();
+    let mut dnup = series.y().clone();
+    upup[1] = series.0[0].y + 1.0;
+    upup[0] = upup[1] + 1.0;
+    dndn[1] = series.0[0].y - 1.0;
+    dndn[0] = dndn[1] - 1.0;
+    updn[1] = series.0[0].y + 1.0;
+    updn[0] = updn[1] - 1.0;
+    dnup[1] = series.0[0].y - 1.0;
+    dnup[0] = dnup[1] + 1.0;
+
+    let entropy_upup = shannon_entropy(&upup, self.period + 1, self.patterns);
+    let entropy_dndn = shannon_entropy(&dndn, self.period + 1, self.patterns);
+    let entropy_updn = shannon_entropy(&updn, self.period + 1, self.patterns);
+    let entropy_dnup = shannon_entropy(&dnup, self.period + 1, self.patterns);
+
+    let _0: Data = series.0[last_index].clone();
+    let _2: Data = series.0[last_index - 2].clone();
+
+    let mut enter_long = false;
+    let mut exit_long = false;
+    let mut enter_short = false;
+    let mut exit_short = false;
+
+    let max = entropy_upup
+      .max(entropy_dndn)
+      .max(entropy_updn)
+      .max(entropy_dnup);
+
+    if max == entropy_upup && _2.y > _0.y {
+      enter_long = true;
+      exit_short = true;
+    } else if max == entropy_dndn && _2.y < _0.y {
+      enter_short = true;
+      exit_long = true;
+    }
+
+    Ok(Signals {
+      enter_long,
+      exit_long,
+      enter_short,
+      exit_short,
+    })
   }
 
   pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Signal>> {
@@ -49,69 +102,43 @@ impl EntropyBacktest {
           return Ok(vec![]);
         }
 
-        let series = Dataset::new(self.cache.vec());
-
-        let last_index = series.len() - 1;
-        let mut upup = series.y().clone();
-        let mut dndn = series.y().clone();
-        let mut updn = series.y().clone();
-        let mut dnup = series.y().clone();
-        upup[1] = series.0[0].y + 1.0;
-        upup[0] = upup[1] + 1.0;
-        dndn[1] = series.0[0].y - 1.0;
-        dndn[0] = dndn[1] - 1.0;
-        updn[1] = series.0[0].y + 1.0;
-        updn[0] = updn[1] - 1.0;
-        dnup[1] = series.0[0].y - 1.0;
-        dnup[0] = dnup[1] + 1.0;
-
-        let entropy_upup = shannon_entropy(&upup, self.period + 1, self.patterns);
-        let entropy_dndn = shannon_entropy(&dndn, self.period + 1, self.patterns);
-        let entropy_updn = shannon_entropy(&updn, self.period + 1, self.patterns);
-        let entropy_dnup = shannon_entropy(&dnup, self.period + 1, self.patterns);
-
-        let _0: Data = series.0[last_index].clone();
-        let _2: Data = series.0[last_index - 2].clone();
-
-        let mut enter_long = false;
-        let mut exit_long = false;
-        let mut enter_short = false;
-        let mut exit_short = false;
-
-        let max = entropy_upup
-          .max(entropy_dndn)
-          .max(entropy_updn)
-          .max(entropy_dnup);
-
-        if max == entropy_upup && _2.y > _0.y {
-          enter_long = true;
-          exit_short = true;
-        } else if max == entropy_dndn && _2.y < _0.y {
-          enter_short = true;
-          exit_long = true;
-        }
+        let Signals {
+          enter_long,
+          exit_long,
+          enter_short,
+          exit_short,
+        } = self.generate_signals()?;
 
         let latest_data = self
           .cache
           .front()
           .ok_or(anyhow::anyhow!("No data in cache"))?;
-        let info = SignalInfo {
+
+        let enter_info = SignalInfo {
           price: latest_data.y(),
           date: Time::from_unix_ms(latest_data.x()),
           ticker: ticker.clone(),
+          quantity: self.assets.cash() / latest_data.y(),
         };
+        let exit_info = SignalInfo {
+          price: latest_data.y(),
+          date: Time::from_unix_ms(latest_data.x()),
+          ticker: ticker.clone(),
+          quantity: *self.assets.get(&ticker).unwrap_or(&0.0),
+        };
+
         let mut signals = vec![];
         if exit_short {
-          signals.push(Signal::ExitShort(info.clone()));
+          signals.push(Signal::ExitShort(exit_info.clone()));
         }
         if exit_long {
-          signals.push(Signal::ExitLong(info.clone()));
+          signals.push(Signal::ExitLong(exit_info.clone()));
         }
         if enter_short {
-          signals.push(Signal::EnterShort(info.clone()));
+          signals.push(Signal::EnterShort(enter_info.clone()));
         }
         if enter_long {
-          signals.push(Signal::EnterLong(info));
+          signals.push(Signal::EnterLong(enter_info));
         }
         Ok(signals)
       }
@@ -120,12 +147,11 @@ impl EntropyBacktest {
 }
 
 impl Strategy<Data> for EntropyBacktest {
-  /// Appends candle to candle cache and returns a signal (long, short, or do nothing).
   fn process_data(
     &mut self,
     data: Data,
     ticker: Option<String>,
-    _equity: Option<f64>,
+    assets: &Assets,
   ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {
@@ -135,7 +161,7 @@ impl Strategy<Data> for EntropyBacktest {
         });
       }
     }
-
+    self.assets = assets.clone();
     self.signal(ticker)
   }
 
@@ -526,6 +552,8 @@ fn entropy_backtest() -> anyhow::Result<()> {
   let period = 100;
   let capacity = period + 1;
   let patterns = 3;
+
+  // todo: impl rebalancing instead of 100% capital movement per signal
 
   let strat = EntropyBacktest::new(capacity, period, patterns, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)

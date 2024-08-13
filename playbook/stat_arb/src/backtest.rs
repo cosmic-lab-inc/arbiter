@@ -26,6 +26,7 @@ pub struct StatArbBacktest {
   pub y: RingBuffer<Data>,
   pub zscore_threshold: f64,
   pub stop_loss_pct: Option<f64>,
+  assets: Assets,
 }
 
 impl StatArbBacktest {
@@ -44,6 +45,7 @@ impl StatArbBacktest {
       y: RingBuffer::new(capacity, y_ticker),
       zscore_threshold,
       stop_loss_pct,
+      assets: Assets::new(),
     }
   }
 
@@ -121,11 +123,13 @@ impl StatArbBacktest {
           price: x_0.y(),
           date: Time::from_unix_ms(x_0.x()),
           ticker: self.x.id.clone(),
+          quantity: *self.assets.get(&self.x.id).unwrap_or(&0.0),
         };
         let y_info = SignalInfo {
           price: y_0.y(),
           date: Time::from_unix_ms(y_0.x()),
           ticker: self.y.id.clone(),
+          quantity: *self.assets.get(&self.y.id).unwrap_or(&0.0),
         };
 
         let mut signals = vec![];
@@ -216,7 +220,7 @@ impl Strategy<Data> for StatArbBacktest {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    _equity: Option<f64>,
+    assets: &Assets,
   ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.x.id {
@@ -231,7 +235,7 @@ impl Strategy<Data> for StatArbBacktest {
         });
       }
     }
-
+    self.assets = assets.clone();
     self.signal(ticker)
   }
 
