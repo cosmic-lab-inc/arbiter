@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 
-use crate::math::hurst;
 use crate::trade::{Bet, Signal, SignalInfo};
 use crate::{Backtest, Dataset, Strategy};
 use log::warn;
@@ -207,7 +206,7 @@ impl Strategy<Data> for EntropyBacktest {
 /// Reference: https://medium.com/@kt.26karanthakur/stock-market-signal-analysis-using-fast-fourier-transform-e3bdde7bcee6
 /// Research: https://www.math.utah.edu/~gustafso/s2017/2270/projects-2016/williamsBarrett/williamsBarrett-Fast-Fourier-Transform-Predicting-Financial-Securities-Prices.pdf
 #[test]
-fn fft() -> anyhow::Result<()> {
+fn test_fft() -> anyhow::Result<()> {
   use ndarray::Array1;
   use rustfft::algorithm::Radix4;
   use rustfft::num_complex::Complex;
@@ -221,120 +220,28 @@ fn fft() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  // Assuming df['Close'] is a Vec<f64>
-  let close_prices: Vec<f64> = btc_series.y();
-
-  let fft_len = close_prices.len();
-  let mut planner = FftPlanner::new();
-  let fft = planner.plan_fft_forward(fft_len);
-
-  //
-  // Convert to FFT frequencies
-  //
-
-  let mut fft_input: Vec<Complex<f64>> = close_prices
-    .into_iter()
-    .map(|x| Complex::new(x, 0.0))
-    .collect();
-  // Perform FFT
-  fft.process(&mut fft_input);
-
-  // Calculate FFT frequencies
-  let sample_spacing = 1.0; // Assuming daily data, d=1
-  let frequencies: Vec<f64> = fft_frequencies(fft_len, sample_spacing);
-  // Calculate magnitude
-  let magnitude: Vec<f64> = fft_input.iter().map(|x| x.norm()).collect();
-  // Calculate periods
-  let periods: Array1<f64> = 1.0 / Array1::from(frequencies.clone());
-
-  //
-  // Reconstruct time series from FFT frequencies (inverse FFT)
-  //
-
-  let mut ifft_input = fft_input.clone();
-  let ifft = planner.plan_fft_inverse(fft_len);
-  ifft.process(&mut ifft_input);
-
-  // The input vector now contains the IFFT result, which should be close to the original time series
-  let recovered: Vec<f64> = ifft_input.iter().map(|x| x.re).collect();
-
-  // Now you can plot the recovered data
-  let recovered_data: Vec<Data> = recovered
-    .iter()
-    .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
-    .collect();
-
-  //
-  // Reconstruct time series from dominant (top 25) FFT frequencies
-  //
-
-  let top_cutoff = 25;
-
-  let mut top_ifft_input = fft_input.clone();
-  let top_ifft = planner.plan_fft_inverse(fft_len);
-
-  struct Freq {
-    mag: f64,
-    period: f64,
-  }
-
-  let mut sorted_freq: Vec<Freq> = periods
-    .iter()
-    .zip(magnitude.iter())
-    .map(|(&x, &y)| Freq { mag: y, period: x }) // Swap to sort by magnitude
-    .collect();
-
-  // Sort by magnitude in descending order and take the top 25
-  sorted_freq.sort_by(|a, b| b.period.partial_cmp(&a.period).unwrap_or(Ordering::Equal));
-
-  let dominant_periods: Vec<f64> = sorted_freq
-    .into_iter()
-    .map(|freq| freq.period)
-    .take(top_cutoff)
-    .collect();
-
-  // Find the minimum period of the top 25
-  let min_period = *dominant_periods
-    .iter()
-    .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
-    .unwrap();
-  println!("min period of top {}: {}", top_cutoff, min_period);
-
-  // Set the values to zero where the absolute value of the frequencies is greater than the inverse of the minimum of the top periods
-  for (i, &freq) in frequencies.iter().enumerate() {
-    if freq.abs() > 1.0 / min_period {
-      top_ifft_input[i] = Complex::zero();
-    }
-  }
-
-  top_ifft.process(&mut top_ifft_input);
-
-  // The vector now contains the IFFT result of the top 25 (dominant) periods
-  let top_recovered: Vec<f64> = top_ifft_input.iter().map(|x| x.re).collect();
-  let top_recovered_data: Vec<Data> = top_recovered
-    .iter()
-    .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
-    .collect();
-
   let period = 100;
   let patterns = 3;
+  let dominant_freq_cutoff = 100;
 
-  let recovered_dataset = Dataset::new(recovered_data.clone()).y();
-  let original_entropy = shannon_entropy(recovered_dataset.as_slice(), period + 1, patterns);
+  let FFT { original, filtered } = fft(btc_series, dominant_freq_cutoff)?;
+
+  let original_entropy = shannon_entropy(original.y().as_slice(), period + 1, patterns);
+  let filtered_entropy = shannon_entropy(filtered.y().as_slice(), period + 1, patterns);
+
   println!(
     "original entropy: {}/{}",
     trunc!(original_entropy, 3),
     patterns
   );
-
-  let top_recovered_dataset = Dataset::new(top_recovered_data.clone()).y();
-  let model_entropy = shannon_entropy(top_recovered_dataset.as_slice(), period + 1, patterns);
-  println!("model entropy: {}/{}", trunc!(model_entropy, 3), patterns);
+  println!(
+    "filtered entropy: {}/{}",
+    trunc!(filtered_entropy, 3),
+    patterns
+  );
 
   Plot::plot_without_legend(
-    vec![recovered_data, top_recovered_data],
+    vec![original.0, filtered.0],
     "btc_ifft.png",
     &format!("{} Inverse FFT", ticker),
     "Price",
@@ -802,7 +709,7 @@ fn entropy_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.25;
+  let fee = 0.05;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);

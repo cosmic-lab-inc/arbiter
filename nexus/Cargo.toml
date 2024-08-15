@@ -52,3 +52,5 @@ num-traits = "0.2"
 time = { workspace = true }
 jit-proxy-cpi = { path = "../programs/jit_proxy" }
 linreg = "0.2.0"
+rustfft = { workspace = true }
+ndarray = { workspace = true }

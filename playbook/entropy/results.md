@@ -23,7 +23,10 @@ period: 760, roi: 100.89%, sharpe: 1.092, dd: -41.107%
 ### Optimized With 0.05% Fee (DEX)
 
 **Top by ROI**:
+period: 104, roi: 4348.9%, sharpe: 0.872, dd: -57.581%
 
 **Top by Sharpe**:
+period: 922, roi: 182.89%, sharpe: 2.676, dd: -54.772%
 
 **Top by Drawdown**:
+period: 734, roi: 438.72%, sharpe: 1.34, dd: -33.053%
