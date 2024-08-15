@@ -42,59 +42,24 @@ impl EntropyBacktest {
 
   fn generate_signals(&self) -> anyhow::Result<Signals> {
     let series = Dataset::new(self.cache.vec());
-
-    let mut b11 = series.y().clone();
-    let mut b00 = series.y().clone();
-    let mut b10 = series.y().clone();
-    let mut b01 = series.y().clone();
-
-    b11[1] = series.0[0].y + 1.0;
-    b11[0] = b11[1] + 1.0;
-
-    b00[1] = series.0[0].y - 1.0;
-    b00[0] = b00[1] - 1.0;
-
-    b10[1] = series.0[0].y + 1.0;
-    b10[0] = b10[1] - 1.0;
-
-    b01[1] = series.0[0].y - 1.0;
-    b01[0] = b01[1] + 1.0;
-
-    let entropy_b11 = shannon_entropy(&b11, self.period + 1, self.patterns);
-    let entropy_b00 = shannon_entropy(&b00, self.period + 1, self.patterns);
-    let entropy_b10 = shannon_entropy(&b10, self.period + 1, self.patterns);
-    let entropy_b01 = shannon_entropy(&b01, self.period + 1, self.patterns);
-
-    let last_index = series.len() - 1;
-    let p0 = &series.0[last_index];
-    let p2 = &series.0[last_index - 2];
+    let signal = shannon_entropy_signal(series, self.period, self.patterns)?;
 
     let mut enter_long = false;
     let mut exit_long = false;
     let mut enter_short = false;
     let mut exit_short = false;
 
-    let max = entropy_b11
-      .max(entropy_b00)
-      .max(entropy_b10)
-      .max(entropy_b01);
-
-    // original
-    if max == entropy_b11 && p2.y > p0.y {
-      enter_long = true;
-      exit_short = true;
-    } else if max == entropy_b00 && p2.y < p0.y {
-      enter_short = true;
-      exit_long = true;
+    match signal {
+      EntropySignal::Up => {
+        enter_long = true;
+        exit_short = true;
+      }
+      EntropySignal::Down => {
+        enter_short = true;
+        exit_long = true;
+      }
+      _ => {}
     }
-
-    // if max == entropy_b11 && p2.y > p0.y {
-    //   enter_short = true;
-    //   exit_long = true;
-    // } else if max == entropy_b00 && p2.y < p0.y {
-    //   enter_long = true;
-    //   exit_short = true;
-    // }
 
     Ok(Signals {
       enter_long,
