@@ -49,13 +49,13 @@ use yellowstone_grpc_proto::prelude::{
   SubscribeRequestFilterTransactions,
 };
 
-use crate::config::DemonConfig;
+use crate::config::HalfLifeConfig;
 use crate::data::{Data, Dataset};
 use nexus::drift_client::*;
 use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
-pub struct Demon {
+pub struct HalfLife {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -72,9 +72,9 @@ pub struct Demon {
   cache_depth: usize,
 }
 
-impl Demon {
+impl HalfLife {
   pub async fn new(sub_account_id: u16, market: MarketId) -> anyhow::Result<Self> {
-    let DemonConfig {
+    let HalfLifeConfig {
       read_only,
       retry_until_confirmed,
       signer,
@@ -88,10 +88,10 @@ impl Demon {
       zscore_window,
       cache_depth,
       ..
-    } = DemonConfig::read()?;
+    } = HalfLifeConfig::read()?;
 
     let signer = Arc::new(signer);
-    info!("Demon using wallet: {}", signer.pubkey());
+    info!("HalfLife using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),

@@ -7,10 +7,10 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 #[derive(Debug, Deserialize)]
-pub struct DemonConfig {
+pub struct HalfLifeConfig {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "DemonConfig::deserialize_keypair")]
+  #[serde(deserialize_with = "HalfLifeConfig::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
@@ -36,7 +36,7 @@ struct YamlConfig {
   pub cache_depth: usize,
 }
 
-impl DemonConfig {
+impl HalfLifeConfig {
   fn deserialize_keypair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Keypair, D::Error> {
     let kp_bytes: Vec<u8> = match Vec::deserialize(deserializer) {
       Ok(res) => res,

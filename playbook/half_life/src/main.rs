@@ -33,9 +33,8 @@ async fn main() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   init_logger();
 
-  // SOL-PERP
   let market = MarketId::SOL_PERP;
-  let mut client = Demon::new(0, market).await?;
+  let mut client = HalfLife::new(0, market).await?;
   client.start().await?;
 
   Ok(())

@@ -4,7 +4,7 @@ use log::warn;
 /// Hurst <0.5: mean-reverting
 /// Hurst =0.5: random walk
 /// Hurst >0.5: trending
-pub fn hurst(x: Vec<f64>) -> f64 {
+pub fn hurst(x: &[f64]) -> f64 {
   let mut cap_x: Vec<f64> = vec![x.len() as f64];
   let mut cap_y: Vec<f64> = vec![rscalc(&x)];
   let mut n: Vec<u64> = vec![0, x.len() as u64 / 2, x.len() as u64];
@@ -124,9 +124,7 @@ pub fn shannon_entropy(data: &[f64], length: usize, pattern_size: usize) -> f64 
     }
     s[i] = c as u8;
   }
-  inner_shannon_entropy(&s, size)
-}
-fn inner_shannon_entropy(s: &[u8], length: usize) -> f64 {
+
   let mut hist = [0f64; 256];
   let step = 1.0 / length as f64;
   for &i in s.iter().take(length) {
@@ -139,4 +137,17 @@ fn inner_shannon_entropy(s: &[u8], length: usize) -> f64 {
     }
   }
   h
+}
+
+pub fn fft_frequencies(n: usize, d: f64) -> Vec<f64> {
+  let val = 1.0 / (n as f64 * d);
+  let mut result = Vec::with_capacity(n);
+  let m = if n % 2 == 0 { n / 2 } else { n / 2 + 1 };
+  for i in 0..m {
+    result.push(i as f64 * val);
+  }
+  for i in -(n as i64 / 2)..0 {
+    result.push(i as f64 * val);
+  }
+  result
 }

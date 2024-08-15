@@ -440,11 +440,11 @@ impl StatArb {
     let y = y_series.clone();
     let spread = match spread_dynamic(&x.y(), &y.y()) {
       Err(e) => {
-        if e.to_string().contains("The variance of x values is zero") {
+        return if e.to_string().contains("The variance of x values is zero") {
           warn!("The variance of x values is zero");
-          return Ok(vec![]);
+          Ok(vec![])
         } else {
-          return Err(anyhow::anyhow!("Error calculating spread: {}", e));
+          Err(anyhow::anyhow!("Error calculating spread: {}", e))
         }
       }
       Ok(res) => res,

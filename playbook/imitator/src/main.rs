@@ -278,7 +278,7 @@ mod tests {
     let data = DriftUtils::drift_historical_pnl(&imitator.client(), user, 10).await?;
 
     if data.dataset().len() > 1 {
-      Plot::plot(
+      Plot::plot_without_legend(
         vec![data.dataset()],
         &format!("{}/my_cum_pnl.png", prefix),
         &format!("{} Performance", user),
@@ -329,7 +329,7 @@ mod tests {
         // let json = serde_json::to_string(data.dataset().as_slice())?;
         // std::fs::write(&format!("{}/data/{}.json", prefix, user), json)?;
 
-        Plot::plot(
+        Plot::plot_without_legend(
           vec![data.dataset()],
           &format!("{}/images/{}_cum_pnl.png", prefix, user),
           &format!("{} Performance", user),
@@ -442,7 +442,7 @@ mod tests {
 
     let prefix = env!("CARGO_MANIFEST_DIR").to_string();
     if data.dataset().len() > 1 {
-      Plot::plot(
+      Plot::plot_without_legend(
         vec![data.dataset()],
         &format!("{}/{}_pnl.png", prefix, user),
         &format!("{} Performance", user),

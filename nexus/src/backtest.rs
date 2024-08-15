@@ -2,8 +2,8 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::{
-  trunc, Assets, Bet, Data, Dataset, Plot, RingBuffer, Signal, Summary, Time, Trade, TradeAction,
-  CASH_TICKER,
+  trunc, Asset, Assets, Bet, Data, Dataset, Plot, RingBuffer, Series, Signal, Summary, Time, Trade,
+  TradeAction, CASH_TICKER,
 };
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
@@ -92,7 +92,7 @@ impl Default for Backtest<f64, EmptyStrategy> {
       series: HashMap::new(),
       trades: HashMap::new(),
       signals: HashMap::new(),
-      assets: Assets::new(),
+      assets: Assets::default(),
       quote: HashMap::new(),
       cum_pct: HashMap::new(),
       cum_quote: HashMap::new(),
@@ -123,7 +123,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       series: HashMap::new(),
       trades: HashMap::new(),
       signals: HashMap::new(),
-      assets: Assets::new(),
+      assets: Assets::default(),
       quote: HashMap::new(),
       cum_pct: HashMap::new(),
       cum_quote: HashMap::new(),
@@ -208,9 +208,34 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     self.signals.clear();
   }
 
-  pub fn buy_and_hold(&mut self) -> anyhow::Result<HashMap<String, Vec<Data>>> {
+  pub fn buy_and_hold_dollar_roi(&mut self) -> anyhow::Result<HashMap<String, Vec<Data>>> {
     let mut all_data = HashMap::new();
     let series = self.series.clone();
+
+    for (ticker, series) in series {
+      let first = series.first().unwrap();
+      let mut data = vec![];
+
+      for series in series.windows(2) {
+        let entry = &series[0];
+        let exit = &series[1];
+
+        let pct_pnl = ((exit.y - first.y) / first.y) * self.capital;
+
+        data.push(Data {
+          x: entry.x,
+          y: pct_pnl,
+        });
+      }
+      all_data.insert(ticker, data);
+    }
+    Ok(all_data)
+  }
+
+  pub fn buy_and_hold_pct_roi(&mut self) -> anyhow::Result<HashMap<String, Vec<Data>>> {
+    let mut all_data = HashMap::new();
+    let series = self.series.clone();
+
     for (ticker, series) in series {
       let first = series.first().unwrap();
       let mut data = vec![];
@@ -232,7 +257,8 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
 
   fn enter_trade(&mut self, ticker: &str, price: f64, entry_qty: f64) -> anyhow::Result<()> {
     let qty = entry_qty;
-    let available_base_amt = *self.assets.get(CASH_TICKER).unwrap() / price;
+
+    let available_base_amt = self.assets.get_or_err(CASH_TICKER)?.quantity / price;
     if qty.abs() > available_base_amt {
       // qty = available_base_amt;
       return Err(anyhow::anyhow!(
@@ -243,8 +269,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       ));
     }
 
-    *self.assets.get_mut(ticker).unwrap() += qty.abs();
-    *self.assets.get_mut(CASH_TICKER).unwrap() -= qty.abs() * price;
+    {
+      let asset = self.assets.get_mut_or_err(ticker)?;
+      asset.quantity += qty.abs();
+    }
+    {
+      let cash = self.assets.get_mut_or_err(CASH_TICKER)?;
+      cash.quantity -= qty.abs() * price;
+    }
     Ok(())
   }
 
@@ -256,38 +288,36 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     exit_qty: f64,
   ) -> anyhow::Result<()> {
     let qty = exit_qty;
-    let base_amt = self.assets.get(ticker).unwrap();
+    let base_amt = self.assets.get_or_err(ticker)?.quantity;
 
-    if qty.abs() > *base_amt {
+    if qty.abs() > base_amt {
       // qty = *base_amt;
       return Err(anyhow::anyhow!(
         "Insufficient funds to exit {} trade, has: {}, needs: {}",
         ticker,
-        *base_amt,
+        base_amt,
         exit_qty
       ));
     }
 
-    let equity_before = self.assets.equity(HashMap::from([
-      (CASH_TICKER.to_string(), 1.0),
-      (ticker.to_string(), exit_price),
-    ]));
+    let equity_before = self.assets.equity();
 
-    *self.assets.get_mut(ticker).unwrap() -= qty.abs();
-    let quote_fee = qty.abs() * exit_price * (self.fee / 100.0);
+    {
+      let asset = self.assets.get_mut_or_err(ticker)?;
+      asset.quantity -= qty.abs();
+    }
+    {
+      let cash = self.assets.get_mut_or_err(CASH_TICKER)?;
+      let quote_fee = qty.abs() * exit_price * (self.fee / 100.0);
+      cash.quantity += qty.abs() * exit_price - quote_fee;
+    }
 
-    *self.assets.get_mut(CASH_TICKER).unwrap() += qty.abs() * exit_price - quote_fee;
-
-    let equity_after = self.assets.equity(HashMap::from([
-      (CASH_TICKER.to_string(), 1.0),
-      (ticker.to_string(), exit_price),
-    ]));
-
+    let equity_after = self.assets.equity();
     let pct_pnl = (equity_after - equity_before) / equity_before * 100.0;
 
     self.cum_quote.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
-      y: trunc!(equity_after, 2),
+      y: trunc!(equity_after - self.capital, 2),
     });
     self.cum_pct.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
@@ -306,17 +336,28 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     if let Some((_, first_series)) = series.iter().next() {
       let length = first_series.len();
 
-      self
-        .assets
-        .insert(CASH_TICKER, self.capital * self.leverage as f64);
+      self.assets.insert(
+        CASH_TICKER,
+        Asset {
+          quantity: self.capital * self.leverage as f64,
+          price: 1.0,
+        },
+      );
       let mut active_trades: HashMap<String, HashSet<Trade>> = HashMap::new();
-      for (ticker, _) in series.iter() {
+      for (ticker, series) in series.iter() {
+        let initial_price = series.first().unwrap().y;
         // populate active trades with None values for each ticker so getter doesn't panic
         active_trades.insert(ticker.clone(), HashSet::new());
         // populate with empty vec for each ticker so getter doesn't panic
         self.trades.insert(ticker.clone(), vec![]);
         // populate all tickers with starting values
-        self.assets.insert(ticker, 0.0);
+        self.assets.insert(
+          ticker,
+          Asset {
+            quantity: 0.0,
+            price: initial_price,
+          },
+        );
         self.quote.insert(ticker.clone(), 0.0);
         self.cum_pct.insert(ticker.clone(), vec![]);
         self.cum_quote.insert(ticker.clone(), vec![]);
@@ -331,12 +372,10 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
           .iter()
           .map(|(ticker, series)| (ticker.clone(), series.clone()))
           .collect::<Vec<(String, Vec<Data>)>>();
-        let first = entries.first().unwrap();
-        if i == 0 {
-          println!("first ticker: {}", first.0);
-        }
+
         for (ticker, series) in entries.iter() {
           let data = &series[i];
+          self.assets.get_mut_or_err(ticker)?.price = data.y;
 
           // check if stop loss is hit
           if let Some(stop_loss_pct) = self.strategy.stop_loss_pct() {
@@ -529,18 +568,28 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   pub fn execute(&mut self, plot_title: &str, timeframe: &str) -> anyhow::Result<Summary> {
     let now = Time::now();
     let summary = self.backtest()?;
-    let all_buy_and_hold = self.buy_and_hold()?;
+    let pct_bah = self.buy_and_hold_pct_roi()?;
 
     for (ticker, _) in self.series.iter() {
       if let Some(trades) = self.trades.get(ticker) {
         if trades.len() > 1 {
           summary.print(ticker);
-          let ticker_bah = all_buy_and_hold
+
+          let ticker_bah = pct_bah
             .get(ticker)
             .ok_or(anyhow::anyhow!("Buy and hold not found for ticker"))?
             .clone();
           Plot::plot(
-            vec![summary.cum_pct(ticker)?.data().clone(), ticker_bah],
+            vec![
+              Series {
+                data: summary.cum_pct(ticker)?.data().clone(),
+                label: "Strategy".to_string(),
+              },
+              Series {
+                data: ticker_bah,
+                label: "Buy & Hold".to_string(),
+              },
+            ],
             &format!(
               "{}_{}_{}_backtest.png",
               self.strategy.title(),

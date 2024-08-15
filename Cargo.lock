@@ -2377,6 +2377,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "half_life"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang 0.29.0",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "borsh 0.10.3",
+ "bytemuck",
+ "chrono",
+ "crossbeam",
+ "csv",
+ "derive_more",
+ "dotenv",
+ "futures",
+ "heck 0.5.0",
+ "lazy_static",
+ "log",
+ "nexus",
+ "rand 0.8.5",
+ "rayon",
+ "reqwest 0.12.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "simplelog",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "spl-associated-token-account",
+ "spl-token",
+ "statrs",
+ "thiserror",
+ "tokio",
+ "tradestats",
+ "uuid",
+ "yellowstone-grpc-client",
+ "yellowstone-grpc-proto",
+]
+
+[[package]]
 name = "hash32"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4884,48 +4926,6 @@ checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest 0.10.7",
  "keccak",
-]
-
-[[package]]
-name = "shannons_demon"
-version = "0.1.0"
-dependencies = [
- "anchor-lang 0.29.0",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "borsh 0.10.3",
- "bytemuck",
- "chrono",
- "crossbeam",
- "csv",
- "derive_more",
- "dotenv",
- "futures",
- "heck 0.5.0",
- "lazy_static",
- "log",
- "nexus",
- "rand 0.8.5",
- "rayon",
- "reqwest 0.12.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "simplelog",
- "solana-account-decoder",
- "solana-client",
- "solana-sdk",
- "solana-transaction-status",
- "spl-associated-token-account",
- "spl-token",
- "statrs",
- "thiserror",
- "tokio",
- "tradestats",
- "uuid",
- "yellowstone-grpc-client",
- "yellowstone-grpc-proto",
 ]
 
 [[package]]

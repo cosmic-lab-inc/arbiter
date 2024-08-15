@@ -3,10 +3,164 @@ use plotters::prelude::*;
 use plotters::style::full_palette::*;
 use plotters::style::{BLACK, WHITE};
 
+pub struct Series {
+  pub data: Vec<Data>,
+  pub label: String,
+}
+
 pub struct Plot;
 
 impl Plot {
   pub fn plot(
+    series: Vec<Series>,
+    out_file: &str,
+    title: &str,
+    y_label: &str,
+    x_label: &str,
+  ) -> anyhow::Result<()> {
+    let mut min_x = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut min_y = f64::MAX;
+    let mut max_y = f64::MIN;
+    for datum in series.iter().flat_map(|d| &d.data) {
+      if datum.x < min_x {
+        min_x = datum.x;
+      }
+      if datum.x > max_x {
+        max_x = datum.x;
+      }
+      if datum.y < min_y {
+        min_y = datum.y;
+      }
+      if datum.y > max_y {
+        max_y = datum.y;
+      }
+    }
+
+    let offset = 100.0;
+    let to_log = |y: f64| (y + offset).log10();
+    let from_log = |y: f64| 10f64.powf(y) - offset;
+
+    let root = BitMapBackend::new(out_file, (2048, 1024)).into_drawing_area();
+    root
+      .fill(&WHITE)
+      .map_err(|e| anyhow::anyhow!("Failed to fill drawing area with white: {}", e))?;
+    let mut chart = ChartBuilder::on(&root)
+      .set_all_label_area_size(150)
+      .margin(20)
+      .caption(title, ("sans-serif", 40.0).into_font())
+      .build_cartesian_2d(min_x..max_x, to_log(min_y)..to_log(max_y))
+      .map_err(|e| anyhow::anyhow!("Failed to build cartesian 2d: {}", e))?;
+
+    chart
+      .configure_mesh()
+      .light_line_style(WHITE)
+      .label_style(("sans-serif", 30, &BLACK).into_text_style(&root))
+      .x_desc(x_label)
+      .y_desc(y_label)
+      .y_labels(10)
+      .y_label_formatter(&|y| format!("{:.2}", from_log(*y)))
+      .draw()
+      .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
+
+    for (i, s) in series.iter().enumerate() {
+      if i == 0 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              ShapeStyle {
+                color: RGBAColor::from(BLUEGREY_700),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
+          .label(s.label.as_str())
+          .legend(|(x, y)| {
+            PathElement::new(
+              [(x + 10, y + 1), (x, y)],
+              ShapeStyle {
+                color: RGBAColor::from(BLUEGREY_700),
+                filled: true,
+                stroke_width: 10,
+              },
+            )
+          });
+      } else if i == 1 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              ShapeStyle {
+                color: RGBAColor::from(RED_A400),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
+          .label(s.label.as_str())
+          .legend(|(x, y)| {
+            PathElement::new(
+              [(x + 10, y + 1), (x, y)],
+              ShapeStyle {
+                color: RGBAColor::from(RED_A400),
+                filled: true,
+                stroke_width: 10,
+              },
+            )
+          });
+      } else {
+        chart
+          .draw_series(
+            LineSeries::new(
+              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              ShapeStyle {
+                color: RGBAColor::from(LIME_800),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
+          .label(s.label.as_str())
+          .legend(|(x, y)| {
+            PathElement::new(
+              [(x + 10, y + 1), (x, y)],
+              ShapeStyle {
+                color: RGBAColor::from(LIME_800),
+                filled: true,
+                stroke_width: 10,
+              },
+            )
+          });
+      }
+    }
+
+    chart
+      .configure_series_labels()
+      .position(SeriesLabelPosition::UpperLeft)
+      .margin(20)
+      .legend_area_size(30)
+      .border_style(BLACK)
+      .background_style(BLACK.mix(0.1))
+      .label_font(("sans-serif", 24))
+      .draw()
+      .map_err(|e| anyhow::anyhow!("Failed to configure series labels: {}", e))?;
+
+    root
+      .present()
+      .map_err(|e| anyhow::anyhow!("Failed to present root: {}", e))?;
+
+    Ok(())
+  }
+
+  pub fn plot_without_legend(
     series: Vec<Vec<Data>>,
     out_file: &str,
     title: &str,
@@ -56,21 +210,50 @@ impl Plot {
       .draw()
       .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
 
-    for data in series {
-      let color = Self::random_color();
-      chart
-        .draw_series(
-          LineSeries::new(
-            data.iter().map(|data| (data.x, data.y)),
-            ShapeStyle {
-              color,
-              filled: true,
-              stroke_width: 2,
-            },
+    for (i, data) in series.iter().enumerate() {
+      if i == 0 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              data.iter().map(|data| (data.x, data.y)),
+              ShapeStyle {
+                color: RGBAColor::from(BLUEGREY_700),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
           )
-          .point_size(3),
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      } else if i == 1 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              data.iter().map(|data| (data.x, data.y)),
+              ShapeStyle {
+                color: RGBAColor::from(RED_A400),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      } else {
+        chart
+          .draw_series(
+            LineSeries::new(
+              data.iter().map(|data| (data.x, data.y)),
+              ShapeStyle {
+                color: RGBAColor::from(LIME_800),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      }
     }
 
     root
@@ -80,7 +263,15 @@ impl Plot {
     Ok(())
   }
 
-  pub fn random_color() -> RGBAColor {
+  pub fn red() -> RGBColor {
+    RED_A400
+  }
+
+  pub fn blue() -> RGBColor {
+    BLUEGREY_700
+  }
+
+  pub fn random_color() -> RGBColor {
     let colors = [
       RED_A400,
       BLUEGREY_700,
@@ -114,7 +305,6 @@ impl Plot {
       RED_800,
       RED_200,
     ];
-    // get random color
-    RGBAColor::from(colors[rand::random::<usize>() % colors.len()])
+    colors[rand::random::<usize>() % colors.len()]
   }
 }

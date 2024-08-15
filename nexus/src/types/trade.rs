@@ -176,6 +176,10 @@ impl Summary {
     println!("==== {} Backtest Summary ====", ticker);
     println!("Return: {}%", self.pct_roi(ticker));
     println!("Return: ${}", self.quote_roi(ticker));
+    println!(
+      "Sharpe Ratio: {}",
+      self.sharpe_ratio(ticker, Timeframe::OneDay)
+    );
     println!("Total Trades: {}", self.total_trades(ticker));
     println!("Win Rate: {}%", self.win_rate(ticker));
     println!("Avg Trade Size: ${}", self.avg_trade_size(ticker).unwrap());
@@ -253,6 +257,28 @@ impl Summary {
   pub fn pct_roi(&self, ticker: &str) -> f64 {
     let ending_pct_roi = self.cum_pct.get(ticker).unwrap().data().last().unwrap().y;
     trunc!(ending_pct_roi, 3)
+  }
+
+  pub fn sharpe_ratio(&self, ticker: &str, timeframe: Timeframe) -> f64 {
+    let pct = self
+      .cum_pct
+      .get(ticker)
+      .unwrap()
+      .data()
+      .iter()
+      .map(|d| d.y)
+      .collect::<Vec<f64>>();
+    let avg = pct.iter().sum::<f64>() / pct.len() as f64;
+    let variance = pct.iter().map(|p| (p - avg).powi(2)).sum::<f64>() / pct.len() as f64;
+    let std_dev = variance.sqrt();
+
+    let sharpe = match timeframe {
+      Timeframe::OneMinute => avg / std_dev,
+      Timeframe::OneHour => avg / std_dev,
+      Timeframe::OneDay => avg / std_dev,
+    };
+    // let sharpe = (avg / std_dev);// * (252.0f64.sqrt());
+    trunc!(sharpe, 3)
   }
 
   pub fn max_drawdown(&self, ticker: &str) -> f64 {
@@ -381,44 +407,83 @@ impl Summary {
 
 pub const CASH_TICKER: &str = "USD";
 
+#[derive(Debug, Clone, Default)]
+pub struct Asset {
+  pub quantity: f64,
+  pub price: f64,
+}
+
 /// key is ticker, value is owned asset quantity
-#[derive(Debug, Clone)]
-pub struct Assets(HashMap<String, f64>);
+#[derive(Debug, Clone, Default)]
+pub struct Assets(HashMap<String, Asset>);
 
 impl Assets {
-  pub fn new() -> Self {
-    Self(HashMap::new())
+  pub fn cash(&self) -> anyhow::Result<&Asset> {
+    self.0.get(CASH_TICKER).ok_or(anyhow::anyhow!("No cash"))
   }
 
-  pub fn cash(&self) -> f64 {
-    *self.0.get(CASH_TICKER).unwrap_or(&0.0)
-  }
-
-  pub fn equity(&self, prices: HashMap<String, f64>) -> f64 {
+  pub fn equity(&self) -> f64 {
     let mut cum_equity = 0.0;
-    for (ticker, quantity) in self.0.iter() {
-      let price = match ticker == CASH_TICKER {
-        true => 1.0,
-        false => prices.get(ticker).unwrap_or(&0.0).clone(),
-      };
-      cum_equity += price * *quantity;
+    for (_, asset) in self.0.iter() {
+      let Asset { quantity, price } = asset;
+      cum_equity += *price * *quantity;
     }
     cum_equity
   }
 
-  pub fn get(&self, ticker: &str) -> Option<&f64> {
+  pub fn get(&self, ticker: &str) -> Option<&Asset> {
     self.0.get(ticker)
   }
 
-  pub fn get_mut(&mut self, ticker: &str) -> Option<&mut f64> {
+  pub fn get_or_err(&self, ticker: &str) -> anyhow::Result<&Asset> {
+    self
+      .0
+      .get(ticker)
+      .ok_or(anyhow::anyhow!("No asset for ticker"))
+  }
+
+  pub fn get_mut(&mut self, ticker: &str) -> Option<&mut Asset> {
     self.0.get_mut(ticker)
   }
 
-  pub fn insert(&mut self, ticker: &str, quantity: f64) -> Option<f64> {
-    self.0.insert(ticker.to_string(), quantity)
+  pub fn get_mut_or_err(&mut self, ticker: &str) -> anyhow::Result<&mut Asset> {
+    self
+      .0
+      .get_mut(ticker)
+      .ok_or(anyhow::anyhow!("No asset for ticker"))
   }
 
-  pub fn remove(&mut self, ticker: &str) -> Option<f64> {
+  pub fn insert(&mut self, ticker: &str, asset: Asset) -> Option<Asset> {
+    self.0.insert(ticker.to_string(), asset)
+  }
+
+  pub fn remove(&mut self, ticker: &str) -> Option<Asset> {
     self.0.remove(ticker)
+  }
+}
+
+pub enum Timeframe {
+  OneMinute,
+  OneHour,
+  OneDay,
+}
+impl From<&str> for Timeframe {
+  fn from(s: &str) -> Self {
+    match s {
+      "1m" => Timeframe::OneMinute,
+      "1h" => Timeframe::OneHour,
+      "1d" => Timeframe::OneDay,
+      _ => Timeframe::OneDay,
+    }
+  }
+}
+impl PartialEq for Timeframe {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Timeframe::OneMinute, Timeframe::OneMinute) => true,
+      (Timeframe::OneHour, Timeframe::OneHour) => true,
+      (Timeframe::OneDay, Timeframe::OneDay) => true,
+      _ => false,
+    }
   }
 }
