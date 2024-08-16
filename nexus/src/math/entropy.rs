@@ -1,10 +1,4 @@
-use crate::{Data, Dataset, Freq, Signals, FFT};
-use log::warn;
-use ndarray::Array1;
-use rustfft::num_complex::Complex;
-use rustfft::num_traits::Zero;
-use rustfft::FftPlanner;
-use std::cmp::Ordering;
+use crate::Dataset;
 
 pub enum EntropySignal {
   Up,
@@ -12,7 +6,8 @@ pub enum EntropySignal {
   None,
 }
 
-/// Translate from Zorro's `ShannonEntropy` indicator, written in C: https://financial-hacker.com/is-scalping-irrational/
+/// Based on this blog: https://robotwealth.com/shannon-entropy/
+/// Translated from Zorro's `ShannonEntropy` indicator, written in C: https://financial-hacker.com/is-scalping-irrational/
 /// pattern_size = number of bits. If bits is 3, and the result is 3, then the time series is perfectly random.
 /// Anything less than the pattern_size means there exists some regularity and therefore predictability.
 pub fn shannon_entropy(data: &[f64], length: usize, pattern_size: usize) -> f64 {

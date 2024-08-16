@@ -13,7 +13,6 @@ use tradestats::kalman::*;
 use tradestats::metrics::*;
 use tradestats::utils::*;
 
-/// Based on this blog: https://robotwealth.com/shannon-entropy/
 #[derive(Debug, Clone)]
 pub struct EntropyBacktest {
   pub period: usize,
@@ -42,6 +41,16 @@ impl EntropyBacktest {
 
   fn generate_signals(&self) -> anyhow::Result<Signals> {
     let series = Dataset::new(self.cache.vec());
+
+    // let FFT {
+    //   original: _original,
+    //   filtered,
+    // } = fft(series.clone(), 100)?;
+    // let entropy = shannon_entropy(filtered.y().as_slice(), self.period, self.patterns);
+    // if entropy == 0.0 {
+    //   return Err(anyhow::anyhow!("Entropy is zero"));
+    // }
+
     let signal = shannon_entropy_signal(series, self.period, self.patterns)?;
 
     let mut enter_long = false;
@@ -168,16 +177,38 @@ impl Strategy<Data> for EntropyBacktest {
 //                                 Fast Fourier Transform
 // ==========================================================================================
 
-/// Reference: https://medium.com/@kt.26karanthakur/stock-market-signal-analysis-using-fast-fourier-transform-e3bdde7bcee6
-/// Research: https://www.math.utah.edu/~gustafso/s2017/2270/projects-2016/williamsBarrett/williamsBarrett-Fast-Fourier-Transform-Predicting-Financial-Securities-Prices.pdf
+#[test]
+fn test_dft() -> anyhow::Result<()> {
+  let start_time = Time::new(2022, 1, 1, None, None, None);
+  let end_time = Time::new(2024, 1, 1, None, None, None);
+  let timeframe = "1d";
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let dominant_freq_cutoff = 50;
+  let interpolate = 20;
+  let FFT {
+    trained,
+    filtered,
+    predicted,
+  } = dft(btc_series, dominant_freq_cutoff, interpolate)?;
+
+  Plot::plot_without_legend(
+    // vec![trained.0, filtered.0],
+    // vec![predicted.unwrap().0],
+    vec![trained.0, predicted.unwrap().0],
+    "btc_dft.png",
+    &format!("{} DFT", ticker),
+    "Price",
+    "Time",
+  )?;
+
+  Ok(())
+}
+
 #[test]
 fn test_fft() -> anyhow::Result<()> {
-  use ndarray::Array1;
-  use rustfft::algorithm::Radix4;
-  use rustfft::num_complex::Complex;
-  use rustfft::num_traits::Zero;
-  use rustfft::{Fft, FftDirection, FftPlanner};
-
   let start_time = Time::new(2020, 7, 1, None, None, None);
   let end_time = Time::new(2022, 7, 1, None, None, None);
   let timeframe = "1h";
@@ -185,18 +216,20 @@ fn test_fft() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 100;
+  let period = 15;
   let patterns = 3;
   let dominant_freq_cutoff = 100;
 
-  let FFT { original, filtered } = fft(btc_series, dominant_freq_cutoff)?;
+  let FFT {
+    trained, filtered, ..
+  } = fft(btc_series, dominant_freq_cutoff)?;
 
-  let original_entropy = shannon_entropy(original.y().as_slice(), period + 1, patterns);
+  let trained_entropy = shannon_entropy(trained.y().as_slice(), period + 1, patterns);
   let filtered_entropy = shannon_entropy(filtered.y().as_slice(), period + 1, patterns);
 
   println!(
     "original entropy: {}/{}",
-    trunc!(original_entropy, 3),
+    trunc!(trained_entropy, 3),
     patterns
   );
   println!(
@@ -206,7 +239,49 @@ fn test_fft() -> anyhow::Result<()> {
   );
 
   Plot::plot_without_legend(
-    vec![original.0, filtered.0],
+    vec![trained.0, filtered.0],
+    "btc_ifft.png",
+    &format!("{} Inverse FFT", ticker),
+    "Price",
+    "Time",
+  )?;
+
+  Ok(())
+}
+
+#[test]
+fn test_fft_and_entropy() -> anyhow::Result<()> {
+  let start_time = Time::new(2020, 6, 1, None, None, None);
+  let end_time = Time::new(2020, 7, 1, None, None, None);
+  let timeframe = "1m";
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let period = 1000;
+  let patterns = 3;
+  let dominant_freq_cutoff = 100;
+
+  let FFT {
+    trained, filtered, ..
+  } = fft(btc_series, dominant_freq_cutoff)?;
+
+  let trained_entropy = shannon_entropy(trained.y().as_slice(), period + 1, patterns);
+  let filtered_entropy = shannon_entropy(filtered.y().as_slice(), period + 1, patterns);
+
+  println!(
+    "trained entropy: {}/{}",
+    trunc!(trained_entropy, 3),
+    patterns
+  );
+  println!(
+    "filtered entropy: {}/{}",
+    trunc!(filtered_entropy, 3),
+    patterns
+  );
+
+  Plot::plot_without_legend(
+    vec![trained.0, filtered.0],
     "btc_ifft.png",
     &format!("{} Inverse FFT", ticker),
     "Price",
@@ -316,16 +391,16 @@ fn entropy_two_step() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
   let clock_start = Time::now();
-  let start_time = Time::new(2022, 1, 1, None, None, None);
-  let end_time = Time::new(2022, 7, 1, None, None, None);
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2024, 7, 1, None, None, None);
 
-  let timeframe = "1m";
+  let timeframe = "1d";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 100;
+  let period = 15;
   let patterns = 3;
 
   let mut win = 0;
@@ -336,10 +411,17 @@ fn entropy_two_step() -> anyhow::Result<()> {
   let mut pnl_series = vec![];
   for i in 0..btc_series.y().len() - period {
     let series = btc_series.y()[i..i + period].to_vec();
-    let mut b11 = series.clone();
-    let mut b00 = series.clone();
-    let mut b10 = series.clone();
-    let mut b01 = series.clone();
+    let last_index = series.len() - 1;
+
+    let mut b11 = series[..last_index - 2].to_vec();
+    let mut b00 = series[..last_index - 2].to_vec();
+    let mut b10 = series[..last_index - 2].to_vec();
+    let mut b01 = series[..last_index - 2].to_vec();
+
+    // let mut b11 = series.clone();
+    // let mut b00 = series.clone();
+    // let mut b10 = series.clone();
+    // let mut b01 = series.clone();
 
     b11[1] = series[0] + 1.0;
     b11[0] = b11[1] + 1.0;
@@ -353,12 +435,16 @@ fn entropy_two_step() -> anyhow::Result<()> {
     b01[1] = series[0] - 1.0;
     b01[0] = b01[1] + 1.0;
 
-    let entropy_b11 = shannon_entropy(&b11, period + 1, patterns);
-    let entropy_b00 = shannon_entropy(&b00, period + 1, patterns);
-    let entropy_b10 = shannon_entropy(&b10, period + 1, patterns);
-    let entropy_b01 = shannon_entropy(&b01, period + 1, patterns);
+    // let entropy_b11 = shannon_entropy(&b11, period + 1, patterns);
+    // let entropy_b00 = shannon_entropy(&b00, period + 1, patterns);
+    // let entropy_b10 = shannon_entropy(&b10, period + 1, patterns);
+    // let entropy_b01 = shannon_entropy(&b01, period + 1, patterns);
 
-    let last_index = series.len() - 1;
+    let entropy_b11 = shannon_entropy(&b11, period - 2, patterns);
+    let entropy_b00 = shannon_entropy(&b00, period - 2, patterns);
+    let entropy_b10 = shannon_entropy(&b10, period - 2, patterns);
+    let entropy_b01 = shannon_entropy(&b01, period - 2, patterns);
+
     let p0 = series[last_index];
     let p2 = series[last_index - 2];
 
@@ -674,7 +760,7 @@ fn entropy_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.05;
+  let fee = 0.0;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -689,7 +775,7 @@ fn entropy_backtest() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 104;
+  let period = 15;
   let patterns = 3;
 
   let strat = EntropyBacktest::new(period + 1, period, patterns, ticker.clone(), stop_loss);

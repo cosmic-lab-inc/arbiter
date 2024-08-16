@@ -1,10 +1,4 @@
-use crate::{Data, Dataset, Freq, Signals, FFT};
 use log::warn;
-use ndarray::Array1;
-use rustfft::num_complex::Complex;
-use rustfft::num_traits::Zero;
-use rustfft::FftPlanner;
-use std::cmp::Ordering;
 
 pub fn std_dev(x: &[f64]) -> f64 {
   let mean_x: f64 = mean(x);
