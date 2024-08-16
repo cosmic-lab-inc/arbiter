@@ -178,30 +178,50 @@ impl Strategy<Data> for EntropyBacktest {
 // ==========================================================================================
 
 #[test]
-fn test_dft() -> anyhow::Result<()> {
-  let start_time = Time::new(2022, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 1, 1, None, None, None);
+fn test_fft_extrapolate() -> anyhow::Result<()> {
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2020, 6, 1, None, None, None);
   let timeframe = "1d";
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let dominant_freq_cutoff = 50;
-  let interpolate = 20;
-  let FFT {
-    trained,
-    filtered,
-    predicted,
-  } = dft(btc_series, dominant_freq_cutoff, interpolate)?;
+  let extrapolate = 100;
 
-  Plot::plot_without_legend(
-    // vec![trained.0, filtered.0],
-    // vec![predicted.unwrap().0],
-    vec![trained.0, predicted.unwrap().0],
-    "btc_dft.png",
+  let data = btc_series.enumerate_map();
+  let (training, expected) = data.training_data(extrapolate);
+
+  let FFT {
+    predicted,
+    filtered,
+    ..
+  } = fft_extrapolate(training.cloned(), dominant_freq_cutoff, extrapolate)?;
+
+  Plot::plot(
+    vec![
+      Series {
+        data: training.cloned().0,
+        label: "In Sample".to_string(),
+      },
+      Series {
+        data: predicted.unwrap().0,
+        label: "Predicted".to_string(),
+      },
+      Series {
+        data: expected.cloned().0,
+        label: "Out Sample".to_string(),
+      },
+      // Series {
+      //   data: filtered.0,
+      //   label: "Filtered IFFT".to_string(),
+      // },
+    ],
+    "btc_fft_extrap.png",
     &format!("{} DFT", ticker),
     "Price",
     "Time",
+    Some(false),
   )?;
 
   Ok(())
@@ -381,6 +401,7 @@ fn entropy_one_step() -> anyhow::Result<()> {
     "BTC Entropy",
     "$ PnL",
     "Time",
+    None,
   )?;
 
   Ok(())
@@ -503,6 +524,7 @@ fn entropy_two_step() -> anyhow::Result<()> {
     "BTC Entropy",
     "$ PnL",
     "Time",
+    None,
   )?;
 
   Ok(())
@@ -646,6 +668,7 @@ fn entropy_three_step() -> anyhow::Result<()> {
     "BTC Entropy",
     "$ PnL",
     "Time",
+    None,
   )?;
 
   Ok(())

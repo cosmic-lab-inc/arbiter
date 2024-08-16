@@ -72,8 +72,8 @@ impl StatArbBacktest {
         }
 
         // compare spread
-        let x = Dataset::new(self.x.vec()).normalize_series()?;
-        let y = Dataset::new(self.y.vec()).normalize_series()?;
+        let x = Dataset::new(self.x.vec()).normalize()?;
+        let y = Dataset::new(self.y.vec()).normalize()?;
         // let x = Dataset::new(self.x.vec());
         // let y = Dataset::new(self.y.vec());
         assert_eq!(x.len(), self.x.len());

@@ -3,6 +3,11 @@ use plotters::prelude::*;
 use plotters::style::full_palette::*;
 use plotters::style::{BLACK, WHITE};
 
+const FIRST: RGBColor = BLUEGREY_700;
+const SECOND: RGBColor = RED_A400;
+const THIRD: RGBColor = GREEN_500;
+const FOURTH: RGBColor = YELLOW_600;
+
 pub struct Series {
   pub data: Vec<Data>,
   pub label: String,
@@ -17,7 +22,9 @@ impl Plot {
     title: &str,
     y_label: &str,
     x_label: &str,
+    log_scale: Option<bool>,
   ) -> anyhow::Result<()> {
+    let log_scale = log_scale.unwrap_or(true);
     let mut min_x = i64::MAX;
     let mut max_x = i64::MIN;
     let mut min_y = f64::MAX;
@@ -41,6 +48,21 @@ impl Plot {
     let to_log = |y: f64| (y + offset).log10();
     let from_log = |y: f64| 10f64.powf(y) - offset;
 
+    let y_range = match log_scale {
+      true => to_log(min_y)..to_log(max_y),
+      false => min_y..max_y,
+    };
+
+    let y_label_formatter = |y: f64| match log_scale {
+      true => format!("{:.2}", from_log(y)),
+      false => format!("{:.2}", y),
+    };
+
+    let transform_y = |y: f64| match log_scale {
+      true => to_log(y),
+      false => y,
+    };
+
     let root = BitMapBackend::new(out_file, (2048, 1024)).into_drawing_area();
     root
       .fill(&WHITE)
@@ -49,7 +71,7 @@ impl Plot {
       .set_all_label_area_size(150)
       .margin(20)
       .caption(title, ("sans-serif", 40.0).into_font())
-      .build_cartesian_2d(min_x..max_x, to_log(min_y)..to_log(max_y))
+      .build_cartesian_2d(min_x..max_x, y_range)
       .map_err(|e| anyhow::anyhow!("Failed to build cartesian 2d: {}", e))?;
 
     chart
@@ -59,7 +81,7 @@ impl Plot {
       .x_desc(x_label)
       .y_desc(y_label)
       .y_labels(10)
-      .y_label_formatter(&|y| format!("{:.2}", from_log(*y)))
+      .y_label_formatter(&|y| y_label_formatter(*y))
       .draw()
       .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
 
@@ -68,9 +90,9 @@ impl Plot {
         chart
           .draw_series(
             LineSeries::new(
-              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              s.data.iter().map(|data| (data.x, transform_y(data.y))),
               ShapeStyle {
-                color: RGBAColor::from(BLUEGREY_700),
+                color: RGBAColor::from(FIRST),
                 filled: true,
                 stroke_width: 2,
               },
@@ -83,7 +105,7 @@ impl Plot {
             PathElement::new(
               [(x + 10, y + 1), (x, y)],
               ShapeStyle {
-                color: RGBAColor::from(BLUEGREY_700),
+                color: RGBAColor::from(FIRST),
                 filled: true,
                 stroke_width: 10,
               },
@@ -93,9 +115,9 @@ impl Plot {
         chart
           .draw_series(
             LineSeries::new(
-              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              s.data.iter().map(|data| (data.x, transform_y(data.y))),
               ShapeStyle {
-                color: RGBAColor::from(RED_A400),
+                color: RGBAColor::from(SECOND),
                 filled: true,
                 stroke_width: 2,
               },
@@ -108,7 +130,32 @@ impl Plot {
             PathElement::new(
               [(x + 10, y + 1), (x, y)],
               ShapeStyle {
-                color: RGBAColor::from(RED_A400),
+                color: RGBAColor::from(SECOND),
+                filled: true,
+                stroke_width: 10,
+              },
+            )
+          });
+      } else if i == 2 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              s.data.iter().map(|data| (data.x, transform_y(data.y))),
+              ShapeStyle {
+                color: RGBAColor::from(THIRD),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
+          .label(s.label.as_str())
+          .legend(|(x, y)| {
+            PathElement::new(
+              [(x + 10, y + 1), (x, y)],
+              ShapeStyle {
+                color: RGBAColor::from(THIRD),
                 filled: true,
                 stroke_width: 10,
               },
@@ -118,9 +165,9 @@ impl Plot {
         chart
           .draw_series(
             LineSeries::new(
-              s.data.iter().map(|data| (data.x, to_log(data.y))),
+              s.data.iter().map(|data| (data.x, transform_y(data.y))),
               ShapeStyle {
-                color: RGBAColor::from(LIME_800),
+                color: RGBAColor::from(FOURTH),
                 filled: true,
                 stroke_width: 2,
               },
@@ -133,7 +180,7 @@ impl Plot {
             PathElement::new(
               [(x + 10, y + 1), (x, y)],
               ShapeStyle {
-                color: RGBAColor::from(LIME_800),
+                color: RGBAColor::from(FOURTH),
                 filled: true,
                 stroke_width: 10,
               },
@@ -217,7 +264,7 @@ impl Plot {
             LineSeries::new(
               data.iter().map(|data| (data.x, data.y)),
               ShapeStyle {
-                color: RGBAColor::from(BLUEGREY_700),
+                color: RGBAColor::from(FIRST),
                 filled: true,
                 stroke_width: 2,
               },
@@ -231,7 +278,21 @@ impl Plot {
             LineSeries::new(
               data.iter().map(|data| (data.x, data.y)),
               ShapeStyle {
-                color: RGBAColor::from(RED_A400),
+                color: RGBAColor::from(SECOND),
+                filled: true,
+                stroke_width: 2,
+              },
+            )
+            .point_size(3),
+          )
+          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      } else if i == 2 {
+        chart
+          .draw_series(
+            LineSeries::new(
+              data.iter().map(|data| (data.x, data.y)),
+              ShapeStyle {
+                color: RGBAColor::from(THIRD),
                 filled: true,
                 stroke_width: 2,
               },
@@ -245,7 +306,7 @@ impl Plot {
             LineSeries::new(
               data.iter().map(|data| (data.x, data.y)),
               ShapeStyle {
-                color: RGBAColor::from(LIME_800),
+                color: RGBAColor::from(FOURTH),
                 filled: true,
                 stroke_width: 2,
               },
@@ -284,11 +345,9 @@ impl Plot {
       AMBER_300,
       AMBER_800,
       YELLOW_600,
-      LIME_400,
       LIME_800,
       LIGHTGREEN_700,
       GREEN_500,
-      GREEN_900,
       TEAL_700,
       TEAL_200,
       CYAN_800,

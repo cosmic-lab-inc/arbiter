@@ -179,10 +179,10 @@ pub fn ifft(series: Dataset) -> anyhow::Result<FFT> {
   })
 }
 
-pub fn dft(
+pub fn fft_extrapolate(
   series: Dataset,
   dominant_freq_cutoff: usize,
-  interpolate: usize,
+  extrapolate: usize,
 ) -> anyhow::Result<FFT> {
   let mut fft_input: Vec<Complex<f64>> = series
     .y()
@@ -276,38 +276,31 @@ pub fn dft(
   // Extrapolate the next N points using Discrete Fourier Transform (DFT)
   //
 
-  // // Method #2
   let filtered_input_array: Array1<f64> = Array1::from(filtered_input.clone());
 
-  // Use the fourier_extrapolation function to predict the next interpolate points
-  let predicted: Vec<f64> =
-    fft_extrap(filtered_input_array, interpolate, dominant_freq_cutoff).to_vec();
-
-  // let extrap = predicted[predicted.len() - interpolate..].to_vec();
-  // // Convert the predicted_data_array back into a Vec<Data>
-  // let predicted_data: Vec<Data> = extrap
-  //   .iter()
-  //   .enumerate()
-  //   .map(|(i, &y)| Data {
-  //     x: (fft_len + i) as i64,
-  //     y,
-  //   })
-  //   .collect();
+  // Use the fourier_extrapolation function to predict the next extrapolate points
+  let trained_and_extrap: Vec<f64> =
+    fft_extrap(filtered_input_array, extrapolate, dominant_freq_cutoff).to_vec();
 
   // Convert the predicted_data_array back into a Vec<Data>
-  let predicted_data: Vec<Data> = predicted
+  let predicted: Vec<Data> = trained_and_extrap
     .iter()
+    .skip(trained_and_extrap.len() - extrapolate)
     .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
+    .map(|(i, &y)| Data {
+      x: (i + fft_len) as i64,
+      y,
+    })
     .collect();
 
   Ok(FFT {
     trained: Dataset::new(original_data),
     filtered: Dataset::new(filtered_data),
-    predicted: Some(Dataset::new(predicted_data)),
+    predicted: Some(Dataset::new(predicted)),
   })
 }
 
+/// Reference: https://gist.github.com/tartakynov/83f3cd8f44208a1856ce
 fn fft_extrap(x: Array1<f64>, n_predict: usize, frequencies: usize) -> Array1<f64> {
   let n = x.len();
   let n_harm = frequencies; // number of harmonics in model

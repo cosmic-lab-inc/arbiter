@@ -599,6 +599,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
             &format!("{} {}", ticker, plot_title),
             "% ROI",
             "Unix Millis",
+            None,
           )?;
         }
       }

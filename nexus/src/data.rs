@@ -75,6 +75,10 @@ impl Dataset {
     &self.0
   }
 
+  pub fn cloned(&self) -> Self {
+    Self::new(self.0.clone())
+  }
+
   pub fn len(&self) -> usize {
     self.0.len()
   }
@@ -173,7 +177,7 @@ impl Dataset {
   }
 
   /// Redefine each price point as a percentage change relative to the starting price.
-  pub fn normalize_series(&self) -> anyhow::Result<Dataset> {
+  pub fn normalize(&self) -> anyhow::Result<Dataset> {
     let mut series = self.0.to_vec();
     series.sort_by_key(|c| c.x());
     let d_0 = series.first().unwrap().clone();
@@ -189,7 +193,7 @@ impl Dataset {
     Ok(x)
   }
 
-  pub fn lagged_spread_series(&self) -> anyhow::Result<Dataset> {
+  pub fn lag_spread(&self) -> anyhow::Result<Dataset> {
     let mut series = self.0.to_vec();
     series.sort_by_key(|c| c.x());
     let spread: Dataset = Dataset::new(
@@ -219,5 +223,40 @@ impl Dataset {
     first.0.sort_by_key(|c| c.x);
     second.0.sort_by_key(|c| c.x);
     Ok(())
+  }
+
+  pub fn enumerate_map(&self) -> Self {
+    Self::new(
+      self
+        .data()
+        .clone()
+        .iter()
+        .enumerate()
+        .map(|(i, d)| Data {
+          x: i as i64,
+          y: d.y,
+        })
+        .collect(),
+    )
+  }
+
+  pub fn training_data(&self, extrapolate: usize) -> (Self, Self) {
+    let training = Self::new(
+      self
+        .0
+        .iter()
+        .take(self.len() - extrapolate)
+        .cloned()
+        .collect(),
+    );
+    let expected = Self::new(
+      self
+        .0
+        .iter()
+        .skip(self.len() - extrapolate)
+        .cloned()
+        .collect(),
+    );
+    (training, expected)
   }
 }
