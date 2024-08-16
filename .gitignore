@@ -13,3 +13,5 @@ gcs_snapshots.json
 /keys
 **/data
 *.png
+*.csv
+!.gitkeep
