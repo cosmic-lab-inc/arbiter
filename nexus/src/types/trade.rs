@@ -277,7 +277,7 @@ impl Summary {
       Timeframe::OneHour => avg / std_dev,
       Timeframe::OneDay => avg / std_dev,
     };
-    // let sharpe = (avg / std_dev);// * (252.0f64.sqrt());
+    // let sharpe = (avg / std_dev) * (252.0f64.sqrt());
     trunc!(sharpe, 3)
   }
 
@@ -289,10 +289,6 @@ impl Summary {
       if point.y > peak {
         peak = point.y;
       } else {
-        // 1000 + 14% = 1140
-        // 1000 - 35% = 650
-        // max drawdown = -35 - 14 = -49
-        // 650 - 1140 / 1140 = -0.43
         let y = 1.0 + point.y / 100.0; // 14% = 1.14, -35% = 0.65
         let p = 1.0 + peak / 100.0;
         let dd = (y - p) / p * 100.0;

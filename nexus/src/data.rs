@@ -260,3 +260,15 @@ impl Dataset {
     (training, expected)
   }
 }
+
+impl From<&[f64]> for Dataset {
+  fn from(data: &[f64]) -> Self {
+    Self::new(
+      data
+        .iter()
+        .enumerate()
+        .map(|(i, &y)| Data { x: i as i64, y })
+        .collect(),
+    )
+  }
+}
