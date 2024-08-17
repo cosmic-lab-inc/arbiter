@@ -1,9 +1,9 @@
 pub use entropy::*;
 pub use fft::*;
-pub use hurst::*;
-pub use zscore::*;
+pub use regression::*;
+pub use statistics::*;
 
 pub mod entropy;
 pub mod fft;
-pub mod hurst;
-pub mod zscore;
+pub mod regression;
+pub mod statistics;

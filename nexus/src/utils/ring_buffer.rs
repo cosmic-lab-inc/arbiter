@@ -49,9 +49,13 @@ impl<T: Clone> RingBuffer<T> {
     self.vec.iter().find(|t| f(t))
   }
 
-  /// VecDeque is in reverse order, so we need to reverse it to get
-  /// first index as earliest element.
+  /// 0th index is the oldest element.
   pub fn vec(&self) -> Vec<T> {
     self.vec.iter().rev().cloned().collect::<Vec<T>>()
+  }
+
+  /// 0th index is the newest element.
+  pub fn rev_vec(&self) -> Vec<T> {
+    self.vec.iter().cloned().collect::<Vec<T>>()
   }
 }

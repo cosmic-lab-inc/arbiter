@@ -13,7 +13,7 @@ pub struct Freq {
 
 pub struct FFT {
   pub trained: Dataset,
-  pub filtered: Dataset,
+  pub filtered: Option<Dataset>,
   pub predicted: Option<Dataset>,
 }
 
@@ -68,7 +68,7 @@ pub fn fft(series: Dataset, dominant_freq_cutoff: usize) -> anyhow::Result<FFT> 
   ifft.process(&mut ifft_input);
 
   // The input vector now contains the IFFT result, which should be close to the original time series
-  let original_input: Vec<f64> = ifft_input.iter().map(|x| x.re).collect();
+  let original_input: Vec<f64> = ifft_input.iter().map(|x| x.re / fft_len as f64).collect();
   let original_data: Vec<Data> = original_input
     .iter()
     .enumerate()
@@ -125,183 +125,58 @@ pub fn fft(series: Dataset, dominant_freq_cutoff: usize) -> anyhow::Result<FFT> 
 
   Ok(FFT {
     trained: Dataset::new(original_data),
-    filtered: Dataset::new(filtered_data),
+    filtered: Some(Dataset::new(filtered_data)),
     predicted: None,
   })
 }
 
-pub fn ifft(series: Dataset) -> anyhow::Result<FFT> {
-  // Assuming df['Close'] is a Vec<f64>
-  let close_prices: Vec<f64> = series.y();
-
-  let mut fft_input: Vec<Complex<f64>> = close_prices
-    .into_iter()
-    .map(|x| Complex::new(x, 0.0))
-    .collect();
-
-  //
-  // Convert to FFT frequencies
-  //
-  let fft_len = fft_input.len();
-  let mut planner = FftPlanner::new();
-  let fft = planner.plan_fft_forward(fft_len);
-  fft.process(&mut fft_input);
-
-  //
-  // Reconstruct time series from FFT frequencies (inverse FFT)
-  //
-  let ifft = planner.plan_fft_inverse(fft_len);
-  ifft.process(&mut fft_input);
-
-  // The input vector now contains the IFFT result, which should be close to the original time series
-  let ifft_series: Vec<f64> = fft_input.iter().map(|x| x.re / fft_len as f64).collect();
-  let ifft_data: Vec<Data> = ifft_series
-    .iter()
-    .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
-    .collect();
-
-  let original = series
-    .clone()
-    .0
-    .into_iter()
-    .enumerate()
-    .map(|(i, d)| Data {
-      x: i as i64,
-      y: d.y,
-    })
-    .collect();
-
-  Ok(FFT {
-    trained: Dataset::new(original),
-    filtered: Dataset::new(ifft_data),
-    predicted: None,
-  })
-}
-
-pub fn fft_extrapolate(
+pub fn dft_extrapolate(
   series: Dataset,
   dominant_freq_cutoff: usize,
   extrapolate: usize,
+  extrap_only: bool,
 ) -> anyhow::Result<FFT> {
-  let mut fft_input: Vec<Complex<f64>> = series
-    .y()
-    .into_iter()
-    .map(|x| Complex::new(x, 0.0))
-    .collect();
-
-  let fft_len = fft_input.len();
-  let mut planner = FftPlanner::new();
-
-  //
-  // Convert to FFT frequencies
-  //
-  let fft = planner.plan_fft_forward(fft_len);
-  fft.process(&mut fft_input);
-
-  // Calculate FFT frequencies
-  let sample_spacing = 1.0; // Assuming daily data, d=1
-  let frequencies: Vec<f64> = fft_frequencies(fft_len, sample_spacing);
-  // Calculate magnitude
-  let magnitude: Vec<f64> = fft_input.iter().map(|x| x.norm()).collect();
-  // Calculate periods
-  let periods: Array1<f64> = 1.0 / Array1::from(frequencies.clone());
-
-  //
-  // Reconstruct time series from FFT frequencies (inverse FFT)
-  //
-
-  let mut ifft_input = fft_input.clone();
-  let mut ifft_planner = FftPlanner::new();
-  let ifft = ifft_planner.plan_fft_inverse(fft_len);
-  ifft.process(&mut ifft_input);
-
-  // The input vector now contains the IFFT result, which should be close to the original time series
-  let original_input: Vec<f64> = ifft_input.iter().map(|x| x.re / fft_len as f64).collect();
-  let original_data: Vec<Data> = original_input
-    .iter()
-    .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
-    .collect();
-
-  //
-  // Reconstruct time series from dominant FFT frequencies
-  //
-
-  let mut top_ifft_input = fft_input.clone();
-  let top_ifft = planner.plan_fft_inverse(fft_len);
-
-  let mut sorted_freq: Vec<Freq> = periods
-    .iter()
-    .zip(magnitude.iter())
-    .map(|(&x, &y)| Freq { mag: y, period: x }) // Swap to sort by magnitude
-    .collect();
-
-  // Sort by magnitude in descending order and take the top 25
-  sorted_freq.sort_by(|a, b| b.period.partial_cmp(&a.period).unwrap_or(Ordering::Equal));
-
-  let dominant_periods: Vec<f64> = sorted_freq
-    .into_iter()
-    .map(|freq| freq.period)
-    .take(dominant_freq_cutoff)
-    .collect();
-
-  // Find the minimum period of the top 25
-  let min_period = *dominant_periods
-    .iter()
-    .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
-    .unwrap();
-
-  // Set the values to zero where the absolute value of the frequencies is greater than the inverse of the minimum of the top periods
-  for (i, &freq) in frequencies.iter().enumerate() {
-    if freq.abs() > 1.0 / min_period {
-      top_ifft_input[i] = Complex::zero();
-    }
-  }
-
-  top_ifft.process(&mut top_ifft_input);
-
-  // The vector now contains the IFFT result of the top 25 (dominant) periods
-  let filtered_input: Vec<f64> = top_ifft_input
-    .iter()
-    .map(|x| x.re / fft_len as f64)
-    .collect();
-  let filtered_data: Vec<Data> = filtered_input
-    .iter()
-    .enumerate()
-    .map(|(i, &y)| Data { x: i as i64, y })
-    .collect();
-
-  //
-  // Extrapolate the next N points using Discrete Fourier Transform (DFT)
-  //
-
-  let filtered_input_array: Array1<f64> = Array1::from(filtered_input.clone());
+  let input: Vec<f64> = series.y().clone();
+  let fft_len = input.len();
+  let filtered_input_array: Array1<f64> = Array1::from(input);
 
   // Use the fourier_extrapolation function to predict the next extrapolate points
   let trained_and_extrap: Vec<f64> =
-    fft_extrap(filtered_input_array, extrapolate, dominant_freq_cutoff).to_vec();
+    dft_extrap(filtered_input_array, extrapolate, dominant_freq_cutoff).to_vec();
 
-  // Convert the predicted_data_array back into a Vec<Data>
-  let predicted: Vec<Data> = trained_and_extrap
-    .iter()
-    .skip(trained_and_extrap.len() - extrapolate)
-    .enumerate()
-    .map(|(i, &y)| Data {
-      x: (i + fft_len) as i64,
-      y,
-    })
-    .collect();
+  let predicted = match extrap_only {
+    true => {
+      let predicted: Vec<Data> = trained_and_extrap
+        .iter()
+        .skip(trained_and_extrap.len() - extrapolate)
+        .enumerate()
+        .map(|(i, &y)| Data {
+          x: (i + fft_len) as i64,
+          y,
+        })
+        .collect();
+      predicted
+    }
+    false => {
+      let predicted: Vec<Data> = trained_and_extrap
+        .iter()
+        .enumerate()
+        .map(|(i, &y)| Data { x: i as i64, y })
+        .collect();
+      predicted
+    }
+  };
 
   Ok(FFT {
-    trained: Dataset::new(original_data),
-    filtered: Dataset::new(filtered_data),
+    trained: series,
+    filtered: None,
     predicted: Some(Dataset::new(predicted)),
   })
 }
 
+/// Discrete Fourier Transform (DFT) Extrapolation
 /// Reference: https://gist.github.com/tartakynov/83f3cd8f44208a1856ce
-fn fft_extrap(x: Array1<f64>, n_predict: usize, frequencies: usize) -> Array1<f64> {
+fn dft_extrap(x: Array1<f64>, n_predict: usize, frequencies: usize) -> Array1<f64> {
   let n = x.len();
   let n_harm = frequencies; // number of harmonics in model
   let t: Array1<f64> = Array1::range(0.0, n as f64, 1.0);

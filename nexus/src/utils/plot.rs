@@ -3,10 +3,13 @@ use plotters::prelude::*;
 use plotters::style::full_palette::*;
 use plotters::style::{BLACK, WHITE};
 
-const FIRST: RGBColor = BLUEGREY_700;
+const FIRST: RGBColor = BLACK;
 const SECOND: RGBColor = RED_A400;
 const THIRD: RGBColor = GREEN_500;
-const FOURTH: RGBColor = YELLOW_600;
+const FOURTH: RGBColor = AMBER_800;
+const FIFTH: RGBColor = BLUE_A700;
+const SIXTH: RGBColor = PURPLE_A400;
+const OTHER: RGBColor = GREY_400;
 
 pub struct Series {
   pub data: Vec<Data>,
@@ -85,107 +88,57 @@ impl Plot {
       .draw()
       .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
 
+    let mut draw_series = |s: &Series, color: RGBColor| {
+      chart
+        .draw_series(
+          LineSeries::new(
+            s.data.iter().map(|data| (data.x, transform_y(data.y))),
+            ShapeStyle {
+              color: RGBAColor::from(color),
+              filled: true,
+              stroke_width: 1,
+            },
+          )
+          .point_size(1),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
+        .label(s.label.as_str())
+        .legend(move |(x, y)| {
+          PathElement::new(
+            [(x + 10, y + 1), (x, y)],
+            ShapeStyle {
+              color: RGBAColor::from(color),
+              filled: true,
+              stroke_width: 10,
+            },
+          )
+        });
+      Result::<_, anyhow::Error>::Ok(())
+    };
+
     for (i, s) in series.iter().enumerate() {
-      if i == 0 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              s.data.iter().map(|data| (data.x, transform_y(data.y))),
-              ShapeStyle {
-                color: RGBAColor::from(FIRST),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
-          .label(s.label.as_str())
-          .legend(|(x, y)| {
-            PathElement::new(
-              [(x + 10, y + 1), (x, y)],
-              ShapeStyle {
-                color: RGBAColor::from(FIRST),
-                filled: true,
-                stroke_width: 10,
-              },
-            )
-          });
-      } else if i == 1 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              s.data.iter().map(|data| (data.x, transform_y(data.y))),
-              ShapeStyle {
-                color: RGBAColor::from(SECOND),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
-          .label(s.label.as_str())
-          .legend(|(x, y)| {
-            PathElement::new(
-              [(x + 10, y + 1), (x, y)],
-              ShapeStyle {
-                color: RGBAColor::from(SECOND),
-                filled: true,
-                stroke_width: 10,
-              },
-            )
-          });
-      } else if i == 2 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              s.data.iter().map(|data| (data.x, transform_y(data.y))),
-              ShapeStyle {
-                color: RGBAColor::from(THIRD),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
-          .label(s.label.as_str())
-          .legend(|(x, y)| {
-            PathElement::new(
-              [(x + 10, y + 1), (x, y)],
-              ShapeStyle {
-                color: RGBAColor::from(THIRD),
-                filled: true,
-                stroke_width: 10,
-              },
-            )
-          });
-      } else {
-        chart
-          .draw_series(
-            LineSeries::new(
-              s.data.iter().map(|data| (data.x, transform_y(data.y))),
-              ShapeStyle {
-                color: RGBAColor::from(FOURTH),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?
-          .label(s.label.as_str())
-          .legend(|(x, y)| {
-            PathElement::new(
-              [(x + 10, y + 1), (x, y)],
-              ShapeStyle {
-                color: RGBAColor::from(FOURTH),
-                filled: true,
-                stroke_width: 10,
-              },
-            )
-          });
+      match i {
+        0 => {
+          draw_series(s, FIRST)?;
+        }
+        1 => {
+          draw_series(s, SECOND)?;
+        }
+        2 => {
+          draw_series(s, THIRD)?;
+        }
+        3 => {
+          draw_series(s, FOURTH)?;
+        }
+        4 => {
+          draw_series(s, FIFTH)?;
+        }
+        5 => {
+          draw_series(s, SIXTH)?;
+        }
+        _ => {
+          draw_series(s, OTHER)?;
+        }
       }
     }
 
@@ -257,63 +210,46 @@ impl Plot {
       .draw()
       .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
 
+    let mut draw_series = |data: &[Data], color: RGBColor| {
+      chart
+        .draw_series(
+          LineSeries::new(
+            data.iter().map(|data| (data.x, data.y)),
+            ShapeStyle {
+              color: RGBAColor::from(color),
+              filled: true,
+              stroke_width: 1,
+            },
+          )
+          .point_size(1),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      Result::<_, anyhow::Error>::Ok(())
+    };
+
     for (i, data) in series.iter().enumerate() {
-      if i == 0 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              data.iter().map(|data| (data.x, data.y)),
-              ShapeStyle {
-                color: RGBAColor::from(FIRST),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
-      } else if i == 1 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              data.iter().map(|data| (data.x, data.y)),
-              ShapeStyle {
-                color: RGBAColor::from(SECOND),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
-      } else if i == 2 {
-        chart
-          .draw_series(
-            LineSeries::new(
-              data.iter().map(|data| (data.x, data.y)),
-              ShapeStyle {
-                color: RGBAColor::from(THIRD),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
-      } else {
-        chart
-          .draw_series(
-            LineSeries::new(
-              data.iter().map(|data| (data.x, data.y)),
-              ShapeStyle {
-                color: RGBAColor::from(FOURTH),
-                filled: true,
-                stroke_width: 2,
-              },
-            )
-            .point_size(3),
-          )
-          .map_err(|e| anyhow::anyhow!("Failed to draw series: {}", e))?;
+      match i {
+        0 => {
+          draw_series(data.as_slice(), FIRST)?;
+        }
+        1 => {
+          draw_series(data.as_slice(), SECOND)?;
+        }
+        2 => {
+          draw_series(data.as_slice(), THIRD)?;
+        }
+        3 => {
+          draw_series(data.as_slice(), FOURTH)?;
+        }
+        4 => {
+          draw_series(data.as_slice(), FIFTH)?;
+        }
+        5 => {
+          draw_series(data.as_slice(), SIXTH)?;
+        }
+        _ => {
+          draw_series(data.as_slice(), OTHER)?;
+        }
       }
     }
 
@@ -342,18 +278,14 @@ impl Plot {
       DEEPORANGE_A200,
       DEEPORANGE_200,
       ORANGE_A200,
-      AMBER_300,
       AMBER_800,
       YELLOW_600,
-      LIME_800,
       LIGHTGREEN_700,
       GREEN_500,
       TEAL_700,
-      TEAL_200,
       CYAN_800,
       LIGHTBLUE_A200,
       BLUE_A700,
-      BLUE_400,
       BLUE_800,
       INDIGO_800,
       INDIGO_300,

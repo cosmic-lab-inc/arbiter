@@ -250,16 +250,39 @@ impl Summary {
   }
 
   pub fn quote_roi(&self, ticker: &str) -> f64 {
-    let ending_quote_roi = self.cum_quote.get(ticker).unwrap().data().last().unwrap().y;
-    trunc!(ending_quote_roi, 3)
+    let data = self.cum_quote.get(ticker);
+    match data {
+      Some(data) => {
+        let last = data.data().last();
+        let ending_quote_roi = match last {
+          Some(last) => last.y,
+          None => 0.0,
+        };
+        trunc!(ending_quote_roi, 3)
+      }
+      None => 0.0,
+    }
   }
 
   pub fn pct_roi(&self, ticker: &str) -> f64 {
-    let ending_pct_roi = self.cum_pct.get(ticker).unwrap().data().last().unwrap().y;
-    trunc!(ending_pct_roi, 3)
+    let data = self.cum_pct.get(ticker);
+    match data {
+      Some(data) => {
+        let last = data.data().last();
+        let ending_pct_roi = match last {
+          Some(last) => last.y,
+          None => 0.0,
+        };
+        trunc!(ending_pct_roi, 3)
+      }
+      None => 0.0,
+    }
   }
 
   pub fn sharpe_ratio(&self, ticker: &str, timeframe: Timeframe) -> f64 {
+    if self.total_trades(ticker) == 0 {
+      return 0.0;
+    }
     let pct = self
       .cum_pct
       .get(ticker)
@@ -282,10 +305,13 @@ impl Summary {
   }
 
   pub fn max_drawdown(&self, ticker: &str) -> f64 {
+    if self.total_trades(ticker) == 0 {
+      return 0.0;
+    }
     let mut max_dd = 0.0;
-    let mut peak = self.cum_pct.get(ticker).unwrap().data().first().unwrap().y;
-
-    for point in self.cum_pct.get(ticker).unwrap().data().iter() {
+    let data = self.cum_pct.get(ticker).unwrap().data();
+    let mut peak = data.first().unwrap().y;
+    for point in data.iter() {
       if point.y > peak {
         peak = point.y;
       } else {

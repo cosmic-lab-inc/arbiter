@@ -44,6 +44,15 @@ impl EntropyBacktest {
   fn generate_signals(&self) -> anyhow::Result<Signals> {
     let series = Dataset::new(self.cache.vec());
 
+    // let FFT { filtered, .. } = fft(series.clone(), 100)?;
+    // let series = filtered.unwrap();
+    //
+    // let FFT { predicted, .. } = dft_extrapolate(series.clone(), 25, 3, true)?;
+    // let predicted = predicted.unwrap().y();
+    // let predicted_last = *predicted.last().unwrap();
+    // let predicted_first = *predicted.first().unwrap();
+    // let predicted_delta = predicted_last - predicted_first;
+
     let y_series = series.y();
     let signal = match self.entropy_bits {
       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
@@ -73,17 +82,35 @@ impl EntropyBacktest {
           }
         }
       }
-      None => match signal {
-        EntropySignal::Up => {
-          enter_long = true;
-          exit_short = true;
+      None => {
+        // match signal {
+        //   EntropySignal::Up => {
+        //     if predicted_delta > 0.0 {
+        //       enter_long = true;
+        //       exit_short = true;
+        //     }
+        //   }
+        //   EntropySignal::Down => {
+        //     if predicted_delta < 0.0 {
+        //       enter_short = true;
+        //       exit_long = true;
+        //     }
+        //   }
+        //   _ => {}
+        // }
+
+        match signal {
+          EntropySignal::Up => {
+            enter_long = true;
+            exit_short = true;
+          }
+          EntropySignal::Down => {
+            enter_short = true;
+            exit_long = true;
+          }
+          _ => {}
         }
-        EntropySignal::Down => {
-          enter_short = true;
-          exit_long = true;
-        }
-        _ => {}
-      },
+      }
     }
 
     Ok(Signals {
@@ -158,10 +185,7 @@ impl Strategy<Data> for EntropyBacktest {
   ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {
-        self.cache.push(Data {
-          x: data.x,
-          y: data.y,
-        });
+        self.cache.push(data);
       }
     }
     self.assets = assets.clone();
@@ -194,75 +218,120 @@ impl Strategy<Data> for EntropyBacktest {
 // ==========================================================================================
 
 #[test]
-fn test_fft_extrapolate() -> anyhow::Result<()> {
+fn test_fft_extrap() -> anyhow::Result<()> {
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 6, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
   let timeframe = "1d";
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let dominant_freq_cutoff = 50;
-  let extrapolate = 100;
+  let period = 15;
+  let dominant_freq_cutoff = 100;
+  let extrapolate = 3;
+  let bits = EntropyBits::Two.bits();
+  let patterns = EntropyBits::Two.patterns();
 
-  let data = btc_series.enumerate_map();
-  let (training, expected) = data.training_data(extrapolate);
+  let mut win = 0;
+  let mut loss = 0;
+  let mut cum_pnl = 0.0;
 
-  let FFT {
-    predicted,
-    filtered,
-    ..
-  } = fft_extrapolate(training.cloned(), dominant_freq_cutoff, extrapolate)?;
+  let mut pnl_series = vec![];
+  for i in 0..btc_series.len() - period + 1 - patterns {
+    let data_ref = btc_series.data();
 
-  Plot::plot(
-    vec![
-      Series {
-        data: training.cloned().0,
-        label: "In Sample".to_string(),
-      },
-      Series {
-        data: predicted.unwrap().0,
-        label: "Predicted".to_string(),
-      },
-      Series {
-        data: expected.cloned().0,
-        label: "Out Sample".to_string(),
-      },
-      Series {
-        data: filtered.0,
-        label: "Filtered IFFT".to_string(),
-      },
-    ],
-    "btc_fft_extrap.png",
-    &format!("{} DFT", ticker),
-    "Price",
-    "Time",
-    Some(false),
-  )?;
+    let trained = Dataset::new(data_ref[i..i + period + 1].to_vec()).y();
+    assert_eq!(trained.len(), period + 1);
+    let expected = Dataset::new(data_ref[i + period..i + period + patterns].to_vec()).y();
+    assert_eq!(expected.len(), patterns);
+
+    let in_sample = Dataset::new(data_ref[i..i + period].to_vec());
+    let FFT { predicted, .. } =
+      dft_extrapolate(in_sample, dominant_freq_cutoff, extrapolate, true)?;
+    let predicted = predicted.unwrap();
+    let predicted_delta = predicted.y().last().unwrap() - predicted.y().first().unwrap();
+    let extrap_up = predicted_delta > 0.0;
+
+    let mut b11 = trained.clone();
+    let mut b00 = trained.clone();
+    let mut b10 = trained.clone();
+    let mut b01 = trained.clone();
+
+    // trained[0] = 1.0, b11[1] = 2.0, b11[0] = 3.0
+    b11[1] = trained[0] + 1.0;
+    b11[0] = b11[1] + 1.0;
+
+    b00[1] = trained[0] - 1.0;
+    b00[0] = b00[1] - 1.0;
+
+    b10[1] = trained[0] + 1.0;
+    b10[0] = b10[1] - 1.0;
+
+    b01[1] = trained[0] - 1.0;
+    b01[0] = b01[1] + 1.0;
+
+    let length = period + 2;
+    let entropy_b11 = shannon_entropy(&b11, length, patterns);
+    let entropy_b00 = shannon_entropy(&b00, length, patterns);
+    let entropy_b10 = shannon_entropy(&b10, length, patterns);
+    let entropy_b01 = shannon_entropy(&b01, length, patterns);
+
+    let last_index = expected.len() - 1;
+    let p0 = expected[last_index];
+    let p2 = expected[last_index - bits];
+
+    let max = entropy_b11
+      .max(entropy_b00)
+      .max(entropy_b10)
+      .max(entropy_b01);
+
+    if max == entropy_b11 && p2 > p0 && extrap_up {
+      win += 1;
+      cum_pnl += p2 - p0;
+    } else if max == entropy_b00 && p2 < p0 && !extrap_up {
+      win += 1;
+      cum_pnl += p0 - p2;
+    } else if max == entropy_b11 && p2 < p0 {
+      loss += 1;
+      cum_pnl -= p0 - p2;
+    } else if max == entropy_b00 && p2 > p0 {
+      loss += 1;
+      cum_pnl -= p2 - p0;
+    }
+    pnl_series.push(cum_pnl);
+  }
+
+  println!(
+    "trades: {}, win rate: {}%, profit: ${}",
+    win + loss,
+    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
+    trunc!(cum_pnl, 2)
+  );
 
   Ok(())
 }
 
 #[test]
 fn test_fft_and_entropy() -> anyhow::Result<()> {
-  let start_time = Time::new(2020, 6, 1, None, None, None);
-  let end_time = Time::new(2020, 7, 1, None, None, None);
-  let timeframe = "1m";
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let timeframe = "1d";
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 1000;
-  let patterns = 3;
+  let period = 15;
   let dominant_freq_cutoff = 100;
+  let bits = EntropyBits::Two.bits();
+  let patterns = EntropyBits::Two.patterns();
 
   let FFT {
     trained, filtered, ..
   } = fft(btc_series, dominant_freq_cutoff)?;
+  let filtered = filtered.unwrap();
 
-  let trained_entropy = shannon_entropy(trained.y().as_slice(), period + 1, patterns);
-  let filtered_entropy = shannon_entropy(filtered.y().as_slice(), period + 1, patterns);
-
+  let trained_entropy = shannon_entropy(trained.y().as_slice(), period, patterns);
+  let filtered_entropy = shannon_entropy(filtered.y().as_slice(), period, patterns);
   println!(
     "trained entropy: {}/{}",
     trunc!(trained_entropy, 3),
@@ -274,9 +343,111 @@ fn test_fft_and_entropy() -> anyhow::Result<()> {
     patterns
   );
 
+  let mut win = 0;
+  let mut loss = 0;
+  let mut cum_pnl = 0.0;
+
+  let mut entropies = vec![];
+  let mut pnl_series = vec![];
+  for i in 0..filtered.y().len() - period + 1 - patterns {
+    // period is used to calc entropy, and next "patterns" are used to check if the entropy prediction is correct
+    let series = filtered.y()[i..i + period + patterns].to_vec();
+
+    let trained = filtered.y()[i..i + period].to_vec();
+    assert_eq!(trained.len(), period);
+    let expected = filtered.y()[i + period..i + period + patterns].to_vec();
+    assert_eq!(expected.len(), patterns);
+
+    let mut b11 = trained.clone();
+    let mut b00 = trained.clone();
+    let mut b10 = trained.clone();
+    let mut b01 = trained.clone();
+
+    b11[1] = trained[0] + 1.0;
+    b11[0] = b11[1] + 1.0;
+
+    b00[1] = trained[0] - 1.0;
+    b00[0] = b00[1] - 1.0;
+
+    b10[1] = trained[0] + 1.0;
+    b10[0] = b10[1] - 1.0;
+
+    b01[1] = trained[0] - 1.0;
+    b01[0] = b01[1] + 1.0;
+
+    let length = period + 1;
+    let entropy_b11 = shannon_entropy(&b11, length, patterns);
+    let entropy_b00 = shannon_entropy(&b00, length, patterns);
+    let entropy_b10 = shannon_entropy(&b10, length, patterns);
+    let entropy_b01 = shannon_entropy(&b01, length, patterns);
+
+    let last_index = expected.len() - 1;
+    let p0 = expected[last_index];
+    let p2 = expected[last_index - bits];
+
+    let max = entropy_b11
+      .max(entropy_b00)
+      .max(entropy_b10)
+      .max(entropy_b01);
+
+    if max == entropy_b11 && p2 > p0 {
+      win += 1;
+      cum_pnl += p2 - p0;
+    } else if max == entropy_b00 && p2 < p0 {
+      win += 1;
+      cum_pnl += p0 - p2;
+    } else if max == entropy_b11 && p2 < p0 {
+      loss += 1;
+      cum_pnl -= p0 - p2;
+    } else if max == entropy_b00 && p2 > p0 {
+      loss += 1;
+      cum_pnl -= p2 - p0;
+    }
+    pnl_series.push(cum_pnl);
+    entropies.push(shannon_entropy(series.as_slice(), period, patterns));
+  }
+
+  let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
+  println!(
+    "average filtered entropy for period {}: {}/{}",
+    period,
+    trunc!(avg_entropy, 3),
+    patterns
+  );
+
+  println!(
+    "trades: {}, win rate: {}%, profit: ${}",
+    win + loss,
+    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
+    trunc!(cum_pnl, 2)
+  );
+
+  let pnl_series = Dataset::new(
+    pnl_series
+      .into_iter()
+      .enumerate()
+      .map(|(i, pnl)| Data {
+        x: i as i64,
+        y: pnl,
+      })
+      .collect(),
+  );
+
+  Plot::plot(
+    vec![Series {
+      data: pnl_series.0,
+      label: "Strategy".to_string(),
+    }],
+    "btc_fft_entropy_pnl.png",
+    "BTC Entropy",
+    "$ PnL",
+    "Time",
+    Some(false),
+  )?;
+
   Plot::plot_without_legend(
     vec![trained.0, filtered.0],
-    "btc_ifft.png",
+    "btc_fft_entropy.png",
     &format!("{} Inverse FFT", ticker),
     "Price",
     "Time",
@@ -304,7 +475,8 @@ fn entropy_one_step() -> anyhow::Result<()> {
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let period = 15;
-  let patterns = 2;
+  let bits = EntropyBits::One.bits();
+  let patterns = EntropyBits::One.patterns();
 
   let mut win = 0;
   let mut loss = 0;
@@ -312,22 +484,27 @@ fn entropy_one_step() -> anyhow::Result<()> {
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
-  for i in 0..btc_series.y().len() - period {
-    let series = btc_series.y()[i..i + period].to_vec();
-    let last_index = series.len() - 1;
+  for i in 0..btc_series.y().len() - period + 1 - patterns {
+    let series = btc_series.y()[i..i + period + patterns].to_vec();
 
-    let mut b1 = series.clone();
-    let mut b0 = series.clone();
+    let trained = btc_series.y()[i..i + period].to_vec();
+    assert_eq!(trained.len(), period);
+    let expected = btc_series.y()[i + period..i + period + patterns].to_vec();
+    assert_eq!(expected.len(), patterns);
 
-    b1[0] = series[0] + 1.0;
-    b0[0] = series[0] - 1.0;
+    let mut b1 = trained.clone();
+    let mut b0 = trained.clone();
+
+    b1[0] = trained[0] + 1.0;
+    b0[0] = trained[0] - 1.0;
 
     let length = period + 1;
     let entropy_b1 = shannon_entropy(&b1, length, patterns);
     let entropy_b0 = shannon_entropy(&b0, length, patterns);
 
+    let last_index = expected.len() - 1;
     let p0 = series[last_index];
-    let p1 = series[last_index - 1];
+    let p1 = series[last_index - bits];
 
     if entropy_b1 > entropy_b0 && p1 > p0 {
       win += 1;
@@ -379,19 +556,21 @@ fn entropy_one_step() -> anyhow::Result<()> {
     "BTC Entropy",
     "$ PnL",
     "Time",
-    None,
+    Some(false),
   )?;
 
   Ok(())
 }
 
+/// Uses future bars to confirm whether entropy prediction was correct.
+/// This is not to be used directly in a backtest, since future data is impossible.
 #[test]
 fn entropy_two_step() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
   let clock_start = Time::now();
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 1, 1, None, None, None);
+  let start_time = Time::new(2020, 1, 1, None, None, None);
+  let end_time = Time::new(2022, 1, 1, None, None, None);
 
   let timeframe = "1h";
 
@@ -400,7 +579,8 @@ fn entropy_two_step() -> anyhow::Result<()> {
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let period = 15;
-  let patterns = 3;
+  let bits = EntropyBits::Two.bits();
+  let patterns = EntropyBits::Two.patterns();
 
   let mut win = 0;
   let mut loss = 0;
@@ -408,44 +588,39 @@ fn entropy_two_step() -> anyhow::Result<()> {
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
-  for i in 0..btc_series.y().len() - period {
-    let series = btc_series.y()[i..i + period].to_vec();
-    let last_index = series.len() - 1;
 
-    let mut b11 = series[..last_index - 2].to_vec();
-    let mut b00 = series[..last_index - 2].to_vec();
-    let mut b10 = series[..last_index - 2].to_vec();
-    let mut b01 = series[..last_index - 2].to_vec();
+  for i in 0..btc_series.y().len() - period + 1 - patterns {
+    let trained = btc_series.y()[i..i + period].to_vec();
+    assert_eq!(trained.len(), period);
+    let expected = btc_series.y()[i + period..i + period + patterns].to_vec();
+    assert_eq!(expected.len(), patterns);
 
-    // let mut b11 = series.clone();
-    // let mut b00 = series.clone();
-    // let mut b10 = series.clone();
-    // let mut b01 = series.clone();
+    let mut b11 = trained.clone();
+    let mut b00 = trained.clone();
+    let mut b10 = trained.clone();
+    let mut b01 = trained.clone();
 
-    b11[1] = series[0] + 1.0;
+    b11[1] = trained[0] + 1.0;
     b11[0] = b11[1] + 1.0;
 
-    b00[1] = series[0] - 1.0;
+    b00[1] = trained[0] - 1.0;
     b00[0] = b00[1] - 1.0;
 
-    b10[1] = series[0] + 1.0;
+    b10[1] = trained[0] + 1.0;
     b10[0] = b10[1] - 1.0;
 
-    b01[1] = series[0] - 1.0;
+    b01[1] = trained[0] - 1.0;
     b01[0] = b01[1] + 1.0;
 
-    // let entropy_b11 = shannon_entropy(&b11, period + 1, patterns);
-    // let entropy_b00 = shannon_entropy(&b00, period + 1, patterns);
-    // let entropy_b10 = shannon_entropy(&b10, period + 1, patterns);
-    // let entropy_b01 = shannon_entropy(&b01, period + 1, patterns);
+    let length = period + 1;
+    let entropy_b11 = shannon_entropy(&b11, length, patterns);
+    let entropy_b00 = shannon_entropy(&b00, length, patterns);
+    let entropy_b10 = shannon_entropy(&b10, length, patterns);
+    let entropy_b01 = shannon_entropy(&b01, length, patterns);
 
-    let entropy_b11 = shannon_entropy(&b11, period - 2, patterns);
-    let entropy_b00 = shannon_entropy(&b00, period - 2, patterns);
-    let entropy_b10 = shannon_entropy(&b10, period - 2, patterns);
-    let entropy_b01 = shannon_entropy(&b01, period - 2, patterns);
-
-    let p0 = series[last_index];
-    let p2 = series[last_index - 2];
+    let last_index = expected.len() - 1;
+    let p0 = expected[last_index];
+    let p2 = expected[last_index - bits];
 
     let max = entropy_b11
       .max(entropy_b00)
@@ -466,7 +641,7 @@ fn entropy_two_step() -> anyhow::Result<()> {
       cum_pnl -= p2 - p0;
     }
     pnl_series.push(cum_pnl);
-    entropies.push(shannon_entropy(series.as_slice(), period, patterns));
+    entropies.push(shannon_entropy(trained.as_slice(), period, patterns));
   }
   let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
   println!("entropy: {}/{}", trunc!(avg_entropy, 3), patterns);
@@ -502,7 +677,7 @@ fn entropy_two_step() -> anyhow::Result<()> {
     "BTC Entropy",
     "$ PnL",
     "Time",
-    None,
+    Some(false),
   )?;
 
   Ok(())
@@ -514,7 +689,7 @@ fn entropy_three_step() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   let clock_start = Time::now();
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
@@ -522,7 +697,8 @@ fn entropy_three_step() -> anyhow::Result<()> {
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let period = 15;
-  let patterns = 4;
+  let bits = EntropyBits::Three.bits();
+  let patterns = EntropyBits::Three.patterns();
 
   let mut win = 0;
   let mut loss = 0;
@@ -530,62 +706,68 @@ fn entropy_three_step() -> anyhow::Result<()> {
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
-  for i in 0..btc_series.y().len() - period {
-    let series = btc_series.y()[i..i + period].to_vec();
-    let last_index = series.len() - 1;
+  for i in 0..btc_series.y().len() - period + 1 - patterns {
+    let series = btc_series.y()[i..i + period + patterns].to_vec();
 
-    let mut b111 = series.clone();
-    let mut b000 = series.clone();
-    let mut b110 = series.clone();
-    let mut b011 = series.clone();
-    let mut b101 = series.clone();
-    let mut b010 = series.clone();
-    let mut b100 = series.clone();
-    let mut b001 = series.clone();
+    let trained = btc_series.y()[i..i + period].to_vec();
+    assert_eq!(trained.len(), period);
+    let expected = btc_series.y()[i + period..i + period + patterns].to_vec();
+    assert_eq!(expected.len(), patterns);
 
-    b111[2] = series[0] + 1.0;
+    let mut b111 = trained.clone();
+    let mut b000 = trained.clone();
+    let mut b110 = trained.clone();
+    let mut b011 = trained.clone();
+    let mut b101 = trained.clone();
+    let mut b010 = trained.clone();
+    let mut b100 = trained.clone();
+    let mut b001 = trained.clone();
+
+    b111[2] = trained[0] + 1.0;
     b111[1] = b111[2] + 1.0;
     b111[0] = b111[1] + 1.0;
 
-    b000[2] = series[0] - 1.0;
+    b000[2] = trained[0] - 1.0;
     b000[1] = b000[2] - 1.0;
     b000[0] = b000[1] - 1.0;
 
-    b110[2] = series[0] + 1.0;
+    b110[2] = trained[0] + 1.0;
     b110[1] = b110[2] + 1.0;
     b110[0] = b110[1] - 1.0;
 
-    b011[2] = series[0] - 1.0;
+    b011[2] = trained[0] - 1.0;
     b011[1] = b011[2] + 1.0;
     b011[0] = b011[1] + 1.0;
 
-    b101[2] = series[0] + 1.0;
+    b101[2] = trained[0] + 1.0;
     b101[1] = b101[2] - 1.0;
     b101[0] = b101[1] + 1.0;
 
-    b010[2] = series[0] - 1.0;
+    b010[2] = trained[0] - 1.0;
     b010[1] = b010[2] + 1.0;
     b010[0] = b010[1] - 1.0;
 
-    b100[2] = series[0] + 1.0;
+    b100[2] = trained[0] + 1.0;
     b100[1] = b100[2] - 1.0;
     b100[0] = b100[1] - 1.0;
 
-    b001[2] = series[0] - 1.0;
+    b001[2] = trained[0] - 1.0;
     b001[1] = b001[2] - 1.0;
     b001[0] = b001[1] + 1.0;
 
-    let entropy_b111 = shannon_entropy(&b111, period + 1, patterns);
-    let entropy_b000 = shannon_entropy(&b000, period + 1, patterns);
-    let entropy_b110 = shannon_entropy(&b110, period + 1, patterns);
-    let entropy_b011 = shannon_entropy(&b011, period + 1, patterns);
-    let entropy_b101 = shannon_entropy(&b101, period + 1, patterns);
-    let entropy_b010 = shannon_entropy(&b010, period + 1, patterns);
-    let entropy_b100 = shannon_entropy(&b100, period + 1, patterns);
-    let entropy_b001 = shannon_entropy(&b001, period + 1, patterns);
+    let length = period + 1;
+    let entropy_b111 = shannon_entropy(&b111, length, patterns);
+    let entropy_b000 = shannon_entropy(&b000, length, patterns);
+    let entropy_b110 = shannon_entropy(&b110, length, patterns);
+    let entropy_b011 = shannon_entropy(&b011, length, patterns);
+    let entropy_b101 = shannon_entropy(&b101, length, patterns);
+    let entropy_b010 = shannon_entropy(&b010, length, patterns);
+    let entropy_b100 = shannon_entropy(&b100, length, patterns);
+    let entropy_b001 = shannon_entropy(&b001, length, patterns);
 
-    let p0 = series[last_index];
-    let p3 = series[last_index - 3];
+    let last_index = expected.len() - 1;
+    let p0 = expected[last_index];
+    let p3 = expected[last_index - bits];
 
     let max = entropy_b111
       .max(entropy_b000)
@@ -674,7 +856,7 @@ fn entropy_zscore() -> anyhow::Result<()> {
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
-  for i in 0..btc_series.y().len() - period {
+  for i in 0..btc_series.y().len() - period + 1 {
     let series = btc_series.y()[i..i + period].to_vec();
 
     let last_index = series.len() - 1;
@@ -883,7 +1065,7 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let short_selling = true;
 
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 7, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
   let timeframe = "1d";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
@@ -891,8 +1073,8 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let bits = EntropyBits::Two;
-  let period = 15;
-  let zscore = Some(2.5);
+  let period = 104;
+  let zscore = None; //Some(2.5);
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)
@@ -927,7 +1109,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
   let leverage = 1;
   let short_selling = true;
 
-  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let start_time = Time::new(2019, 1, 1, None, None, None);
   let end_time = Time::new(2020, 1, 1, None, None, None);
   let timeframe = "1h";
 
@@ -937,7 +1119,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let mut summaries: Vec<(usize, Summary)> = (bits.patterns()..1_000)
+  let mut summaries: Vec<(usize, Summary)> = (bits.patterns()..100)
     .into_par_iter()
     .flat_map(|period| {
       let strat = EntropyBacktest::new(period, bits, None, ticker.clone(), stop_loss);
@@ -1031,7 +1213,7 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   let leverage = 1;
   let short_selling = true;
 
-  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let start_time = Time::new(2018, 1, 1, None, None, None);
   let end_time = Time::new(2020, 1, 1, None, None, None);
   let timeframe = "1h";
 
@@ -1041,7 +1223,7 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
 
   let period = 15;
   let bits = EntropyBits::Two;
-  let zscore = Some(2.0);
+  let zscore = None;
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)
@@ -1058,4 +1240,126 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   backtest.execute("Entropy Backtest", timeframe)?;
 
   Ok(())
+}
+
+#[test]
+fn shit_test() -> anyhow::Result<()> {
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let timeframe = "1d";
+
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let period = 15;
+
+  let capacity = period;
+  let mut cache = RingBuffer::new(capacity, ticker);
+
+  // First method is the backtest strategy
+  let mut last_seen = None;
+  let mut second_last_seen = None;
+  let mut first_method: Vec<(Vec<f64>, EntropySignal)> = vec![];
+  for (i, data) in btc_series.data().clone().into_iter().enumerate() {
+    cache.push(data);
+    if cache.vec.len() < capacity {
+      continue;
+    }
+    let series = Dataset::new(cache.vec());
+
+    if last_seen.is_some() {
+      if second_last_seen.is_none() {
+        println!("#1 second seen at {}: {:?}", i, series.y());
+      }
+      second_last_seen = last_seen.clone();
+    }
+
+    if last_seen.is_none() {
+      println!("#1 first seen at {}: {:?}", i, series.y());
+    }
+
+    last_seen = Some(series.y());
+
+    let signal = two_step_entropy_signal(series.cloned(), period)?;
+    let y = series.y();
+    first_method.push((y, signal));
+  }
+
+  if let Some(last_seen) = last_seen {
+    println!("#1 last seen: {:?}", last_seen);
+  }
+  if let Some(second_last_seen) = second_last_seen {
+    println!("#1 second_last_seen: {:?}", second_last_seen);
+  }
+
+  // Second method is the isolated entropy test
+  let second_method: Vec<(Vec<f64>, EntropySignal)> =
+    _two_step_entropy_signals(btc_series, period)?;
+
+  // deep equality check first_method and second_method
+  let mut does_match = true;
+
+  if first_method.len() != second_method.len() {
+    println!(
+      "result lengths do not match, {} != {}",
+      first_method.len(),
+      second_method.len()
+    );
+    does_match = false;
+  }
+
+  if does_match {
+    let checks: Vec<bool> = (0..first_method.len())
+      .map(|i| {
+        let mut does_match = true;
+
+        let first: &(Vec<f64>, EntropySignal) = &first_method[i];
+        let (first_data, first_signal) = first;
+        let second: &(Vec<f64>, EntropySignal) = &second_method[i];
+        let (second_data, second_signal) = second;
+
+        if first_data.len() != second_data.len() {
+          println!(
+            "lengths[{}], {} != {}",
+            i,
+            first_data.len(),
+            second_data.len()
+          );
+          does_match = false;
+        }
+
+        if does_match {
+          // check if first_signal and second_signal match
+          if first_signal != second_signal {
+            println!("signals[{}], {:?} != {:?}", i, first_signal, second_signal);
+            does_match = false;
+          }
+        }
+
+        if does_match {
+          for (first, second) in first_data.iter().zip(second_data.iter()) {
+            if first != second {
+              println!("y[{}]", i);
+              does_match = false;
+              break;
+            }
+          }
+        }
+        does_match
+      })
+      .collect();
+
+    // if not all "checks" are true then set "does_match" to false
+    if checks.iter().any(|check| !check) {
+      does_match = false;
+    }
+  }
+  match does_match {
+    true => {
+      println!("results match");
+      Ok(())
+    }
+    false => Err(anyhow::anyhow!("results do not match")),
+  }
 }

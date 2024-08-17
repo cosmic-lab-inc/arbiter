@@ -67,8 +67,16 @@ impl Dataset {
     self.0.iter().map(|d| d.x()).collect()
   }
 
+  pub fn x_rev(&self) -> Vec<i64> {
+    self.0.iter().rev().map(|d| d.x()).collect()
+  }
+
   pub fn y(&self) -> Vec<f64> {
     self.0.iter().map(|d| d.y()).collect()
+  }
+
+  pub fn y_rev(&self) -> Vec<f64> {
+    self.0.iter().rev().map(|d| d.y()).collect()
   }
 
   pub fn data(&self) -> &Vec<Data> {
@@ -77,6 +85,11 @@ impl Dataset {
 
   pub fn cloned(&self) -> Self {
     Self::new(self.0.clone())
+  }
+
+  pub fn rev_cloned(&self) -> Self {
+    let data = self.0.clone().into_iter().rev().collect();
+    Self::new(data)
   }
 
   pub fn len(&self) -> usize {
@@ -240,24 +253,24 @@ impl Dataset {
     )
   }
 
-  pub fn training_data(&self, extrapolate: usize) -> (Self, Self) {
-    let training = Self::new(
+  pub fn sample(&self, out_of_sample_offset: usize) -> (Self, Self) {
+    let in_sample = Self::new(
       self
         .0
         .iter()
-        .take(self.len() - extrapolate)
+        .take(self.len() - out_of_sample_offset)
         .cloned()
         .collect(),
     );
-    let expected = Self::new(
+    let out_sample = Self::new(
       self
         .0
         .iter()
-        .skip(self.len() - extrapolate)
+        .skip(self.len() - out_of_sample_offset)
         .cloned()
         .collect(),
     );
-    (training, expected)
+    (in_sample, out_sample)
   }
 }
 
