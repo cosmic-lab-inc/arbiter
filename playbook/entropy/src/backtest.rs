@@ -42,16 +42,12 @@ impl EntropyBacktest {
   }
 
   fn generate_signals(&self) -> anyhow::Result<Signals> {
-    let series = Dataset::new(self.cache.vec());
+    let mut enter_long = false;
+    let mut exit_long = false;
+    let mut enter_short = false;
+    let mut exit_short = false;
 
-    // let FFT { filtered, .. } = fft(series.clone(), 100)?;
-    // let series = filtered.unwrap();
-    //
-    // let FFT { predicted, .. } = dft_extrapolate(series.clone(), 25, 3, true)?;
-    // let predicted = predicted.unwrap().y();
-    // let predicted_last = *predicted.last().unwrap();
-    // let predicted_first = *predicted.first().unwrap();
-    // let predicted_delta = predicted_last - predicted_first;
+    let series = Dataset::new(self.cache.vec());
 
     let y_series = series.y();
     let signal = match self.entropy_bits {
@@ -59,11 +55,6 @@ impl EntropyBacktest {
       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
     };
-
-    let mut enter_long = false;
-    let mut exit_long = false;
-    let mut enter_short = false;
-    let mut exit_short = false;
 
     match self.entropy_zscore_cutoff {
       Some(cutoff) => {
@@ -82,35 +73,17 @@ impl EntropyBacktest {
           }
         }
       }
-      None => {
-        // match signal {
-        //   EntropySignal::Up => {
-        //     if predicted_delta > 0.0 {
-        //       enter_long = true;
-        //       exit_short = true;
-        //     }
-        //   }
-        //   EntropySignal::Down => {
-        //     if predicted_delta < 0.0 {
-        //       enter_short = true;
-        //       exit_long = true;
-        //     }
-        //   }
-        //   _ => {}
-        // }
-
-        match signal {
-          EntropySignal::Up => {
-            enter_long = true;
-            exit_short = true;
-          }
-          EntropySignal::Down => {
-            enter_short = true;
-            exit_long = true;
-          }
-          _ => {}
+      None => match signal {
+        EntropySignal::Up => {
+          enter_long = true;
+          exit_short = true;
         }
-      }
+        EntropySignal::Down => {
+          enter_short = true;
+          exit_long = true;
+        }
+        _ => {}
+      },
     }
 
     Ok(Signals {
@@ -974,79 +947,104 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let summaries: Vec<(usize, Summary)> = (bits.patterns()..1_000)
+  let period_range = bits.patterns()..200;
+  let zscore_range = [
+    None,
+    Some(1.0),
+    Some(1.25),
+    Some(1.5),
+    Some(1.75),
+    Some(2.0),
+    Some(2.25),
+    Some(2.5),
+    Some(2.75),
+    Some(3.0),
+  ];
+
+  let mut summaries: Vec<(usize, Summary)> = period_range
     .into_par_iter()
     .flat_map(|period| {
-      let strat = EntropyBacktest::new(period, bits, None, ticker.clone(), stop_loss);
-      let mut backtest = Backtest::builder(strat)
-        .fee(fee)
-        .slippage(slippage)
-        .bet(bet)
-        .leverage(leverage)
-        .short_selling(short_selling);
+      let summaries: Vec<(usize, Summary)> = zscore_range
+        .into_par_iter()
+        .flat_map(|zscore| {
+          let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
+          let mut backtest = Backtest::builder(strat)
+            .fee(fee)
+            .slippage(slippage)
+            .bet(bet)
+            .leverage(leverage)
+            .short_selling(short_selling);
 
-      backtest
-        .series
-        .insert(ticker.clone(), series.data().clone());
+          backtest
+            .series
+            .insert(ticker.clone(), series.data().clone());
 
-      Result::<_, anyhow::Error>::Ok((period, backtest.backtest()?))
+          Result::<_, anyhow::Error>::Ok((period, backtest.backtest()?))
+        })
+        .collect();
+      Result::<_, anyhow::Error>::Ok(summaries)
     })
+    .flatten()
     .collect();
 
-  // summary with the best roi
+  // top 3 roi
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| a.pct_roi(&ticker).partial_cmp(&b.pct_roi(&ticker)).unwrap())
-      .unwrap();
+    summaries
+      .sort_by(|(_, a), (_, b)| a.pct_roi(&ticker).partial_cmp(&b.pct_roi(&ticker)).unwrap());
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by ROI ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for (period, summary) in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.max_drawdown(&ticker)
+      );
+    }
   }
 
-  // summary with the best sharpe ratio
+  // top 3 by sharpe ratio
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| {
-        a.sharpe_ratio(&ticker, Timeframe::OneDay)
-          .partial_cmp(&b.sharpe_ratio(&ticker, Timeframe::OneDay))
-          .unwrap()
-      })
-      .unwrap();
+    summaries.sort_by(|(_, a), (_, b)| {
+      a.sharpe_ratio(&ticker, Timeframe::OneDay)
+        .partial_cmp(&b.sharpe_ratio(&ticker, Timeframe::OneDay))
+        .unwrap()
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by Sharpe ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for (period, summary) in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.max_drawdown(&ticker)
+      );
+    }
   }
 
-  // summary with the best drawdown
+  // top 3 by drawdown
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| {
-        a.max_drawdown(&ticker)
-          .partial_cmp(&b.max_drawdown(&ticker))
-          .unwrap()
-      })
-      .unwrap();
+    summaries.sort_by(|(_, a), (_, b)| {
+      a.max_drawdown(&ticker)
+        .partial_cmp(&b.max_drawdown(&ticker))
+        .unwrap()
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by Drawdown ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for (period, summary) in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.max_drawdown(&ticker)
+      );
+    }
   }
 
   Ok(())
@@ -1057,7 +1055,7 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.25;
+  let fee = 0.0;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -1242,124 +1240,124 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   Ok(())
 }
 
-#[test]
-fn shit_test() -> anyhow::Result<()> {
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2025, 1, 1, None, None, None);
-  let timeframe = "1d";
-
-  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
-  let ticker = "BTC".to_string();
-  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
-
-  let period = 15;
-
-  let capacity = period;
-  let mut cache = RingBuffer::new(capacity, ticker);
-
-  // First method is the backtest strategy
-  let mut last_seen = None;
-  let mut second_last_seen = None;
-  let mut first_method: Vec<(Vec<f64>, EntropySignal)> = vec![];
-  for (i, data) in btc_series.data().clone().into_iter().enumerate() {
-    cache.push(data);
-    if cache.vec.len() < capacity {
-      continue;
-    }
-    let series = Dataset::new(cache.vec());
-
-    if last_seen.is_some() {
-      if second_last_seen.is_none() {
-        println!("#1 second seen at {}: {:?}", i, series.y());
-      }
-      second_last_seen = last_seen.clone();
-    }
-
-    if last_seen.is_none() {
-      println!("#1 first seen at {}: {:?}", i, series.y());
-    }
-
-    last_seen = Some(series.y());
-
-    let signal = two_step_entropy_signal(series.cloned(), period)?;
-    let y = series.y();
-    first_method.push((y, signal));
-  }
-
-  if let Some(last_seen) = last_seen {
-    println!("#1 last seen: {:?}", last_seen);
-  }
-  if let Some(second_last_seen) = second_last_seen {
-    println!("#1 second_last_seen: {:?}", second_last_seen);
-  }
-
-  // Second method is the isolated entropy test
-  let second_method: Vec<(Vec<f64>, EntropySignal)> =
-    _two_step_entropy_signals(btc_series, period)?;
-
-  // deep equality check first_method and second_method
-  let mut does_match = true;
-
-  if first_method.len() != second_method.len() {
-    println!(
-      "result lengths do not match, {} != {}",
-      first_method.len(),
-      second_method.len()
-    );
-    does_match = false;
-  }
-
-  if does_match {
-    let checks: Vec<bool> = (0..first_method.len())
-      .map(|i| {
-        let mut does_match = true;
-
-        let first: &(Vec<f64>, EntropySignal) = &first_method[i];
-        let (first_data, first_signal) = first;
-        let second: &(Vec<f64>, EntropySignal) = &second_method[i];
-        let (second_data, second_signal) = second;
-
-        if first_data.len() != second_data.len() {
-          println!(
-            "lengths[{}], {} != {}",
-            i,
-            first_data.len(),
-            second_data.len()
-          );
-          does_match = false;
-        }
-
-        if does_match {
-          // check if first_signal and second_signal match
-          if first_signal != second_signal {
-            println!("signals[{}], {:?} != {:?}", i, first_signal, second_signal);
-            does_match = false;
-          }
-        }
-
-        if does_match {
-          for (first, second) in first_data.iter().zip(second_data.iter()) {
-            if first != second {
-              println!("y[{}]", i);
-              does_match = false;
-              break;
-            }
-          }
-        }
-        does_match
-      })
-      .collect();
-
-    // if not all "checks" are true then set "does_match" to false
-    if checks.iter().any(|check| !check) {
-      does_match = false;
-    }
-  }
-  match does_match {
-    true => {
-      println!("results match");
-      Ok(())
-    }
-    false => Err(anyhow::anyhow!("results do not match")),
-  }
-}
+// #[test]
+// fn shit_test() -> anyhow::Result<()> {
+//   let start_time = Time::new(2017, 1, 1, None, None, None);
+//   let end_time = Time::new(2025, 1, 1, None, None, None);
+//   let timeframe = "1d";
+//
+//   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+//   let ticker = "BTC".to_string();
+//   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+//
+//   let period = 15;
+//
+//   let capacity = period;
+//   let mut cache = RingBuffer::new(capacity, ticker);
+//
+//   // First method is the backtest strategy
+//   let mut last_seen = None;
+//   let mut second_last_seen = None;
+//   let mut first_method: Vec<(Vec<f64>, EntropySignal)> = vec![];
+//   for (i, data) in btc_series.data().clone().into_iter().enumerate() {
+//     cache.push(data);
+//     if cache.vec.len() < capacity {
+//       continue;
+//     }
+//     let series = Dataset::new(cache.vec());
+//
+//     if last_seen.is_some() {
+//       if second_last_seen.is_none() {
+//         println!("#1 second seen at {}: {:?}", i, series.y());
+//       }
+//       second_last_seen = last_seen.clone();
+//     }
+//
+//     if last_seen.is_none() {
+//       println!("#1 first seen at {}: {:?}", i, series.y());
+//     }
+//
+//     last_seen = Some(series.y());
+//
+//     let signal = two_step_entropy_signal(series.cloned(), period)?;
+//     let y = series.y();
+//     first_method.push((y, signal));
+//   }
+//
+//   if let Some(last_seen) = last_seen {
+//     println!("#1 last seen: {:?}", last_seen);
+//   }
+//   if let Some(second_last_seen) = second_last_seen {
+//     println!("#1 second_last_seen: {:?}", second_last_seen);
+//   }
+//
+//   // Second method is the isolated entropy test
+//   let second_method: Vec<(Vec<f64>, EntropySignal)> =
+//     _two_step_entropy_signals(btc_series, period)?;
+//
+//   // deep equality check first_method and second_method
+//   let mut does_match = true;
+//
+//   if first_method.len() != second_method.len() {
+//     println!(
+//       "result lengths do not match, {} != {}",
+//       first_method.len(),
+//       second_method.len()
+//     );
+//     does_match = false;
+//   }
+//
+//   if does_match {
+//     let checks: Vec<bool> = (0..first_method.len())
+//       .map(|i| {
+//         let mut does_match = true;
+//
+//         let first: &(Vec<f64>, EntropySignal) = &first_method[i];
+//         let (first_data, first_signal) = first;
+//         let second: &(Vec<f64>, EntropySignal) = &second_method[i];
+//         let (second_data, second_signal) = second;
+//
+//         if first_data.len() != second_data.len() {
+//           println!(
+//             "lengths[{}], {} != {}",
+//             i,
+//             first_data.len(),
+//             second_data.len()
+//           );
+//           does_match = false;
+//         }
+//
+//         if does_match {
+//           // check if first_signal and second_signal match
+//           if first_signal != second_signal {
+//             println!("signals[{}], {:?} != {:?}", i, first_signal, second_signal);
+//             does_match = false;
+//           }
+//         }
+//
+//         if does_match {
+//           for (first, second) in first_data.iter().zip(second_data.iter()) {
+//             if first != second {
+//               println!("y[{}]", i);
+//               does_match = false;
+//               break;
+//             }
+//           }
+//         }
+//         does_match
+//       })
+//       .collect();
+//
+//     // if not all "checks" are true then set "does_match" to false
+//     if checks.iter().any(|check| !check) {
+//       does_match = false;
+//     }
+//   }
+//   match does_match {
+//     true => {
+//       println!("results match");
+//       Ok(())
+//     }
+//     false => Err(anyhow::anyhow!("results do not match")),
+//   }
+// }

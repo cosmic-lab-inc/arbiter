@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 
-use crate::fft::hurst;
 use crate::trade::{Bet, Signal, SignalInfo};
 use crate::Backtest;
 use crate::Strategy;

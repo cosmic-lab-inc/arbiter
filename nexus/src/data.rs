@@ -1,4 +1,4 @@
-use crate::{Bar, Time};
+use crate::{derivative, slope, Bar, Time};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -271,6 +271,22 @@ impl Dataset {
         .collect(),
     );
     (in_sample, out_sample)
+  }
+
+  pub fn derivative(&self) -> Self {
+    let y = derivative(self.y().as_slice());
+    let data = self
+      .0
+      .iter()
+      .map(|d| d.x())
+      .zip(y.iter())
+      .map(|(x, &y)| Data { x, y })
+      .collect();
+    Self::new(data)
+  }
+
+  pub fn slope(&self) -> f64 {
+    slope(self.y().as_slice())
   }
 }
 
