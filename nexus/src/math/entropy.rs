@@ -32,12 +32,12 @@ pub enum EntropySignal {
 }
 impl PartialEq for EntropySignal {
   fn eq(&self, other: &Self) -> bool {
-    match (self, other) {
-      (EntropySignal::Up, EntropySignal::Up) => true,
-      (EntropySignal::Down, EntropySignal::Down) => true,
-      (EntropySignal::None, EntropySignal::None) => true,
-      _ => false,
-    }
+    matches!(
+      (self, other),
+      (EntropySignal::Up, EntropySignal::Up)
+        | (EntropySignal::Down, EntropySignal::Down)
+        | (EntropySignal::None, EntropySignal::None)
+    )
   }
 }
 impl Eq for EntropySignal {}
@@ -77,8 +77,9 @@ pub fn one_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let mut b1 = series.y().clone();
   let mut b0 = series.y().clone();
 
-  b1[0] = series.0[0].y + 1.0;
-  b0[0] = series.0[0].y - 1.0;
+  let li = series.len() - 1;
+  b1[li] = series.0[li].y + 1.0;
+  b0[li] = series.0[li].y - 1.0;
 
   let length = period + 1;
   let patterns = EntropyBits::One.patterns();
@@ -86,15 +87,17 @@ pub fn one_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let entropy_b0 = shannon_entropy(&b0, length, patterns);
 
   let last_index = series.len() - 1;
-  let p0 = &series.0[last_index];
-  let p1 = &series.0[last_index - EntropyBits::One.bits()];
+  let p0 = series.0[li].y;
+  let p1 = series.0[li - EntropyBits::One.bits()].y;
 
   let max = entropy_b1.max(entropy_b0);
 
   // original
-  Ok(if max == entropy_b1 && p1.y > p0.y {
+  Ok(if max == entropy_b1 {
+    //&& p1 < p0 {
     EntropySignal::Up
-  } else if max == entropy_b0 && p1.y < p0.y {
+  } else if max == entropy_b0 {
+    //&& p1 > p0 {
     EntropySignal::Down
   } else {
     EntropySignal::None
@@ -107,17 +110,18 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let mut b10 = series.y();
   let mut b01 = series.y();
 
-  b11[1] = series.0[0].y + 1.0;
-  b11[0] = b11[1] + 1.0;
+  let last_index = series.len() - 1;
+  b11[last_index - 1] = series.0[last_index].y + 1.0;
+  b11[last_index] = b11[last_index - 1] + 1.0;
 
-  b00[1] = series.0[0].y - 1.0;
-  b00[0] = b00[1] - 1.0;
+  b00[last_index - 1] = series.0[last_index].y - 1.0;
+  b00[last_index] = b00[last_index - 1] - 1.0;
 
-  b10[1] = series.0[0].y + 1.0;
-  b10[0] = b10[1] - 1.0;
+  b10[last_index - 1] = series.0[last_index].y + 1.0;
+  b10[last_index] = b10[last_index - 1] - 1.0;
 
-  b01[1] = series.0[0].y - 1.0;
-  b01[0] = b01[1] + 1.0;
+  b01[last_index - 1] = series.0[last_index].y - 1.0;
+  b01[last_index] = b01[last_index - 1] + 1.0;
 
   // todo: this should be the period, right?
   let length = period + 1;
@@ -127,7 +131,6 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let entropy_b10 = shannon_entropy(&b10, length, patterns);
   let entropy_b01 = shannon_entropy(&b01, length, patterns);
 
-  let last_index = series.len() - 1;
   let p0 = &series.0[last_index].y;
   let p2 = &series.0[last_index - EntropyBits::Two.bits()].y;
 
@@ -136,94 +139,98 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
     .max(entropy_b10)
     .max(entropy_b01);
 
-  Ok(if max == entropy_b11 && p2 > p0 {
+  Ok(if max == entropy_b11 {
+    //&& p2 > p0 {
     EntropySignal::Up
-  } else if max == entropy_b00 && p2 < p0 {
+  } else if max == entropy_b00 {
+    //&& p2 < p0 {
     EntropySignal::Down
   } else {
     EntropySignal::None
   })
 }
 
-// pub fn _two_step_entropy_signals(
-//   series: Dataset,
-//   period: usize,
-// ) -> anyhow::Result<Vec<(Vec<f64>, EntropySignal)>> {
-//   let bits = EntropyBits::Two.bits();
-//   let patterns = EntropyBits::Two.patterns();
-//
-//   let mut signals = vec![];
-//
-//   let mut last_seen = None;
-//   let mut second_last_seen = None;
-//   let y = series.y();
-//   for i in 0..y.len() - period + 1 {
-//     let data = y[i..i + period].to_vec();
-//
-//     if last_seen.is_some() {
-//       if second_last_seen.is_none() {
-//         println!("#2 second seen at {}: {:?}", i, data.clone());
-//       }
-//       second_last_seen = last_seen.clone();
-//     }
-//
-//     if last_seen.is_none() {
-//       println!("#2 first seen at {}: {:?}", i, data);
-//     }
-//
-//     last_seen = Some(data.clone());
-//
-//     let mut b11 = data.clone();
-//     let mut b00 = data.clone();
-//     let mut b10 = data.clone();
-//     let mut b01 = data.clone();
-//
-//     b11[1] = data[0] + 1.0;
-//     b11[0] = b11[1] + 1.0;
-//
-//     b00[1] = data[0] - 1.0;
-//     b00[0] = b00[1] - 1.0;
-//
-//     b10[1] = data[0] + 1.0;
-//     b10[0] = b10[1] - 1.0;
-//
-//     b01[1] = data[0] - 1.0;
-//     b01[0] = b01[1] + 1.0;
-//
-//     // todo: this should be the period, right?
-//     let length = period + 1;
-//     let entropy_b11 = shannon_entropy(&b11, length, patterns);
-//     let entropy_b00 = shannon_entropy(&b00, length, patterns);
-//     let entropy_b10 = shannon_entropy(&b10, length, patterns);
-//     let entropy_b01 = shannon_entropy(&b01, length, patterns);
-//
-//     let last_index = data.len() - 1;
-//     let p0 = data[last_index];
-//     let p2 = data[last_index - bits];
-//
-//     let max = entropy_b11
-//       .max(entropy_b00)
-//       .max(entropy_b10)
-//       .max(entropy_b01);
-//
-//     if max == entropy_b11 && p2 > p0 {
-//       signals.push((data, EntropySignal::Up));
-//     } else if max == entropy_b00 && p2 < p0 {
-//       signals.push((data, EntropySignal::Down));
-//     } else {
-//       signals.push((data, EntropySignal::None));
-//     }
-//   }
-//
-//   if let Some(seen) = last_seen {
-//     println!("#2 last seen: {:?}", seen);
-//   }
-//   if let Some(second_last_seen) = second_last_seen {
-//     println!("#2 second_last_seen: {:?}", second_last_seen);
-//   }
-//
-//   Ok(signals)
-// }
+pub fn shit_test_two_step_entropy_signals(
+  series: Dataset,
+  period: usize,
+) -> anyhow::Result<Vec<(Vec<f64>, EntropySignal)>> {
+  let bits = EntropyBits::Two.bits();
+  let patterns = EntropyBits::Two.patterns();
+
+  let mut signals = vec![];
+
+  let mut last_seen = None;
+  let mut second_last_seen = None;
+  let y = series.y();
+  for i in 0..y.len() - period + 1 {
+    let data = y[i..i + period].to_vec();
+
+    if last_seen.is_some() {
+      if second_last_seen.is_none() {
+        println!("#2 second seen at {}: {:?}", i, data.clone());
+      }
+      second_last_seen = last_seen.clone();
+    }
+
+    if last_seen.is_none() {
+      println!("#2 first seen at {}: {:?}", i, data);
+    }
+
+    last_seen = Some(data.clone());
+
+    let mut b11 = data.clone();
+    let mut b00 = data.clone();
+    let mut b10 = data.clone();
+    let mut b01 = data.clone();
+
+    let li = data.len() - 1;
+    b11[li - 1] = data[li] + 1.0;
+    b11[li] = b11[li - 1] + 1.0;
+
+    b00[li - 1] = data[li] - 1.0;
+    b00[li] = b00[li - 1] - 1.0;
+
+    b10[li - 1] = data[li] + 1.0;
+    b10[li] = b10[li - 1] - 1.0;
+
+    b01[li - 1] = data[li] - 1.0;
+    b01[li] = b01[li - 1] + 1.0;
+
+    // todo: this should be the period, right?
+    let length = period + 1;
+    let entropy_b11 = shannon_entropy(&b11, length, patterns);
+    let entropy_b00 = shannon_entropy(&b00, length, patterns);
+    let entropy_b10 = shannon_entropy(&b10, length, patterns);
+    let entropy_b01 = shannon_entropy(&b01, length, patterns);
+
+    let p0 = data[li];
+    let p2 = data[li - bits];
+
+    let max = entropy_b11
+      .max(entropy_b00)
+      .max(entropy_b10)
+      .max(entropy_b01);
+
+    if max == entropy_b11 {
+      //&& p2 > p0 {
+      signals.push((data, EntropySignal::Up));
+    } else if max == entropy_b00 {
+      //&& p2 < p0 {
+      signals.push((data, EntropySignal::Down));
+    } else {
+      signals.push((data, EntropySignal::None));
+    }
+  }
+
+  if let Some(seen) = last_seen {
+    println!("#2 last seen: {:?}", seen);
+  }
+  if let Some(second_last_seen) = second_last_seen {
+    println!("#2 second_last_seen: {:?}", second_last_seen);
+  }
+
+  Ok(signals)
+}
 
 pub fn three_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result<EntropySignal> {
   let mut b111 = series.y().clone();
@@ -235,37 +242,38 @@ pub fn three_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Resu
   let mut b100 = series.y().clone();
   let mut b001 = series.y().clone();
 
-  b111[2] = series.0[0].y + 1.0;
-  b111[1] = b111[2] + 1.0;
-  b111[0] = b111[1] + 1.0;
+  let li = series.len() - 1;
+  b111[li - 2] = series.0[li].y + 1.0;
+  b111[li - 1] = b111[li - 2] + 1.0;
+  b111[li] = b111[li - 1] + 1.0;
 
-  b000[2] = series.0[0].y - 1.0;
-  b000[1] = b000[2] - 1.0;
-  b000[0] = b000[1] - 1.0;
+  b000[li - 2] = series.0[li].y - 1.0;
+  b000[li - 1] = b000[li - 2] - 1.0;
+  b000[li] = b000[li - 1] - 1.0;
 
-  b110[2] = series.0[0].y + 1.0;
-  b110[1] = b110[2] + 1.0;
-  b110[0] = b110[1] - 1.0;
+  b110[li - 2] = series.0[li].y + 1.0;
+  b110[li - 1] = b110[li - 2] + 1.0;
+  b110[li] = b110[li - 1] - 1.0;
 
-  b011[2] = series.0[0].y - 1.0;
-  b011[1] = b011[2] + 1.0;
-  b011[0] = b011[1] + 1.0;
+  b011[li - 2] = series.0[li].y - 1.0;
+  b011[li - 1] = b011[li - 2] + 1.0;
+  b011[li] = b011[li - 1] + 1.0;
 
-  b101[2] = series.0[0].y + 1.0;
-  b101[1] = b101[2] - 1.0;
-  b101[0] = b101[1] + 1.0;
+  b101[li - 2] = series.0[li].y + 1.0;
+  b101[li - 1] = b101[li - 2] - 1.0;
+  b101[li] = b101[li - 1] + 1.0;
 
-  b010[2] = series.0[0].y - 1.0;
-  b010[1] = b010[2] + 1.0;
-  b010[0] = b010[1] - 1.0;
+  b010[li - 2] = series.0[li].y - 1.0;
+  b010[li - 1] = b010[li - 2] + 1.0;
+  b010[li] = b010[li - 1] - 1.0;
 
-  b100[2] = series.0[0].y + 1.0;
-  b100[1] = b100[2] - 1.0;
-  b100[0] = b100[1] - 1.0;
+  b100[li - 2] = series.0[li].y + 1.0;
+  b100[li - 1] = b100[li - 2] - 1.0;
+  b100[li] = b100[li - 1] - 1.0;
 
-  b001[2] = series.0[0].y - 1.0;
-  b001[1] = b001[2] - 1.0;
-  b001[0] = b001[1] + 1.0;
+  b001[li - 2] = series.0[li].y - 1.0;
+  b001[li - 1] = b001[li - 2] - 1.0;
+  b001[li] = b001[li - 1] + 1.0;
 
   let length = period + 1;
   let patterns = EntropyBits::Three.patterns();
@@ -278,9 +286,8 @@ pub fn three_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Resu
   let entropy_b100 = shannon_entropy(&b100, length, patterns);
   let entropy_b001 = shannon_entropy(&b001, length, patterns);
 
-  let last_index = series.len() - 1;
-  let p0 = &series.0[last_index];
-  let p3 = &series.0[last_index - EntropyBits::Three.bits()];
+  let p0 = series.0[li].y;
+  let p3 = series.0[li - EntropyBits::Three.bits()].y;
 
   let max = entropy_b111
     .max(entropy_b000)
@@ -292,9 +299,11 @@ pub fn three_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Resu
     .max(entropy_b001);
 
   // original
-  Ok(if max == entropy_b111 && p3.y > p0.y {
+  Ok(if max == entropy_b111 {
+    //&& p3 < p0 {
     EntropySignal::Up
-  } else if max == entropy_b000 && p3.y < p0.y {
+  } else if max == entropy_b000 {
+    //&& p3 > p0 {
     EntropySignal::Down
   } else {
     EntropySignal::None

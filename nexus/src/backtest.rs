@@ -344,7 +344,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
         },
       );
       let mut active_trades: HashMap<String, HashSet<Trade>> = HashMap::new();
-      for (ticker, series) in series.iter() {
+      for (ticker, series) in self.series.iter() {
         let initial_price = series.first().unwrap().y;
         // populate active trades with None values for each ticker so getter doesn't panic
         active_trades.insert(ticker.clone(), HashSet::new());
