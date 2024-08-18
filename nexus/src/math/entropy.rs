@@ -107,30 +107,17 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let mut b10 = series.y();
   let mut b01 = series.y();
 
-  // b11[1] = series.0[0].y + 1.0;
-  // b11[0] = b11[1] + 1.0;
-  //
-  // b00[1] = series.0[0].y - 1.0;
-  // b00[0] = b00[1] - 1.0;
-  //
-  // b10[1] = series.0[0].y + 1.0;
-  // b10[0] = b10[1] - 1.0;
-  //
-  // b01[1] = series.0[0].y - 1.0;
-  // b01[0] = b01[1] + 1.0;
+  b11[1] = series.0[0].y + 1.0;
+  b11[0] = b11[1] + 1.0;
 
-  let last_index = series.len() - 1;
-  b11[last_index - 1] = series.0[last_index].y + 1.0;
-  b11[last_index] = b11[last_index - 1] + 1.0;
+  b00[1] = series.0[0].y - 1.0;
+  b00[0] = b00[1] - 1.0;
 
-  b00[last_index - 1] = series.0[last_index].y - 1.0;
-  b00[last_index] = b00[last_index - 1] - 1.0;
+  b10[1] = series.0[0].y + 1.0;
+  b10[0] = b10[1] - 1.0;
 
-  b10[last_index - 1] = series.0[0].y + 1.0;
-  b10[last_index] = b10[last_index - 1] - 1.0;
-
-  b01[last_index - 1] = series.0[0].y - 1.0;
-  b01[last_index] = b01[last_index - 1] + 1.0;
+  b01[1] = series.0[0].y - 1.0;
+  b01[0] = b01[1] + 1.0;
 
   // todo: this should be the period, right?
   let length = period + 1;
@@ -149,23 +136,15 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
     .max(entropy_b10)
     .max(entropy_b01);
 
-  // Ok(if max == entropy_b11 && p2 > p0 {
-  //   EntropySignal::Up
-  // } else if max == entropy_b00 && p2 < p0 {
-  //   EntropySignal::Down
-  // } else {
-  //   EntropySignal::None
-  // })
-
-  Ok(if max == entropy_b11 && p2 < p0 {
+  Ok(if max == entropy_b11 && p2 > p0 {
     EntropySignal::Up
-  } else if max == entropy_b00 && p2 > p0 {
+  } else if max == entropy_b00 && p2 < p0 {
     EntropySignal::Down
   } else {
     EntropySignal::None
   })
 }
-//
+
 // pub fn _two_step_entropy_signals(
 //   series: Dataset,
 //   period: usize,

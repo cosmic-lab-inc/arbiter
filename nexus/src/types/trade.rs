@@ -2,6 +2,7 @@
 
 use crate::{trunc, Dataset, Time};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -176,10 +177,7 @@ impl Summary {
     println!("==== {} Backtest Summary ====", ticker);
     println!("Return: {}%", self.pct_roi(ticker));
     println!("Return: ${}", self.quote_roi(ticker));
-    println!(
-      "Sharpe Ratio: {}",
-      self.sharpe_ratio(ticker, Timeframe::OneDay)
-    );
+    println!("Sharpe Ratio: {}", self.sharpe_ratio(ticker));
     println!("Total Trades: {}", self.total_trades(ticker));
     println!("Win Rate: {}%", self.win_rate(ticker));
     println!("Avg Trade Size: ${}", self.avg_trade_size(ticker).unwrap());
@@ -279,7 +277,7 @@ impl Summary {
     }
   }
 
-  pub fn sharpe_ratio(&self, ticker: &str, timeframe: Timeframe) -> f64 {
+  pub fn sharpe_ratio(&self, ticker: &str) -> f64 {
     if self.total_trades(ticker) == 0 {
       return 0.0;
     }
@@ -294,13 +292,7 @@ impl Summary {
     let avg = pct.iter().sum::<f64>() / pct.len() as f64;
     let variance = pct.iter().map(|p| (p - avg).powi(2)).sum::<f64>() / pct.len() as f64;
     let std_dev = variance.sqrt();
-
-    let sharpe = match timeframe {
-      Timeframe::OneMinute => avg / std_dev,
-      Timeframe::OneHour => avg / std_dev,
-      Timeframe::OneDay => avg / std_dev,
-    };
-    // let sharpe = (avg / std_dev) * (252.0f64.sqrt());
+    let sharpe = avg / std_dev;
     trunc!(sharpe, 3)
   }
 
@@ -427,6 +419,43 @@ impl Summary {
   }
 }
 
+pub enum Metric {
+  PctRoi,
+  SharpeRatio,
+  MaxDrawdown,
+}
+pub fn sort_summaries(
+  summaries: &mut [Summary],
+  ticker: &str,
+  metric: Metric,
+  take: usize,
+) -> Vec<Summary> {
+  match metric {
+    Metric::PctRoi => {
+      summaries.sort_by(|a, b| {
+        b.pct_roi(ticker)
+          .partial_cmp(&a.pct_roi(ticker))
+          .unwrap_or(Ordering::Equal)
+      });
+    }
+    Metric::SharpeRatio => {
+      summaries.sort_by(|a, b| {
+        b.sharpe_ratio(ticker)
+          .partial_cmp(&a.sharpe_ratio(ticker))
+          .unwrap_or(Ordering::Equal)
+      });
+    }
+    Metric::MaxDrawdown => {
+      summaries.sort_by(|a, b| {
+        b.max_drawdown(ticker)
+          .partial_cmp(&a.max_drawdown(ticker))
+          .unwrap_or(Ordering::Equal)
+      });
+    }
+  }
+  summaries.iter().take(take).cloned().collect::<Vec<_>>()
+}
+
 pub const CASH_TICKER: &str = "USD";
 
 #[derive(Debug, Clone, Default)]
@@ -501,11 +530,11 @@ impl From<&str> for Timeframe {
 }
 impl PartialEq for Timeframe {
   fn eq(&self, other: &Self) -> bool {
-    match (self, other) {
-      (Timeframe::OneMinute, Timeframe::OneMinute) => true,
-      (Timeframe::OneHour, Timeframe::OneHour) => true,
-      (Timeframe::OneDay, Timeframe::OneDay) => true,
-      _ => false,
-    }
+    matches!(
+      (self, other),
+      (Timeframe::OneMinute, Timeframe::OneMinute)
+        | (Timeframe::OneHour, Timeframe::OneHour)
+        | (Timeframe::OneDay, Timeframe::OneDay)
+    )
   }
 }

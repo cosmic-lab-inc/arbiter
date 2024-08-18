@@ -170,6 +170,69 @@ impl Strategy<Data> for FourierBacktest {
 // ==========================================================================================
 
 #[test]
+fn extrap_methods() -> anyhow::Result<()> {
+  let start_time = Time::new(2019, 3, 1, None, None, None);
+  let end_time = Time::new(2019, 4, 1, None, None, None);
+  let timeframe = "1h";
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let dominant_freq_cutoff = 25;
+  let extrap_only = false;
+  let extrapolate = 100;
+
+  let (in_sample, out_sample) = btc_series.enumerate_map().sample(extrapolate);
+
+  let FFT { predicted, .. } = dft_extrapolate(
+    in_sample.clone(),
+    dominant_freq_cutoff,
+    extrapolate,
+    extrap_only,
+  )?;
+
+  // let quad_lsr = quad_lsr_extrap(in_sample.clone(), extrapolate, extrap_only);
+  // let cubic_lsr = cubic_lsr_extrap(in_sample.clone(), extrapolate, extrap_only);
+  // let varpro = varpro_lsr_extrap(in_sample.clone(), extrapolate, extrap_only);
+
+  Plot::plot(
+    vec![
+      Series {
+        data: in_sample.0,
+        label: "In Sample".to_string(),
+      },
+      Series {
+        data: out_sample.0,
+        label: "Out Sample".to_string(),
+      },
+      Series {
+        data: predicted.unwrap().0,
+        label: "DFT".to_string(),
+      },
+      // Series {
+      //   data: cubic_lsr.0,
+      //   label: "Quadratic LSR".to_string(),
+      // },
+      // Series {
+      //   data: quad_lsr.0,
+      //   label: "Cubic LSR".to_string(),
+      // },
+      // Series {
+      //   data: varpro.0,
+      //   label: "VarPro LSR".to_string(),
+      // },
+    ],
+    "btc_extrap_methods.png",
+    "BTC Extrapolation",
+    "Price",
+    "Time",
+    Some(false),
+  )?;
+
+  Ok(())
+}
+
+#[test]
 fn test_fft_extrap() -> anyhow::Result<()> {
   let start_time = Time::new(2017, 1, 1, None, None, None);
   let end_time = Time::new(2025, 1, 1, None, None, None);

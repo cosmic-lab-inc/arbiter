@@ -930,132 +930,7 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.05;
-  let slippage = 0.0;
-  let stop_loss = None;
-  let bet = Bet::Percent(100.0);
-  let leverage = 1;
-  let short_selling = true;
-
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 7, 1, None, None, None);
-  let timeframe = "1d";
-
-  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
-  let ticker = "BTC".to_string();
-  let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
-
-  let bits = EntropyBits::Two;
-
-  let period_range = bits.patterns()..200;
-  let zscore_range = [
-    None,
-    Some(1.0),
-    Some(1.25),
-    Some(1.5),
-    Some(1.75),
-    Some(2.0),
-    Some(2.25),
-    Some(2.5),
-    Some(2.75),
-    Some(3.0),
-  ];
-
-  let mut summaries: Vec<(usize, Summary)> = period_range
-    .into_par_iter()
-    .flat_map(|period| {
-      let summaries: Vec<(usize, Summary)> = zscore_range
-        .into_par_iter()
-        .flat_map(|zscore| {
-          let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
-          let mut backtest = Backtest::builder(strat)
-            .fee(fee)
-            .slippage(slippage)
-            .bet(bet)
-            .leverage(leverage)
-            .short_selling(short_selling);
-
-          backtest
-            .series
-            .insert(ticker.clone(), series.data().clone());
-
-          Result::<_, anyhow::Error>::Ok((period, backtest.backtest()?))
-        })
-        .collect();
-      Result::<_, anyhow::Error>::Ok(summaries)
-    })
-    .flatten()
-    .collect();
-
-  // top 3 roi
-  {
-    summaries
-      .sort_by(|(_, a), (_, b)| a.pct_roi(&ticker).partial_cmp(&b.pct_roi(&ticker)).unwrap());
-    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-
-    println!("--- Top by ROI ---");
-    for (period, summary) in top_3 {
-      println!(
-        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-        period,
-        summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-        summary.max_drawdown(&ticker)
-      );
-    }
-  }
-
-  // top 3 by sharpe ratio
-  {
-    summaries.sort_by(|(_, a), (_, b)| {
-      a.sharpe_ratio(&ticker, Timeframe::OneDay)
-        .partial_cmp(&b.sharpe_ratio(&ticker, Timeframe::OneDay))
-        .unwrap()
-    });
-    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-
-    println!("--- Top by Sharpe ---");
-    for (period, summary) in top_3 {
-      println!(
-        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-        period,
-        summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-        summary.max_drawdown(&ticker)
-      );
-    }
-  }
-
-  // top 3 by drawdown
-  {
-    summaries.sort_by(|(_, a), (_, b)| {
-      a.max_drawdown(&ticker)
-        .partial_cmp(&b.max_drawdown(&ticker))
-        .unwrap()
-    });
-    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-
-    println!("--- Top by Drawdown ---");
-    for (period, summary) in top_3 {
-      println!(
-        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-        period,
-        summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-        summary.max_drawdown(&ticker)
-      );
-    }
-  }
-
-  Ok(())
-}
-
-#[test]
-fn entropy_1d_backtest() -> anyhow::Result<()> {
-  use super::*;
-  dotenv::dotenv().ok();
-
-  let fee = 0.0;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -1071,7 +946,143 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let bits = EntropyBits::Two;
-  let period = 104;
+
+  let period_range = bits.patterns()..150;
+  let zscore_range = [
+    None,
+    Some(1.0),
+    Some(1.25),
+    Some(1.5),
+    Some(1.75),
+    Some(2.0),
+    Some(2.25),
+    Some(2.5),
+    Some(2.75),
+    Some(3.0),
+  ];
+
+  let start = Time::now();
+  let mut summaries: Vec<(usize, Option<f64>, Summary)> = period_range
+    .into_par_iter()
+    .flat_map(|period| {
+      let summaries: Vec<(usize, Option<f64>, Summary)> = zscore_range
+        .into_par_iter()
+        .flat_map(|zscore| {
+          let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
+          let mut backtest = Backtest::builder(strat)
+            .fee(fee)
+            .slippage(slippage)
+            .bet(bet)
+            .leverage(leverage)
+            .short_selling(short_selling);
+
+          backtest
+            .series
+            .insert(ticker.clone(), series.data().clone());
+
+          Result::<_, anyhow::Error>::Ok((period, zscore, backtest.backtest()?))
+        })
+        .collect();
+      Result::<_, anyhow::Error>::Ok(summaries)
+    })
+    .flatten()
+    .collect();
+  println!(
+    "optimized backtest in {}s",
+    Time::now().to_unix() - start.to_unix()
+  );
+
+  // top 3 roi
+  {
+    summaries.sort_by(|(_, _, a), (_, _, b)| {
+      b.pct_roi(&ticker)
+        .partial_cmp(&a.pct_roi(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
+    println!("--- Top by ROI ---");
+    for (period, zscore, summary) in top_3 {
+      println!(
+        "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        zscore,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker),
+        summary.max_drawdown(&ticker)
+      );
+    }
+  }
+
+  // top 3 by sharpe ratio
+  {
+    summaries.sort_by(|(_, _, a), (_, _, b)| {
+      b.sharpe_ratio(&ticker)
+        .partial_cmp(&a.sharpe_ratio(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
+    println!("--- Top by Sharpe ---");
+    for (period, zscore, summary) in top_3 {
+      println!(
+        "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        zscore,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker),
+        summary.max_drawdown(&ticker)
+      );
+    }
+  }
+
+  // top 3 by drawdown
+  {
+    summaries.sort_by(|(_, _, a), (_, _, b)| {
+      b.max_drawdown(&ticker)
+        .partial_cmp(&a.max_drawdown(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
+    println!("--- Top by Drawdown ---");
+    for (period, zscore, summary) in top_3 {
+      println!(
+        "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
+        period,
+        zscore,
+        summary.pct_roi(&ticker),
+        summary.sharpe_ratio(&ticker),
+        summary.max_drawdown(&ticker)
+      );
+    }
+  }
+
+  Ok(())
+}
+
+#[test]
+fn entropy_1d_backtest() -> anyhow::Result<()> {
+  use super::*;
+  dotenv::dotenv().ok();
+
+  let fee = 0.05;
+  let slippage = 0.0;
+  let stop_loss = None;
+  let bet = Bet::Percent(100.0);
+  let leverage = 1;
+  let short_selling = true;
+
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let timeframe = "1d";
+
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let bits = EntropyBits::Two;
+  let period = 15;
   let zscore = None; //Some(2.5);
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
@@ -1108,7 +1119,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
   let short_selling = true;
 
   let start_time = Time::new(2019, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 1, 1, None, None, None);
+  let end_time = Time::new(2021, 1, 1, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
@@ -1117,7 +1128,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let mut summaries: Vec<(usize, Summary)> = (bits.patterns()..100)
+  let mut summaries: Vec<(usize, Summary)> = (bits.patterns()..150)
     .into_par_iter()
     .flat_map(|period| {
       let strat = EntropyBacktest::new(period, bits, None, ticker.clone(), stop_loss);
@@ -1138,8 +1149,11 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
 
   // top 3 roi
   {
-    summaries
-      .sort_by(|(_, a), (_, b)| a.pct_roi(&ticker).partial_cmp(&b.pct_roi(&ticker)).unwrap());
+    summaries.sort_by(|(_, a), (_, b)| {
+      b.pct_roi(&ticker)
+        .partial_cmp(&a.pct_roi(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
 
     println!("--- Top by ROI ---");
@@ -1148,7 +1162,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
         "period: {}, roi: {}%, sharpe: {}, dd: {}%",
         period,
         summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.sharpe_ratio(&ticker),
         summary.max_drawdown(&ticker)
       );
     }
@@ -1157,9 +1171,9 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
   // top 3 by sharpe ratio
   {
     summaries.sort_by(|(_, a), (_, b)| {
-      a.sharpe_ratio(&ticker, Timeframe::OneDay)
-        .partial_cmp(&b.sharpe_ratio(&ticker, Timeframe::OneDay))
-        .unwrap()
+      b.sharpe_ratio(&ticker)
+        .partial_cmp(&a.sharpe_ratio(&ticker))
+        .unwrap_or(Ordering::Equal)
     });
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
 
@@ -1169,7 +1183,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
         "period: {}, roi: {}%, sharpe: {}, dd: {}%",
         period,
         summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.sharpe_ratio(&ticker),
         summary.max_drawdown(&ticker)
       );
     }
@@ -1178,9 +1192,9 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
   // top 3 by drawdown
   {
     summaries.sort_by(|(_, a), (_, b)| {
-      a.max_drawdown(&ticker)
-        .partial_cmp(&b.max_drawdown(&ticker))
-        .unwrap()
+      b.max_drawdown(&ticker)
+        .partial_cmp(&a.max_drawdown(&ticker))
+        .unwrap_or(Ordering::Equal)
     });
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
 
@@ -1190,7 +1204,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
         "period: {}, roi: {}%, sharpe: {}, dd: {}%",
         period,
         summary.pct_roi(&ticker),
-        summary.sharpe_ratio(&ticker, Timeframe::OneDay),
+        summary.sharpe_ratio(&ticker),
         summary.max_drawdown(&ticker)
       );
     }

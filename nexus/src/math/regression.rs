@@ -25,8 +25,9 @@ fn quadratic_least_squares(x: &[i64], y: &[f64]) -> (f64, f64, f64) {
   // Create the design matrix for a quadratic fit
   let mut design_matrix = DMatrix::zeros(n, 3);
   for i in 0..n {
-    design_matrix[(i, 0)] = (x[i] * x[i]) as f64;
-    design_matrix[(i, 1)] = x[i] as f64;
+    let x_i = x[i] as f64;
+    design_matrix[(i, 0)] = x_i.powi(2);
+    design_matrix[(i, 1)] = x_i;
     design_matrix[(i, 2)] = 1.0;
   }
 
@@ -116,9 +117,10 @@ fn cubic_least_squares(x: &[i64], y: &[f64]) -> (f64, f64, f64, f64) {
   // Create the design matrix for a cubic fit
   let mut design_matrix = DMatrix::zeros(n, 4);
   for i in 0..n {
-    design_matrix[(i, 0)] = (x[i] * x[i] * x[i]) as f64;
-    design_matrix[(i, 1)] = (x[i] * x[i]) as f64;
-    design_matrix[(i, 2)] = x[i] as f64;
+    let x_i = x[i] as f64;
+    design_matrix[(i, 0)] = x_i.powi(3);
+    design_matrix[(i, 1)] = x_i.powi(2);
+    design_matrix[(i, 2)] = x_i;
     design_matrix[(i, 3)] = 1.0;
   }
 
