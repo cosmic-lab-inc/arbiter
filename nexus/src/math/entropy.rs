@@ -100,16 +100,6 @@ pub fn one_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   } else {
     EntropySignal::None
   })
-
-  // original
-  // let max = entropy_b1.max(entropy_b0);
-  // Ok(if max == entropy_b1 {
-  //   EntropySignal::Up
-  // } else if max == entropy_b0 {
-  //   EntropySignal::Down
-  // } else {
-  //   EntropySignal::None
-  // })
 }
 
 pub fn shit_test_one_step_entropy_signals(
@@ -217,9 +207,14 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
     .max(entropy_b10)
     .max(entropy_b01);
 
-  Ok(if max == entropy_b11 {
+  let up = max == entropy_b11;
+  let down = max == entropy_b00;
+  // let up = entropy_b11 > entropy_b00;
+  // let down = entropy_b00 > entropy_b11;
+
+  Ok(if up {
     EntropySignal::Up
-  } else if max == entropy_b00 {
+  } else if down {
     EntropySignal::Down
   } else {
     EntropySignal::None
@@ -230,7 +225,6 @@ pub fn shit_test_two_step_entropy_signals(
   series: Dataset,
   period: usize,
 ) -> anyhow::Result<Vec<(Vec<f64>, EntropySignal)>> {
-  let bits = EntropyBits::Two.bits();
   let patterns = EntropyBits::Two.patterns();
 
   let mut signals = vec![];
@@ -279,19 +273,17 @@ pub fn shit_test_two_step_entropy_signals(
     let entropy_b10 = shannon_entropy(&b10, length, patterns);
     let entropy_b01 = shannon_entropy(&b01, length, patterns);
 
-    let p0 = data[li];
-    let p2 = data[li - bits];
-
     let max = entropy_b11
       .max(entropy_b00)
       .max(entropy_b10)
       .max(entropy_b01);
 
-    if max == entropy_b11 {
-      //&& p2 > p0 {
+    let up = max == entropy_b11;
+    let down = max == entropy_b00;
+
+    if up {
       signals.push((data, EntropySignal::Up));
-    } else if max == entropy_b00 {
-      //&& p2 < p0 {
+    } else if down {
       signals.push((data, EntropySignal::Down));
     } else {
       signals.push((data, EntropySignal::None));
