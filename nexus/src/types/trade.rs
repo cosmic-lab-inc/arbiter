@@ -477,7 +477,7 @@ impl Assets {
     let mut cum_equity = 0.0;
     for (_, asset) in self.0.iter() {
       let Asset { quantity, price } = asset;
-      cum_equity += *price * *quantity;
+      cum_equity += price * quantity;
     }
     cum_equity
   }

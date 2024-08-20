@@ -22,6 +22,9 @@ pub struct EntropyBacktest {
   assets: Assets,
   pub stop_loss_pct: Option<f64>,
   last_signal: Option<(usize, EntropySignal)>,
+  long: Option<f64>,
+  short: Option<f64>,
+  cum_pnl: f64,
 }
 
 impl EntropyBacktest {
@@ -40,6 +43,9 @@ impl EntropyBacktest {
       assets: Assets::default(),
       stop_loss_pct,
       last_signal: None,
+      long: None,
+      short: None,
+      cum_pnl: 0.0,
     }
   }
 
@@ -50,6 +56,11 @@ impl EntropyBacktest {
     let mut exit_short = false;
 
     let series = Dataset::new(self.cache.vec());
+
+    let price = self
+      .cache
+      .front()
+      .ok_or(anyhow::anyhow!("No data in cache"))?;
 
     // --- NEW METHOD ---
     let mut actions = String::new();
@@ -62,11 +73,29 @@ impl EntropyBacktest {
             actions = "exit long".to_string();
             exit_long = true;
             new_last_signal = None;
+            // todo
+            let pnl = price.y - self.long.unwrap();
+            self.cum_pnl += pnl;
+            println!(
+              "long pnl: ${}, cum: ${}",
+              trunc!(pnl, 2),
+              trunc!(self.cum_pnl, 2)
+            );
+            self.long = None;
           }
           EntropySignal::Down => {
             actions = "exit short".to_string();
             exit_short = true;
             new_last_signal = None;
+            // todo
+            let pnl = self.short.unwrap() - price.y;
+            self.cum_pnl += pnl;
+            println!(
+              "short pnl: ${}, cum: ${}",
+              trunc!(pnl, 2),
+              trunc!(self.cum_pnl, 2)
+            );
+            self.short = None;
           }
           _ => {}
         }
@@ -86,11 +115,13 @@ impl EntropyBacktest {
           actions += ", enter long";
           enter_long = true;
           new_last_signal = Some((0, EntropySignal::Up));
+          self.long = Some(price.y);
         }
         EntropySignal::Down => {
           actions += ", enter short";
           enter_short = true;
           new_last_signal = Some((0, EntropySignal::Down));
+          self.short = Some(price.y);
         }
         _ => {}
       }
@@ -1080,7 +1111,7 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let period = 15;
-  let bits = EntropyBits::One;
+  let bits = EntropyBits::Two;
   let zscore = None;
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);

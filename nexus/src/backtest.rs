@@ -334,8 +334,6 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     let series = self.series.clone();
 
     if let Some((_, first_series)) = series.iter().next() {
-      let length = first_series.len();
-
       self.assets.insert(
         CASH_TICKER,
         Asset {
@@ -365,15 +363,16 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       }
 
       // Iterate over the index of each series
+      let length = first_series.len();
       for i in 0..length {
         // Access the i-th element of each vector to simulate getting price update
         // for every ticker at roughly the same time
-        let entries = series
+        let all_series = series
           .iter()
           .map(|(ticker, series)| (ticker.clone(), series.clone()))
           .collect::<Vec<(String, Vec<Data>)>>();
 
-        for (ticker, series) in entries.iter() {
+        for (ticker, series) in all_series.iter() {
           let data = &series[i];
           self.assets.get_mut_or_err(ticker)?.price = data.y;
 
@@ -389,15 +388,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                     let price_at_stop_loss =
                       entry.price * (1.0 - stop_loss_pct - self.slippage / 100.0);
 
-                    if let Err(e) = self.finalize_trade(
+                    self.finalize_trade(
                       Time::from_unix(data.x),
                       ticker,
                       price_at_stop_loss,
                       entry.quantity,
-                    ) {
-                      log::error!("{}", e);
-                      break;
-                    }
+                    )?;
 
                     // stop loss exit
                     let exit = Trade {
@@ -420,15 +416,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                       let price_at_stop_loss =
                         entry.price * (1.0 + stop_loss_pct + self.slippage / 100.0);
 
-                      if let Err(e) = self.finalize_trade(
+                      self.finalize_trade(
                         Time::from_unix(data.x),
                         ticker,
                         price_at_stop_loss,
                         entry.quantity,
-                      ) {
-                        log::error!("{}", e);
-                        break;
-                      }
+                      )?;
 
                       let exit = Trade {
                         ticker: ticker.clone(),
@@ -460,10 +453,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
               Signal::EnterLong(entry) => {
                 let price = entry.price * (1.0 + self.slippage / 100.0);
 
-                if let Err(e) = self.enter_trade(&entry.ticker, price, entry.quantity) {
-                  log::error!("{}", e);
-                  break;
-                }
+                self.enter_trade(&entry.ticker, price, entry.quantity)?;
 
                 let trade = Trade {
                   ticker: entry.ticker.clone(),
@@ -480,10 +470,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                 let ticker = exit.ticker.clone();
                 let exit_price = exit.price * (1.0 - self.slippage / 100.0);
 
-                if let Err(e) = self.finalize_trade(exit.date, &ticker, exit_price, exit.quantity) {
-                  log::error!("{}", e);
-                  break;
-                }
+                self.finalize_trade(exit.date, &ticker, exit_price, exit.quantity)?;
 
                 let exit = Trade {
                   ticker: ticker.clone(),
@@ -492,8 +479,8 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                   quantity: exit.quantity,
                   price: exit_price,
                 };
-                let trades = active_trades.entry(ticker.clone()).or_default();
-                trades.remove(&exit);
+                // let trades = active_trades.entry(ticker.clone()).or_default();
+                // trades.remove(&exit);
                 self.add_trade(exit, ticker);
               }
               Signal::EnterShort(entry) => {
@@ -518,11 +505,8 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                 if self.short_selling {
                   let ticker = exit.ticker.clone();
                   let exit_price = exit.price * (1.0 + self.slippage / 100.0);
-                  if let Err(e) = self.finalize_trade(exit.date, &ticker, exit_price, exit.quantity)
-                  {
-                    log::error!("{}", e);
-                    break;
-                  }
+                  self.finalize_trade(exit.date, &ticker, exit_price, exit.quantity)?;
+
                   let exit = Trade {
                     ticker: ticker.clone(),
                     date: exit.date,
@@ -530,8 +514,8 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                     quantity: exit.quantity,
                     price: exit_price,
                   };
-                  let trades = active_trades.entry(ticker.clone()).or_default();
-                  trades.remove(&exit);
+                  // let trades = active_trades.entry(ticker.clone()).or_default();
+                  // trades.remove(&exit);
                   self.add_trade(exit, ticker);
                 }
               }
