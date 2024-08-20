@@ -386,7 +386,7 @@ impl Summary {
       .iter()
       .map(|d| d.y)
       .max_by(|a, b| a.partial_cmp(b).unwrap())
-      .unwrap();
+      .unwrap_or(0.0);
     trunc!(best_trade, 3)
   }
 
@@ -399,7 +399,7 @@ impl Summary {
       .iter()
       .map(|d| d.y)
       .min_by(|a, b| a.partial_cmp(b).unwrap())
-      .unwrap();
+      .unwrap_or(0.0);
     trunc!(worst_trade, 3)
   }
 

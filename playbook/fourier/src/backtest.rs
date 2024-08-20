@@ -39,6 +39,40 @@ impl FourierBacktest {
     }
   }
 
+  // fn generate_signals(&self) -> anyhow::Result<Signals> {
+  //   let mut enter_long = false;
+  //   let mut exit_long = false;
+  //   let mut enter_short = false;
+  //   let mut exit_short = false;
+  //
+  //   let series = Dataset::new(self.cache.vec());
+  //
+  //   let FFT { filtered, .. } = fft(series, self.dominant_freq_cutoff)?;
+  //   let sample = filtered.unwrap();
+  //
+  //   // compute first and second derivative of "filtered" to get the momentum and acceleration
+  //   let dy_1 = sample.derivative();
+  //   let dy_2 = dy_1.derivative();
+  //
+  //   let mom_slope = dy_1.slope();
+  //   let accel_slope = dy_2.slope();
+  //
+  //   if mom_slope > 0.0 && accel_slope > 0.0 {
+  //     enter_long = true;
+  //     exit_short = true;
+  //   } else if mom_slope < 0.0 && accel_slope < 0.0 {
+  //     enter_short = true;
+  //     exit_long = true;
+  //   }
+  //
+  //   Ok(Signals {
+  //     enter_long,
+  //     exit_long,
+  //     enter_short,
+  //     exit_short,
+  //   })
+  // }
+
   fn generate_signals(&self) -> anyhow::Result<Signals> {
     let mut enter_long = false;
     let mut exit_long = false;
@@ -47,23 +81,40 @@ impl FourierBacktest {
 
     let series = Dataset::new(self.cache.vec());
 
-    let FFT { filtered, .. } = fft(series, self.dominant_freq_cutoff)?;
-    let sample = filtered.unwrap();
+    // let FFT { filtered, .. } = fft(series, self.dominant_freq_cutoff)?;
+    // let sample = filtered.unwrap();
+    let sample = series;
 
-    // compute first and second derivative of "filtered" to get the momentum and acceleration
-    let dy_1 = sample.derivative();
-    let dy_2 = dy_1.derivative();
+    let y = sample.y();
+    let signal = two_step_entropy_signal(sample, self.period)?;
 
-    let mom_slope = dy_1.slope();
-    let accel_slope = dy_2.slope();
+    let cutoff = 2.75;
+    let entropy_zscore = zscore(y.as_slice(), self.period)?;
+    if entropy_zscore.abs() > cutoff {
+      match signal {
+        EntropySignal::Up => {
+          enter_long = true;
+          exit_short = true;
+        }
+        EntropySignal::Down => {
+          enter_short = true;
+          exit_long = true;
+        }
+        _ => {}
+      }
+    };
 
-    if mom_slope > 0.0 && accel_slope > 0.0 {
-      enter_long = true;
-      exit_short = true;
-    } else if mom_slope < 0.0 && accel_slope < 0.0 {
-      enter_short = true;
-      exit_long = true;
-    }
+    // match signal {
+    //   EntropySignal::Up => {
+    //     enter_long = true;
+    //     exit_short = true;
+    //   }
+    //   EntropySignal::Down => {
+    //     enter_short = true;
+    //     exit_long = true;
+    //   }
+    //   _ => {}
+    // };
 
     Ok(Signals {
       enter_long,
@@ -168,6 +219,74 @@ impl Strategy<Data> for FourierBacktest {
 // ==========================================================================================
 //                                 Fast Fourier Transform
 // ==========================================================================================
+
+#[test]
+fn test_fft_entropy() -> anyhow::Result<()> {
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let timeframe = "1d";
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+
+  let dominant_freq_cutoff = 100;
+  let period = 15;
+  let bits = EntropyBits::Two.bits();
+  let extrapolate = EntropyBits::Two.patterns();
+
+  let mut win = 0;
+  let mut loss = 0;
+  let mut cum_pnl = 0.0;
+
+  for i in 0..btc_series.len() - period + 1 - extrapolate {
+    let period_series = Dataset::new(btc_series.data()[i..i + period + extrapolate].to_vec());
+
+    let (in_sample, out_sample) = period_series.sample(extrapolate);
+    assert_eq!(in_sample.len(), period);
+    assert_eq!(out_sample.len(), extrapolate);
+
+    let eli = out_sample.len() - 1;
+    let p0 = out_sample.0[eli].y;
+    let p2 = out_sample.0[eli - bits].y;
+
+    // let FFT { filtered, .. } = fft(in_sample, dominant_freq_cutoff)?;
+    // let sample = filtered.unwrap();
+
+    let y = in_sample.y();
+    let sample = in_sample;
+    let signal = two_step_entropy_signal(sample, period)?;
+    let long = matches!(signal, EntropySignal::Up);
+    let short = matches!(signal, EntropySignal::Down);
+
+    // let cutoff = 2.75;
+    // let entropy_zscore = zscore(y.as_slice(), period)?;
+    // let long = entropy_zscore.abs() > cutoff && long;
+    // let short = entropy_zscore.abs() > cutoff && short;
+
+    if long && p2 < p0 {
+      win += 1;
+      cum_pnl += p0 - p2;
+    } else if short && p2 > p0 {
+      win += 1;
+      cum_pnl += p2 - p0;
+    } else if long && p2 > p0 {
+      loss += 1;
+      cum_pnl += p0 - p2;
+    } else if short && p2 < p0 {
+      loss += 1;
+      cum_pnl += p2 - p0;
+    }
+  }
+
+  println!(
+    "trades: {}, win rate: {}%, profit: ${}",
+    win + loss,
+    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
+    trunc!(cum_pnl, 2)
+  );
+
+  Ok(())
+}
 
 #[test]
 fn extrap_methods() -> anyhow::Result<()> {
@@ -305,7 +424,7 @@ fn optimize_fft_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.05;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -313,7 +432,7 @@ fn optimize_fft_1d_backtest() -> anyhow::Result<()> {
   let short_selling = true;
 
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 7, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
   let timeframe = "1d";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
@@ -325,87 +444,97 @@ fn optimize_fft_1d_backtest() -> anyhow::Result<()> {
   let period_range = bits.patterns()..200;
   let freq_cutoff_range = 10..100;
 
-  let summaries: Vec<(usize, Summary)> = period_range
-    .into_par_iter()
-    .flat_map(|period| {
-      let summaries: Vec<(usize, Summary)> = freq_cutoff_range
-        .clone()
-        .into_par_iter()
-        .flat_map(|dominant_freq_cutoff| {
-          let strat = FourierBacktest::new(period, dominant_freq_cutoff, ticker.clone(), stop_loss);
-          let mut backtest = Backtest::builder(strat)
-            .fee(fee)
-            .slippage(slippage)
-            .bet(bet)
-            .leverage(leverage)
-            .short_selling(short_selling);
+  struct Params {
+    pub period: usize,
+    pub summary: Summary,
+  }
 
-          backtest
-            .series
-            .insert(ticker.clone(), series.data().clone());
+  let mut summaries = vec![];
+  for period in period_range {
+    for dominant_freq_cutoff in freq_cutoff_range.clone() {
+      let strat = FourierBacktest::new(period, dominant_freq_cutoff, ticker.clone(), stop_loss);
+      let mut backtest = Backtest::builder(strat)
+        .fee(fee)
+        .slippage(slippage)
+        .bet(bet)
+        .leverage(leverage)
+        .short_selling(short_selling);
 
-          Result::<_, anyhow::Error>::Ok((period, backtest.backtest()?))
-        })
-        .collect();
-      Result::<_, anyhow::Error>::Ok(summaries)
-    })
-    .flatten()
-    .collect();
+      backtest
+        .series
+        .insert(ticker.clone(), series.data().clone());
 
-  // summary with the best roi
+      summaries.push(Params {
+        period,
+        summary: backtest.backtest()?,
+      });
+    }
+  }
+
+  // top 3 roi
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| a.pct_roi(&ticker).partial_cmp(&b.pct_roi(&ticker)).unwrap())
-      .unwrap();
+    summaries.sort_by(|a, b| {
+      b.summary
+        .pct_roi(&ticker)
+        .partial_cmp(&a.summary.pct_roi(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by ROI ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for params in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        params.period,
+        params.summary.pct_roi(&ticker),
+        params.summary.sharpe_ratio(&ticker),
+        params.summary.max_drawdown(&ticker),
+      );
+    }
   }
 
-  // summary with the best sharpe ratio
+  // top 3 by sharpe ratio
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| {
-        a.sharpe_ratio(&ticker, Timeframe::OneDay)
-          .partial_cmp(&b.sharpe_ratio(&ticker, Timeframe::OneDay))
-          .unwrap()
-      })
-      .unwrap();
+    summaries.sort_by(|a, b| {
+      b.summary
+        .sharpe_ratio(&ticker)
+        .partial_cmp(&a.summary.sharpe_ratio(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by Sharpe ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for params in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        params.period,
+        params.summary.pct_roi(&ticker),
+        params.summary.sharpe_ratio(&ticker),
+        params.summary.max_drawdown(&ticker),
+      );
+    }
   }
 
-  // summary with the best drawdown
+  // top 3 by drawdown
   {
-    let (period, summary) = summaries
-      .iter()
-      .max_by(|(_, a), (_, b)| {
-        a.max_drawdown(&ticker)
-          .partial_cmp(&b.max_drawdown(&ticker))
-          .unwrap()
-      })
-      .unwrap();
+    summaries.sort_by(|a, b| {
+      b.summary
+        .max_drawdown(&ticker)
+        .partial_cmp(&a.summary.max_drawdown(&ticker))
+        .unwrap_or(Ordering::Equal)
+    });
+    let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
+
     println!("--- Top by Drawdown ---");
-    println!(
-      "period: {}, roi: {}%, sharpe: {}, dd: {}%",
-      period,
-      summary.pct_roi(&ticker),
-      summary.sharpe_ratio(&ticker, Timeframe::OneDay),
-      summary.max_drawdown(&ticker)
-    );
+    for params in top_3 {
+      println!(
+        "period: {}, roi: {}%, sharpe: {}, dd: {}%",
+        params.period,
+        params.summary.pct_roi(&ticker),
+        params.summary.sharpe_ratio(&ticker),
+        params.summary.max_drawdown(&ticker),
+      );
+    }
   }
 
   Ok(())
@@ -431,8 +560,8 @@ fn fft_1d_backtest() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 100;
-  let dominant_freq_cutoff = 50;
+  let period = 62;
+  let dominant_freq_cutoff = 25;
 
   let strat = FourierBacktest::new(period, dominant_freq_cutoff, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)

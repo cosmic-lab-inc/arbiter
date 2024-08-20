@@ -2,8 +2,8 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::{
-  trunc, Asset, Assets, Bet, Data, Dataset, Plot, RingBuffer, Series, Signal, Summary, Time, Trade,
-  TradeAction, CASH_TICKER,
+  trunc, Asset, Assets, Bet, Data, Dataset, Plot, RingBuffer, Series, Signal, Summary, Time, Timer,
+  Trade, TradeAction, CASH_TICKER,
 };
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
@@ -566,8 +566,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   }
 
   pub fn execute(&mut self, plot_title: &str, timeframe: &str) -> anyhow::Result<Summary> {
-    let now = Time::now();
+    let timer = Timer::new();
     let summary = self.backtest()?;
+    println!(
+      "{} {} backtested in {}ms",
+      self.strategy.title(),
+      timeframe,
+      timer.millis()
+    );
     let pct_bah = self.buy_and_hold_pct_roi()?;
 
     for (ticker, _) in self.series.iter() {
@@ -604,12 +610,6 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
         }
       }
     }
-    println!(
-      "{} {} backtest finished in {}s",
-      self.strategy.title(),
-      timeframe,
-      Time::now().to_unix() - now.to_unix()
-    );
     Ok(summary)
   }
 }
