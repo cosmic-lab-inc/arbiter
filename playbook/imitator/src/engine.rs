@@ -1,57 +1,25 @@
-#![allow(unused_imports)]
+#![allow(dead_code)]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ops::Deref;
-use std::str::FromStr;
+use crossbeam::channel::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anchor_lang::context::Context;
-use anchor_lang::prelude::{AccountInfo, AccountMeta, CpiContext};
-use anchor_lang::{Accounts, Bumps, Discriminator, InstructionData, ToAccountMetas};
-use base64::engine::general_purpose;
-use base64::Engine;
-use borsh::BorshDeserialize;
-use crossbeam::channel::{Receiver, Sender};
-use futures::StreamExt;
-use log::{debug, info};
+use log::*;
 use reqwest::Client;
-use solana_account_decoder::{UiAccount, UiAccountData, UiAccountEncoding};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::{
-  RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig,
-  RpcSimulateTransactionConfig,
-};
-use solana_client::rpc_filter::{Memcmp, RpcFilterType};
-use solana_client::rpc_response::RpcKeyedAccount;
-use solana_sdk::account::Account;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
-use solana_sdk::slot_hashes::SlotHashes;
-use solana_sdk::sysvar::SysvarId;
-use solana_sdk::transaction::Transaction;
-use solana_transaction_status::UiTransactionEncoding;
-use tokio::io::ReadBuf;
-use tokio::sync::RwLockReadGuard;
-use tokio::sync::{RwLock, RwLockWriteGuard};
-use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
 use yellowstone_grpc_proto::prelude::{
-  subscribe_request_filter_accounts_filter_memcmp, CommitmentLevel, SubscribeRequestFilterAccounts,
-  SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
-  SubscribeRequestFilterBlocks, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
+  CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterSlots,
   SubscribeRequestFilterTransactions,
 };
 
-use crate::config::ImitatorConfig;
+use crate::config::Config;
 use nexus::drift_client::*;
-use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
-pub struct Imitator {
+pub struct Engine {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -65,14 +33,14 @@ pub struct Imitator {
   leverage: f64,
 }
 
-impl Imitator {
+impl Engine {
   pub async fn new(
     sub_account_id: u16,
     copy_user: Pubkey,
     market_filter: Option<Vec<MarketId>>,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let ImitatorConfig {
+    let Config {
       read_only,
       retry_until_confirmed,
       signer,
@@ -81,12 +49,12 @@ impl Imitator {
       x_token,
       leverage,
       ..
-    } = ImitatorConfig::read()?;
+    } = Config::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
-    info!("Imitator using wallet: {}", signer.pubkey());
+    info!("Engine using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),

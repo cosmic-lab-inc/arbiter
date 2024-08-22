@@ -1,16 +1,14 @@
 use std::{path::PathBuf, str::FromStr};
 
-use chrono::{DateTime, Utc};
 use nexus::read_keypair_from_env;
 use serde::{Deserialize, Deserializer};
-use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 #[derive(Debug, Deserialize)]
-pub struct ImitatorConfig {
+pub struct Config {
   pub read_only: bool,
   pub retry_until_confirmed: bool,
-  #[serde(deserialize_with = "ImitatorConfig::deserialize_keypair")]
+  #[serde(deserialize_with = "Config::deserialize_keypair")]
   pub signer: Keypair,
   pub rpc_url: String,
   pub grpc: String,
@@ -26,7 +24,7 @@ struct YamlConfig {
   pub leverage: f64,
 }
 
-impl ImitatorConfig {
+impl Config {
   fn deserialize_keypair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Keypair, D::Error> {
     let kp_bytes: Vec<u8> = match Vec::deserialize(deserializer) {
       Ok(res) => res,

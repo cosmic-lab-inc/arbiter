@@ -1,6 +1,6 @@
 use engine::*;
 use nexus::drift_client::MarketId;
-use nexus::*;
+use nexus::init_logger;
 
 mod config;
 mod engine;
@@ -162,5 +162,34 @@ mod tests {
       tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
     Ok(())
+  }
+
+  #[test]
+  fn loan_leverage() {
+    let ltv = 0.9; // $1000 in collateral can borrow $750
+    let initial_collateral = 1000.0;
+    let mut collateral = initial_collateral;
+    let mut borrowed = 0.0;
+    let mut loops = 0;
+
+    fn loop_borrow(ltv: f64, collateral: &mut f64, borrowed: &mut f64, loops: &mut usize) {
+      let loan = *collateral * ltv;
+      let tmp_borrowed = *borrowed + loan;
+      let tmp_collateral = *collateral + loan;
+      if tmp_borrowed > tmp_collateral * ltv {
+        // max leverage reached (liquidated) if looped again
+      } else {
+        *borrowed += loan;
+        *collateral += loan;
+        *loops += 1;
+        loop_borrow(ltv, collateral, borrowed, loops);
+      }
+    }
+
+    loop_borrow(ltv, &mut collateral, &mut borrowed, &mut loops);
+    println!("Loops: {}", loops);
+    println!("Borrowed: {}", borrowed);
+    println!("Collateral: {}", collateral);
+    println!("Leverage: {}", trunc!(borrowed / initial_collateral, 2));
   }
 }

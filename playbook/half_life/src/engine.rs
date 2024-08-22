@@ -1,61 +1,27 @@
-#![allow(unused_imports)]
+#![allow(dead_code)]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ops::{Deref, Neg};
-use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-
-use anchor_lang::context::Context;
-use anchor_lang::prelude::{AccountInfo, AccountMeta, CpiContext};
-use anchor_lang::{Accounts, Bumps, Discriminator, InstructionData, ToAccountMetas};
-use base64::engine::general_purpose;
-use base64::Engine;
-use borsh::BorshDeserialize;
-use crossbeam::channel::{Receiver, Sender};
-use futures::StreamExt;
-use log::{debug, error, info, warn};
-use reqwest::Client;
-use solana_account_decoder::{UiAccount, UiAccountData, UiAccountEncoding};
+use log::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::{
-  RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig,
-  RpcSimulateTransactionConfig,
-};
-use solana_client::rpc_filter::{Memcmp, RpcFilterType};
-use solana_client::rpc_response::RpcKeyedAccount;
-use solana_sdk::account::Account;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
-use solana_sdk::slot_hashes::SlotHashes;
-use solana_sdk::sysvar::SysvarId;
-use solana_sdk::transaction::Transaction;
-use solana_transaction_status::UiTransactionEncoding;
-use tokio::io::ReadBuf;
-use tokio::sync::RwLockReadGuard;
-use tokio::sync::{RwLock, RwLockWriteGuard};
+use std::collections::HashSet;
+use std::ops::Neg;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::Instant;
-use tradestats::metrics::{spread_dynamic, spread_standard};
-use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
+use tradestats::metrics::spread_dynamic;
 use yellowstone_grpc_proto::prelude::{
-  subscribe_request_filter_accounts_filter_memcmp, CommitmentLevel, SubscribeRequestFilterAccounts,
-  SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
-  SubscribeRequestFilterBlocks, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
-  SubscribeRequestFilterTransactions,
+  CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterSlots,
 };
 
-use crate::config::FourierConfig;
+use crate::config::Config;
 use crate::data::{Data, Dataset};
 use nexus::drift_client::*;
-use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
-pub struct Fourier {
+pub struct Engine {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -72,9 +38,9 @@ pub struct Fourier {
   cache_depth: usize,
 }
 
-impl Fourier {
+impl Engine {
   pub async fn new(sub_account_id: u16, market: MarketId) -> anyhow::Result<Self> {
-    let FourierConfig {
+    let Config {
       read_only,
       retry_until_confirmed,
       signer,
@@ -88,10 +54,10 @@ impl Fourier {
       zscore_window,
       cache_depth,
       ..
-    } = FourierConfig::read()?;
+    } = Config::read()?;
 
     let signer = Arc::new(signer);
-    info!("Fourier using wallet: {}", signer.pubkey());
+    info!("Engine using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),
@@ -440,11 +406,11 @@ impl Fourier {
     let y = y_series.clone();
     let spread = match spread_dynamic(&x.y(), &y.y()) {
       Err(e) => {
-        if e.to_string().contains("The variance of x values is zero") {
+        return if e.to_string().contains("The variance of x values is zero") {
           warn!("The variance of x values is zero");
-          return Ok(vec![]);
+          Ok(vec![])
         } else {
-          return Err(anyhow::anyhow!("Error calculating spread: {}", e));
+          Err(anyhow::anyhow!("Error calculating spread: {}", e))
         }
       }
       Ok(res) => res,

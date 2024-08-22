@@ -187,6 +187,7 @@ impl Summary {
     println!("Best Trade: {}%", self.best_trade(ticker));
     println!("Worst Trade: {}%", self.worst_trade(ticker));
     println!("Max Drawdown: {}%", self.max_drawdown(ticker));
+    println!("=============================");
   }
 
   pub fn cum_quote(&self, ticker: &str) -> anyhow::Result<&Dataset> {
@@ -477,7 +478,10 @@ impl Assets {
     let mut cum_equity = 0.0;
     for (_, asset) in self.0.iter() {
       let Asset { quantity, price } = asset;
-      cum_equity += price * quantity;
+      // short sold assets (negative base amount) are not counted since it would reduce equity
+      if quantity > &0.0 {
+        cum_equity += price * quantity;
+      }
     }
     cum_equity
   }

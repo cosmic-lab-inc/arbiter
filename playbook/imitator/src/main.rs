@@ -1,29 +1,9 @@
-#![allow(unused_imports)]
-#![allow(dead_code)]
-
-use std::collections::HashMap;
-use std::str::FromStr;
-
-use anchor_lang::prelude::AccountInfo;
-use anchor_lang::{AccountDeserialize, Discriminator};
-use base64::Engine;
-use borsh::BorshDeserialize;
-use futures::{SinkExt, StreamExt};
-use heck::ToPascalCase;
-use log::info;
-use rayon::prelude::*;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signer::Signer;
-
-use client::*;
-use nexus::drift_client::*;
-use nexus::drift_cpi::*;
+use engine::*;
+use nexus::drift_client::MarketId;
 use nexus::*;
 
-mod client;
 mod config;
+mod engine;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,13 +15,13 @@ async fn main() -> anyhow::Result<()> {
 
   // 5 brackets orders, starting at 0.08% spread and incrementing by 0.1%
   // self trades if one or more orders are filled and can match against its own MM orders.
-  let copy_user = pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
+  let copy_user = solana_sdk::pubkey!("2aMcirYcF9W8aTFem6qe8QtvfQ22SLY6KUe6yUQbqfHk");
 
   let market_filter = Some(vec![
     // SOL-PERP
     MarketId::perp(0),
   ]);
-  let mut imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+  let mut imitator = Engine::new(0, copy_user, market_filter, None).await?;
   imitator.start().await?;
 
   Ok(())
@@ -51,17 +31,9 @@ async fn main() -> anyhow::Result<()> {
 // Tests
 // ============================================================================
 
-// #[cfg(tests)]
+#[cfg(tests)]
 mod tests {
   use super::*;
-  use solana_client::nonblocking::rpc_client::RpcClient;
-  use solana_sdk::sysvar::SysvarId;
-  use std::collections::HashSet;
-  use std::sync::Arc;
-  use tokio::sync::RwLock;
-  use yellowstone_grpc_proto::prelude::{
-    CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterSlots,
-  };
 
   /// Rust websocket: https://github.com/drift-labs/drift-rs/blob/main/src/websocket_program_account_subscriber.rs
   /// Rust oracle type: https://github.com/drift-labs/protocol-v2/blob/ebe773e4594bccc44e815b4e45ed3b6860ac2c4d/programs/drift/src/state/oracle.rs#L126
@@ -76,7 +48,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
 
     let perp_markets = DriftUtils::perp_markets(&imitator.rpc()).await?;
     let spot_markets = DriftUtils::spot_markets(&imitator.rpc()).await?;
@@ -164,7 +136,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
 
     struct MarketMetadata {
       name: String,
@@ -240,7 +212,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
 
     let users = DriftUtils::top_traders_by_pnl(&imitator.rpc()).await?;
     println!("users: {}", users.len());
@@ -270,7 +242,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
 
     let prefix = env!("CARGO_MANIFEST_DIR").to_string();
 
@@ -302,7 +274,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
 
     let prefix = env!("CARGO_MANIFEST_DIR").to_string();
 
@@ -364,7 +336,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
     let key = imitator.signer.pubkey();
     let acct = imitator.rpc().get_account(&key).await?;
     println!("{:#?}", acct);
@@ -382,7 +354,7 @@ mod tests {
       // SOL-PERP
       MarketId::perp(0),
     ]);
-    let imitator = Imitator::new(0, copy_user, market_filter, None).await?;
+    let imitator = Engine::new(0, copy_user, market_filter, None).await?;
     let user_key = DriftUtils::user_pda(&imitator.signer.pubkey(), 0);
     let user_acct = imitator.rpc().get_account(&user_key).await?;
     let user = User::deserialize(&mut &user_acct.data.as_slice()[8..])?;
@@ -436,7 +408,7 @@ mod tests {
     // https://app.drift.trade/SOL-PERP?userAccount=BRksHqLiq2gvQw1XxsZq6DXZjD3GB5a9J63tUBgd6QS9
     let user = pubkey!("BRksHqLiq2gvQw1XxsZq6DXZjD3GB5a9J63tUBgd6QS9");
     let market_filter = Some(vec![MarketId::SOL_PERP]);
-    let imitator = Imitator::new(0, user, market_filter, None).await?;
+    let imitator = Engine::new(0, user, market_filter, None).await?;
 
     let data = DriftUtils::drift_historical_pnl(&imitator.client(), &user, 100).await?;
 

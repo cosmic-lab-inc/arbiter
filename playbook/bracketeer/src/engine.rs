@@ -1,56 +1,23 @@
-#![allow(unused_imports)]
+#![allow(dead_code)]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ops::{Deref, Neg};
-use std::str::FromStr;
+use std::collections::HashSet;
+use std::ops::Neg;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anchor_lang::context::Context;
-use anchor_lang::prelude::{AccountInfo, AccountMeta, CpiContext};
-use anchor_lang::{Accounts, Bumps, Discriminator, InstructionData, ToAccountMetas};
-use base64::engine::general_purpose;
-use base64::Engine;
-use borsh::BorshDeserialize;
-use crossbeam::channel::{Receiver, Sender};
-use futures::StreamExt;
-use log::{debug, error, info, warn};
-use reqwest::Client;
-use solana_account_decoder::{UiAccount, UiAccountData, UiAccountEncoding};
+use log::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::{
-  RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig,
-  RpcSimulateTransactionConfig,
-};
-use solana_client::rpc_filter::{Memcmp, RpcFilterType};
-use solana_client::rpc_response::RpcKeyedAccount;
-use solana_sdk::account::Account;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
-use solana_sdk::slot_hashes::SlotHashes;
-use solana_sdk::sysvar::SysvarId;
-use solana_sdk::transaction::Transaction;
-use solana_transaction_status::UiTransactionEncoding;
-use tokio::io::ReadBuf;
-use tokio::sync::RwLockReadGuard;
-use tokio::sync::{RwLock, RwLockWriteGuard};
 use tokio::time::Instant;
-use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
 use yellowstone_grpc_proto::prelude::{
-  subscribe_request_filter_accounts_filter_memcmp, CommitmentLevel, SubscribeRequestFilterAccounts,
-  SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
-  SubscribeRequestFilterBlocks, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
-  SubscribeRequestFilterTransactions,
+  CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterSlots,
 };
 
-use crate::config::BracketeerConfig;
+use crate::config::Config;
 use nexus::drift_client::*;
-use nexus::drift_cpi::{Decode, DiscrimToName, InstructionType, MarketType};
 use nexus::*;
 
 const TAKE_PROFIT_ID: u8 = 111;
@@ -60,7 +27,7 @@ struct OrderStub {
   pub base: f64,
 }
 
-pub struct Bracketeer {
+pub struct Engine {
   read_only: bool,
   retry_until_confirmed: bool,
   pub signer: Arc<Keypair>,
@@ -78,13 +45,13 @@ pub struct Bracketeer {
   pct_take_profit: f64,
 }
 
-impl Bracketeer {
+impl Engine {
   pub async fn new(
     sub_account_id: u16,
     market: MarketId,
     cache_depth: Option<usize>,
   ) -> anyhow::Result<Self> {
-    let BracketeerConfig {
+    let Config {
       read_only,
       retry_until_confirmed,
       signer,
@@ -99,12 +66,12 @@ impl Bracketeer {
       stop_loss_is_maker,
       pct_take_profit,
       ..
-    } = BracketeerConfig::read()?;
+    } = Config::read()?;
 
     // 200 slots = 80 seconds of account cache
     let cache_depth = cache_depth.unwrap_or(200);
     let signer = Arc::new(signer);
-    info!("Bracketeer using wallet: {}", signer.pubkey());
+    info!("Engine using wallet: {}", signer.pubkey());
     let rpc = Arc::new(RpcClient::new_with_timeout(
       rpc_url,
       Duration::from_secs(90),

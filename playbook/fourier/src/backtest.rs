@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use crate::trade::{Bet, Signal, SignalInfo};
 use crate::{Backtest, Dataset, Strategy};

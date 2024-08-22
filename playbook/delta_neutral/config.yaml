@@ -1,0 +1,19 @@
+grpc: https://grpc.us1.shyft.to
+# Test the code, monitor behavior, and simulate transactions without risking funds.
+read_only: false
+# Retry sending orders until they are confirmed. Not recommended since orders can be out of date if the market moves.
+retry_until_confirmed: false
+# Do not set to true unless you don't care about the stop loss filling
+stop_loss_is_maker: false
+# Multiply available USDC/quote balance by this amount.
+leverage: 0.1
+# Bracket orders are placed at these percentages of the spread.
+pct_spread_brackets: [ 50, 75, 100 ]
+# Use the real on-chain spread unless it is greater than this percentage.
+pct_max_spread: 0.4
+# Use the real on-chain spread unless it is less than this percentage.
+pct_min_spread: 0.2
+# Stop loss to exit position if below entry by this percentage.
+pct_stop_loss: 100.0
+# Minimum take profit beyond the taker fee (0.025%) to exit position.
+pct_take_profit: 0.01
