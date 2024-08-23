@@ -3,16 +3,25 @@
 use crate::{trunc, Dataset, Time};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub enum Bet {
-  #[default]
-  Static,
   Percent(f64),
+}
+impl Default for Bet {
+  fn default() -> Self {
+    Bet::Percent(100.0)
+  }
+}
+impl Bet {
+  pub fn value(&self) -> f64 {
+    match self {
+      Bet::Percent(p) => *p,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +55,7 @@ pub struct Trade {
   pub id: u8,
   pub price: f64,
   pub date: Time,
-  pub quantity: f64,
+  pub quantity: Option<f64>,
   pub side: TradeAction,
 }
 
@@ -62,35 +71,8 @@ impl Trade {
       id,
       price: 0.0,
       date: Time::now(),
-      quantity: 0.0,
+      quantity: None,
       side,
-    }
-  }
-
-  pub fn print(&self) -> String {
-    match self.side {
-      TradeAction::EnterLong => {
-        format!("🟢🟢 Enter Long {}", self.price)
-      }
-      TradeAction::ExitLong => {
-        format!("🟢 Exit Long {}", self.price)
-      }
-      TradeAction::EnterShort => {
-        format!("🔴️🔴️ Enter Short {}", self.price)
-      }
-      TradeAction::ExitShort => {
-        format!("🔴️ Exit Short {}", self.price)
-      }
-    }
-  }
-
-  #[allow(dead_code)]
-  pub fn price(&self) -> Option<f64> {
-    match self.side {
-      TradeAction::EnterLong => Some(self.price),
-      TradeAction::ExitLong => Some(self.price),
-      TradeAction::EnterShort => Some(self.price),
-      TradeAction::ExitShort => Some(self.price),
     }
   }
 }
@@ -230,7 +212,11 @@ impl Summary {
       .trades
       .get(ticker)
       .ok_or(anyhow::anyhow!("No trades for ticker"))?;
-    let avg = trades.iter().map(|t| t.price * t.quantity).sum::<f64>() / trades.len() as f64;
+    let avg = trades
+      .iter()
+      .map(|t| t.price * t.quantity.unwrap_or(0.0))
+      .sum::<f64>()
+      / trades.len() as f64;
     Ok(trunc!(avg, 2))
   }
 
@@ -472,7 +458,9 @@ impl Assets {
     let mut cum_equity = 0.0;
     for (_, asset) in self.0.iter() {
       let Asset { quantity, price } = asset;
-      cum_equity += price * quantity;
+      if *quantity > 0.0 {
+        cum_equity += price * quantity;
+      }
     }
     cum_equity
   }
@@ -541,12 +529,12 @@ impl ActiveTrades {
     self.0.insert(trade.key(), trade)
   }
 
-  pub fn remove(&mut self, trade: &Trade) -> Option<Trade> {
-    self.0.remove(&trade.key())
+  pub fn remove(&mut self, key: &str) -> Option<Trade> {
+    self.0.remove(key)
   }
 
-  pub fn get(&self, trade: &Trade) -> Option<&Trade> {
-    self.0.get(&trade.key())
+  pub fn get(&self, key: &str) -> Option<&Trade> {
+    self.0.get(key)
   }
 
   pub fn get_mut(&mut self, trade: &Trade) -> Option<&mut Trade> {

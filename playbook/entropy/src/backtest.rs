@@ -167,17 +167,14 @@ impl EntropyBacktest {
           .front()
           .ok_or(anyhow::anyhow!("No data in cache"))?;
 
-        let mut quote = self.assets.cash()?.quantity;
-        let mut base = self.assets.get(&ticker)?.quantity;
-
         let mut signals: Vec<Trade> = vec![];
 
-        // todo: the problem is in exit/enter within the same bar as the quote/base qtys aren't using the same dollar value like 100% of equity would
-
         let id = 0;
+        let enter_short_key = Trade::empty(ticker.clone(), TradeAction::EnterShort, id).key();
+        let enter_long_key = Trade::empty(ticker.clone(), TradeAction::EnterLong, id).key();
+
         if exit_short {
-          let entry = Trade::empty(ticker.clone(), TradeAction::EnterShort, id);
-          if let Some(entry) = active_trades.get(&entry) {
+          if let Some(entry) = active_trades.get(&enter_short_key) {
             let trade = Trade {
               id,
               price,
@@ -187,26 +184,11 @@ impl EntropyBacktest {
               side: TradeAction::ExitShort,
             };
             signals.push(trade);
-
-            // exit short adds to base and subtracts from quote
-            let pre_quote = quote;
-            let pre_base = entry.quantity;
-            quote -= price * entry.quantity.abs();
-            base += entry.quantity.abs();
-            println!(
-              "exit short, price: ${}, base: {} -> {}, quote: ${} -> ${}",
-              trunc!(price, 3),
-              trunc!(pre_base, 3),
-              trunc!(base, 3),
-              trunc!(pre_quote, 3),
-              trunc!(quote, 3)
-            );
           }
         }
 
         if exit_long {
-          let entry = Trade::empty(ticker.clone(), TradeAction::EnterLong, id);
-          if let Some(entry) = active_trades.get(&entry) {
+          if let Some(entry) = active_trades.get(&enter_long_key) {
             let trade = Trade {
               id,
               price,
@@ -216,20 +198,6 @@ impl EntropyBacktest {
               side: TradeAction::ExitLong,
             };
             signals.push(trade);
-
-            // exit long adds to quote and subtracts from base
-            let pre_quote = quote;
-            let pre_base = entry.quantity;
-            quote += price * entry.quantity.abs();
-            base -= entry.quantity.abs();
-            println!(
-              "exit long, price: ${}, base: {} -> {}, quote: ${} -> ${}",
-              trunc!(price, 3),
-              trunc!(pre_base, 3),
-              trunc!(base, 3),
-              trunc!(pre_quote, 3),
-              trunc!(quote, 3)
-            );
           }
         }
 
@@ -239,16 +207,11 @@ impl EntropyBacktest {
             price,
             date: Time::from_unix_ms(time),
             ticker: ticker.clone(),
-            quantity: quote / price,
+            quantity: None,
             side: TradeAction::EnterShort,
           };
-          if active_trades.get(&trade).is_none() {
+          if active_trades.get(&enter_short_key).is_none() {
             signals.push(trade);
-            println!(
-              "enter short, price: ${}, base: {}",
-              trunc!(price, 3),
-              trunc!(quote / price, 3)
-            );
           }
         }
 
@@ -258,16 +221,11 @@ impl EntropyBacktest {
             price,
             date: Time::from_unix_ms(time),
             ticker: ticker.clone(),
-            quantity: quote / price,
+            quantity: None,
             side: TradeAction::EnterLong,
           };
-          if active_trades.get(&trade).is_none() {
+          if active_trades.get(&enter_long_key).is_none() {
             signals.push(trade);
-            println!(
-              "enter long, price: ${}, base: {}",
-              trunc!(price, 3),
-              trunc!(quote / price, 3)
-            );
           }
         }
 
@@ -772,7 +730,7 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let period_range = bits.patterns()..20;
+  let period_range = bits.patterns()..200;
   let zscore_range = [
     None,
     Some(1.0),
@@ -814,7 +772,12 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
       let timer = Timer::new();
       let summary = backtest.backtest()?;
-      println!("{}ms", timer.millis());
+      let num_trades = summary
+        .trades
+        .get(&ticker)
+        .map(|trades| trades.len())
+        .unwrap_or(0);
+      println!("{} trades / {}ms", num_trades, timer.millis());
 
       let params = Params {
         period,
@@ -827,45 +790,6 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
       summaries.push(params);
     }
   }
-
-  // let mut summaries: Vec<Params> = period_range
-  //   .into_par_iter()
-  //   .flat_map(|period| {
-  //     let params: Vec<Params> = zscore_range
-  //       .into_par_iter()
-  //       .flat_map(|zscore| {
-  //         let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
-  //         let mut backtest = Backtest::builder(strat)
-  //           .fee(fee)
-  //           .slippage(slippage)
-  //           .bet(bet)
-  //           .leverage(leverage)
-  //           .short_selling(short_selling);
-  //
-  //         backtest
-  //           .series
-  //           .insert(ticker.clone(), series.data().clone());
-  //
-  //         let timer = Timer::new();
-  //         let summary = backtest.backtest()?;
-  //         println!("{}ms", timer.millis());
-  //
-  //         let params = Params {
-  //           period,
-  //           zscore,
-  //           pct_roi: summary.pct_roi(&ticker),
-  //           sharpe_ratio: summary.sharpe_ratio(&ticker),
-  //           max_drawdown: summary.max_drawdown(&ticker),
-  //           summary,
-  //         };
-  //         Result::<_, anyhow::Error>::Ok(params)
-  //       })
-  //       .collect();
-  //     Result::<_, anyhow::Error>::Ok(params)
-  //   })
-  //   .flatten()
-  //   .collect();
-
   println!("optimized backtest in {}s", timer.seconds());
 
   // top 3 roi
@@ -941,12 +865,12 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.0;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
-  let short_selling = true;
+  let short_selling = false;
 
   let start_time = Time::new(2017, 1, 1, None, None, None);
   let end_time = Time::new(2025, 1, 1, None, None, None);
@@ -957,8 +881,8 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let bits = EntropyBits::Two;
-  let period = 100;
-  let zscore = None;
+  let period = 79;
+  let zscore = Some(1.75);
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)

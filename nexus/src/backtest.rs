@@ -2,9 +2,8 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::ops::Neg;
 
 pub trait Strategy<T>: Clone {
   /// Receives new bar and returns a signal (long, short, or do nothing).
@@ -86,7 +85,7 @@ impl Default for Backtest<f64, EmptyStrategy> {
       capital: 1000.0,
       fee: 0.0,
       slippage: 0.0,
-      bet: Bet::Static,
+      bet: Bet::Percent(100.0),
       leverage: 1,
       short_selling: false,
       series: HashMap::new(),
@@ -249,49 +248,50 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   // Backtest
   //
 
-  fn enter_trade(&mut self, trade: &Trade) -> anyhow::Result<()> {
-    let qty = trade.quantity.abs();
+  fn enter_trade(&mut self, trade: &mut Trade) -> anyhow::Result<()> {
+    let cash = self.assets.cash()?.quantity;
+    let mut quote = self.bet.value() / 100.0 * cash;
+    let fee = quote * self.fee / 100.0;
+    quote -= fee;
 
     match trade.side {
       TradeAction::EnterLong => {
-        let available = self.assets.cash()?.quantity / trade.price;
-        if qty > available {
-          return Err(anyhow::anyhow!(
-            "Insufficient funds to enter long for {}, has: {}, needs: {}",
-            &trade.ticker,
-            available,
-            qty
-          ));
-        }
+        let price = trade.price * (1.0 + self.slippage / 100.0);
+        trade.price = price;
+
         {
+          let qty = quote / price;
+          trade.quantity = Some(qty);
+
           let asset = self.assets.get_mut(&trade.ticker)?;
           asset.quantity += qty;
         }
         {
+          let qty = quote / price;
+          trade.quantity = Some(qty);
+
           let cash = self.assets.cash_mut()?;
-          let fee = qty * (self.fee / 100.0);
-          cash.quantity = (cash.quantity - (qty - fee) * trade.price).max(0.0);
+          cash.quantity -= quote + fee;
         }
       }
       TradeAction::EnterShort => {
         if self.short_selling {
-          let available = self.assets.cash()?.quantity / trade.price;
-          if qty > available {
-            return Err(anyhow::anyhow!(
-              "Insufficient funds to enter short for {}, has: {}, needs: {}",
-              &trade.ticker,
-              available,
-              qty
-            ));
-          }
+          let price = trade.price * (1.0 - self.slippage / 100.0);
+          trade.price = price;
+
           {
+            let qty = quote / price;
+            trade.quantity = Some(qty);
+
             let asset = self.assets.get_mut(&trade.ticker)?;
             asset.quantity -= qty;
           }
           {
+            let qty = quote / price;
+            trade.quantity = Some(qty);
+
             let cash = self.assets.cash_mut()?;
-            let fee = qty * (self.fee / 100.0);
-            cash.quantity += (qty - fee) * trade.price;
+            cash.quantity += quote;
           }
         }
       }
@@ -301,49 +301,38 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     Ok(())
   }
 
-  fn exit_trade(&mut self, trade: &Trade) -> anyhow::Result<()> {
-    let qty = trade.quantity.abs();
-    let base_amt = self.assets.get(&trade.ticker)?.quantity;
-    let equity_before = self.assets.equity();
+  fn exit_trade(&mut self, entry_price: f64, trade: &mut Trade) -> anyhow::Result<()> {
+    let qty = trade
+      .quantity
+      .ok_or(anyhow::anyhow!("Trade quantity is None"))?;
+    let fee = qty * self.fee / 100.0;
 
     match trade.side {
       TradeAction::ExitLong => {
-        if base_amt > 0.0 && qty > base_amt {
-          return Err(anyhow::anyhow!(
-            "Insufficient funds to exit long for {}, has: {}, needs: {}",
-            &trade.ticker,
-            base_amt,
-            trade.quantity
-          ));
-        }
+        let price = trade.price * (1.0 - self.slippage / 100.0);
+        trade.price = price;
         {
           let asset = self.assets.get_mut(&trade.ticker)?;
           asset.quantity -= qty;
         }
         {
           let cash = self.assets.cash_mut()?;
-          let fee = qty * (self.fee / 100.0);
-          cash.quantity += (qty - fee) * trade.price;
+          cash.quantity += (qty - fee) * price;
         }
       }
       TradeAction::ExitShort => {
         if self.short_selling {
-          if base_amt < 0.0 && qty > base_amt.abs() {
-            return Err(anyhow::anyhow!(
-              "Insufficient funds to exit short for {}, has: {}, needs: {}",
-              &trade.ticker,
-              base_amt.neg(),
-              trade.quantity.neg()
-            ));
-          }
+          let price = trade.price * (1.0 + self.slippage / 100.0);
+          trade.price = price;
           {
+            // buy back the same amount that was shorted
             let asset = self.assets.get_mut(&trade.ticker)?;
             asset.quantity += qty;
           }
           {
+            // use cash to buy back the amount that was shorted + fee
             let cash = self.assets.cash_mut()?;
-            let fee = qty * (self.fee / 100.0);
-            cash.quantity = (cash.quantity - (qty - fee) * trade.price).max(0.0);
+            cash.quantity -= (qty + fee) * price;
           }
         }
       }
@@ -351,7 +340,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     }
 
     let equity_after = self.assets.equity();
-    let pct_pnl = (equity_after - equity_before) / equity_before * 100.0;
+    let pct_pnl = (trade.price - entry_price) / entry_price * 100.0;
 
     self.cum_quote.get_mut(&trade.ticker).unwrap().push(Data {
       x: trade.date.to_unix_ms(),
@@ -506,10 +495,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
             match signal.side {
               TradeAction::EnterLong => {
                 let mut entry = signal;
-                let price = entry.price * (1.0 + self.slippage / 100.0);
-
-                entry.price = price;
-                let result = self.enter_trade(&entry);
+                let result = self.enter_trade(&mut entry);
 
                 self.active_trades.insert(entry.clone());
                 self.add_trade(entry, ticker.clone());
@@ -522,13 +508,11 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
               TradeAction::ExitLong => {
                 let mut exit = signal;
                 let ticker = exit.ticker.clone();
-                let price = exit.price * (1.0 - self.slippage / 100.0);
+                let entry_key = Trade::empty(ticker.clone(), TradeAction::EnterLong, exit.id).key();
+                let entry_price = self.active_trades.get(&entry_key).unwrap().price;
+                let result = self.exit_trade(entry_price, &mut exit);
 
-                exit.price = price;
-                let result = self.exit_trade(&exit);
-
-                let entry = Trade::empty(ticker.clone(), TradeAction::EnterLong, exit.id);
-                self.active_trades.remove(&entry);
+                self.active_trades.remove(&entry_key);
                 self.add_trade(exit, ticker);
 
                 if let Err(e) = result {
@@ -539,10 +523,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
               TradeAction::EnterShort => {
                 if self.short_selling {
                   let mut entry = signal;
-                  let price = entry.price * (1.0 - self.slippage / 100.0);
-                  entry.price = price;
-
-                  let result = self.enter_trade(&entry);
+                  let result = self.enter_trade(&mut entry);
 
                   self.active_trades.insert(entry.clone());
                   self.add_trade(entry, ticker.clone());
@@ -557,13 +538,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                 if self.short_selling {
                   let mut exit = signal;
                   let ticker = exit.ticker.clone();
-                  let price = exit.price * (1.0 + self.slippage / 100.0);
+                  let entry_key =
+                    Trade::empty(ticker.clone(), TradeAction::EnterShort, exit.id).key();
+                  let entry_price = self.active_trades.get(&entry_key).unwrap().price;
+                  let result = self.exit_trade(entry_price, &mut exit);
 
-                  exit.price = price;
-                  let result = self.exit_trade(&exit);
-
-                  let entry = Trade::empty(ticker.clone(), TradeAction::EnterShort, exit.id);
-                  self.active_trades.remove(&entry);
+                  self.active_trades.remove(&entry_key);
                   self.add_trade(exit, ticker);
 
                   if let Err(e) = result {
@@ -572,7 +552,6 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
                   }
                 }
               }
-              _ => (),
             }
           }
         }

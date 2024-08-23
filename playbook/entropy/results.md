@@ -49,4 +49,17 @@ period: 168, zscore: Some(3.0), roi: 28.45%, sharpe: 0.504, dd: -34.721%
 period: 196, zscore: Some(3.0), roi: 491.95%, sharpe: 2.948, dd: -36.121%
 period: 195, zscore: Some(3.0), roi: 206.02%, sharpe: 4.18, dd: -42.453%
 
-
+--- Top by ROI ---
+period: 8, zscore: Some(2.0), roi: 538.82%, sharpe: 1.109, dd: -53.26%
+period: 79, zscore: Some(1.75), roi: 339.8%, sharpe: 1.138, dd: -28.319%
+period: 66, zscore: Some(3.0), roi: 322.7%, sharpe: 1.613, dd: 0%
+sort summaries by sharpe ratio in 0ms
+--- Top by Sharpe ---
+period: 13, zscore: Some(3.0), roi: 22.67%, sharpe: inf, dd: 0%
+period: 11, zscore: Some(2.75), roi: 58.78%, sharpe: 3.007, dd: 0%
+period: 30, zscore: Some(2.75), roi: 267.9%, sharpe: 2.811, dd: -35.713%
+sort summaries by max drawdown in 0ms
+--- Top by Drawdown ---
+period: 13, zscore: Some(3.0), roi: 22.67%, sharpe: inf, dd: 0%
+period: 11, zscore: Some(2.75), roi: 58.78%, sharpe: 3.007, dd: 0%
+period: 65, zscore: Some(3.0), roi: 313.38%, sharpe: 1.705, dd: 0%
