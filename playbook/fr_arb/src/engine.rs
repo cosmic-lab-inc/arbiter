@@ -656,3 +656,60 @@ impl Engine {
       .await
   }
 }
+
+#[test]
+fn loan_leverage() {
+  let ltv = 0.75; // $1000 in collateral can borrow $750
+  let initial_collateral = 1000.0;
+  let mut collateral = initial_collateral;
+  let mut borrowed = 0.0;
+  let mut interest = 0.0;
+  let mut loops = 0;
+  let borrow_rate = 6.68;
+
+  fn loop_borrow(
+    ltv: f64,
+    borrow_rate: f64,
+    collateral: &mut f64,
+    borrowed: &mut f64,
+    loops: &mut usize,
+    interest: &mut f64,
+  ) {
+    let loan = *collateral * ltv;
+    let rate = loan * borrow_rate / 100.0;
+    let new_borrowed = *borrowed + loan + rate;
+    let new_collateral = *collateral + loan;
+    if new_borrowed > new_collateral * ltv {
+      // max leverage reached, will be liquidated if looped again
+      println!("Max leverage reached");
+    } else {
+      *borrowed += loan;
+      *collateral += loan;
+      *interest += rate;
+      *loops += 1;
+      println!("borrowed: {}", *borrowed);
+      println!("collateral: {}", *collateral);
+      println!("interest: {}", *interest);
+      println!("loops: {}", *loops);
+      loop_borrow(ltv, borrow_rate, collateral, borrowed, loops, interest);
+    }
+  }
+
+  loop_borrow(
+    ltv,
+    borrow_rate,
+    &mut collateral,
+    &mut borrowed,
+    &mut loops,
+    &mut interest,
+  );
+  println!("Loops: {}", loops);
+  println!("Borrowed: {}", borrowed);
+  println!("Collateral: {}", collateral);
+  println!("Leverage: {}", trunc!(collateral / initial_collateral, 2));
+  println!(
+    "Interest Paid: ${} or {}%",
+    trunc!(interest, 2),
+    trunc!(interest / borrowed * 100.0, 2)
+  );
+}

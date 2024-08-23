@@ -1,5 +1,5 @@
 [package]
-name = "delta_neutral"
+name = "fr_arb"
 version = { workspace = true }
 edition = { workspace = true }
 

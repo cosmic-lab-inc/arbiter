@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use crate::trade::{Bet, Signal, SignalInfo};
+use crate::trade::{Bet, SignalInfo, Trade};
 use crate::Backtest;
 use crate::Strategy;
 use log::warn;
@@ -43,7 +43,7 @@ impl HalfLifeBacktest {
     }
   }
 
-  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Signal>> {
+  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Trade>> {
     match ticker {
       None => Ok(vec![]),
       Some(_ticker) => {
@@ -69,7 +69,7 @@ impl HalfLifeBacktest {
           price: s0.y,
           date: Time::from_unix_ms(s0.x),
           ticker: self.series.id.clone(),
-          quantity: self.assets.get_or_err(&self.series.id)?.quantity,
+          quantity: self.assets.get(&self.series.id)?.quantity,
         };
 
         let enter_long = z > self.z_entry;
@@ -78,16 +78,16 @@ impl HalfLifeBacktest {
         let enter_short = exit_long;
 
         if exit_long {
-          signals.push(Signal::ExitLong(exit_info.clone()));
+          signals.push(Trade::ExitLong(exit_info.clone()));
         }
         if exit_short {
-          signals.push(Signal::ExitShort(exit_info.clone()));
+          signals.push(Trade::ExitShort(exit_info.clone()));
         }
         if enter_long {
-          signals.push(Signal::EnterLong(entry_info.clone()));
+          signals.push(Trade::EnterLong(entry_info.clone()));
         }
         if enter_short {
-          signals.push(Signal::EnterShort(entry_info.clone()));
+          signals.push(Trade::EnterShort(entry_info.clone()));
         }
 
         Ok(signals)
@@ -103,7 +103,7 @@ impl Strategy<Data> for HalfLifeBacktest {
     data: Data,
     ticker: Option<String>,
     assets: &Assets,
-  ) -> anyhow::Result<Vec<Signal>> {
+  ) -> anyhow::Result<Vec<Trade>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.series.id {
         self.series.push(Data {

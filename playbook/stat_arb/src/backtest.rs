@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use crate::trade::{Bet, Signal, SignalInfo};
+use crate::trade::{Bet, SignalInfo, Trade};
 use crate::Backtest;
 use crate::Strategy;
 use log::warn;
@@ -55,7 +55,7 @@ impl StatArbBacktest {
     }
   }
 
-  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Signal>> {
+  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Trade>> {
     match ticker {
       None => Ok(vec![]),
       Some(_ticker) => {
@@ -147,9 +147,9 @@ impl StatArbBacktest {
         // }
 
         // --- #2 ---
-        let x_base_amt = self.assets.get_or_err(&self.x.id)?.quantity;
+        let x_base_amt = self.assets.get(&self.x.id)?.quantity;
         let x_quote_amt = x_base_amt * x_0.y();
-        let y_base_amt = self.assets.get_or_err(&self.y.id)?.quantity;
+        let y_base_amt = self.assets.get(&self.y.id)?.quantity;
         let y_quote_amt = y_base_amt * y_0.y();
 
         // rebalance x and y to self.x_rebal_pct and self.y_rebal_pct
@@ -175,7 +175,7 @@ impl StatArbBacktest {
             ticker: self.x.id.clone(),
             quantity: x_base_rebal_needed.abs(),
           };
-          signals.push(Signal::ExitLong(x_exit_info));
+          signals.push(Trade::ExitLong(x_exit_info));
         }
         if y_base_rebal_needed < 0.0 && deviated {
           let y_exit_info = SignalInfo {
@@ -184,7 +184,7 @@ impl StatArbBacktest {
             ticker: self.y.id.clone(),
             quantity: y_base_rebal_needed.abs(),
           };
-          signals.push(Signal::ExitLong(y_exit_info));
+          signals.push(Trade::ExitLong(y_exit_info));
         }
 
         // then buy assets with cash available
@@ -195,7 +195,7 @@ impl StatArbBacktest {
             ticker: self.x.id.clone(),
             quantity: x_base_rebal_needed,
           };
-          signals.push(Signal::EnterLong(x_enter_info));
+          signals.push(Trade::EnterLong(x_enter_info));
         }
         if y_base_rebal_needed > 0.0 && deviated {
           let y_enter_info = SignalInfo {
@@ -204,7 +204,7 @@ impl StatArbBacktest {
             ticker: self.y.id.clone(),
             quantity: y_base_rebal_needed,
           };
-          signals.push(Signal::EnterLong(y_enter_info));
+          signals.push(Trade::EnterLong(y_enter_info));
         }
 
         Ok(signals)
@@ -220,7 +220,7 @@ impl Strategy<Data> for StatArbBacktest {
     data: Data,
     ticker: Option<String>,
     assets: &Assets,
-  ) -> anyhow::Result<Vec<Signal>> {
+  ) -> anyhow::Result<Vec<Trade>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.x.id {
         self.x.push(Data {

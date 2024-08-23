@@ -3,7 +3,9 @@
 use crate::{trunc, Dataset, Time};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -38,50 +40,57 @@ impl TradeType {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SignalInfo {
+#[derive(Debug, Clone)]
+pub struct Trade {
+  pub ticker: String,
+  pub id: u8,
   pub price: f64,
   pub date: Time,
-  pub ticker: String,
   pub quantity: f64,
+  pub side: TradeAction,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Signal {
-  EnterLong(SignalInfo),
-  ExitLong(SignalInfo),
-  EnterShort(SignalInfo),
-  ExitShort(SignalInfo),
-  None,
-}
+impl Trade {
+  pub fn key(&self) -> String {
+    let this = Self::empty(self.ticker.clone(), self.side, self.id);
+    format!("{}-{}-{}", this.ticker, this.side, this.id)
+  }
 
-impl Signal {
+  pub fn empty(ticker: String, side: TradeAction, id: u8) -> Self {
+    Self {
+      ticker,
+      id,
+      price: 0.0,
+      date: Time::now(),
+      quantity: 0.0,
+      side,
+    }
+  }
+
   pub fn print(&self) -> String {
-    match self {
-      Signal::EnterLong(data) => {
-        format!("🟢🟢 Enter Long {}", data.price)
+    match self.side {
+      TradeAction::EnterLong => {
+        format!("🟢🟢 Enter Long {}", self.price)
       }
-      Signal::ExitLong(data) => {
-        format!("🟢 Exit Long {}", data.price)
+      TradeAction::ExitLong => {
+        format!("🟢 Exit Long {}", self.price)
       }
-      Signal::EnterShort(data) => {
-        format!("🔴️🔴️ Enter Short {}", data.price)
+      TradeAction::EnterShort => {
+        format!("🔴️🔴️ Enter Short {}", self.price)
       }
-      Signal::ExitShort(data) => {
-        format!("🔴️ Exit Short {}", data.price)
+      TradeAction::ExitShort => {
+        format!("🔴️ Exit Short {}", self.price)
       }
-      Signal::None => "No signal".to_string(),
     }
   }
 
   #[allow(dead_code)]
   pub fn price(&self) -> Option<f64> {
-    match self {
-      Signal::EnterLong(info) => Some(info.price),
-      Signal::ExitLong(info) => Some(info.price),
-      Signal::EnterShort(info) => Some(info.price),
-      Signal::ExitShort(info) => Some(info.price),
-      Signal::None => None,
+    match self.side {
+      TradeAction::EnterLong => Some(self.price),
+      TradeAction::ExitLong => Some(self.price),
+      TradeAction::EnterShort => Some(self.price),
+      TradeAction::ExitShort => Some(self.price),
     }
   }
 }
@@ -111,41 +120,18 @@ impl TradeAction {
 }
 impl Hash for TradeAction {
   fn hash<H: Hasher>(&self, state: &mut H) {
-    match self {
-      TradeAction::EnterLong => "EnterLong".hash(state),
-      TradeAction::ExitLong => "ExitLong".hash(state),
-      TradeAction::EnterShort => "EnterShort".hash(state),
-      TradeAction::ExitShort => "ExitShort".hash(state),
-    }
+    self.to_string().hash(state);
   }
 }
-
-#[derive(Debug, Clone)]
-pub struct Trade {
-  pub ticker: String,
-  pub date: Time,
-  pub side: TradeAction,
-  /// base asset quantity
-  pub quantity: f64,
-  pub price: f64,
-}
-impl PartialEq for Trade {
-  fn eq(&self, other: &Self) -> bool {
-    self.ticker == other.ticker
-      && self.date == other.date
-      && self.side == other.side
-      && self.quantity == other.quantity
-      && self.price == other.price
-  }
-}
-impl Eq for Trade {}
-impl Hash for Trade {
-  fn hash<H: Hasher>(&self, state: &mut H) {
-    self.ticker.hash(state);
-    self.date.to_unix_ms().hash(state);
-    self.side.hash(state);
-    self.quantity.to_bits().hash(state);
-    self.price.to_bits().hash(state);
+impl Display for TradeAction {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let str = match self {
+      TradeAction::EnterLong => "EnterLong".to_string(),
+      TradeAction::ExitLong => "ExitLong".to_string(),
+      TradeAction::EnterShort => "EnterShort".to_string(),
+      TradeAction::ExitShort => "ExitShort".to_string(),
+    };
+    write!(f, "{}", str)
   }
 }
 
@@ -386,7 +372,7 @@ impl Summary {
       .data()
       .iter()
       .map(|d| d.y)
-      .max_by(|a, b| a.partial_cmp(b).unwrap())
+      .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
       .unwrap_or(0.0);
     trunc!(best_trade, 3)
   }
@@ -399,7 +385,7 @@ impl Summary {
       .data()
       .iter()
       .map(|d| d.y)
-      .min_by(|a, b| a.partial_cmp(b).unwrap())
+      .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
       .unwrap_or(0.0);
     trunc!(worst_trade, 3)
   }
@@ -470,38 +456,35 @@ pub struct Asset {
 pub struct Assets(HashMap<String, Asset>);
 
 impl Assets {
+  pub fn clear(&mut self) {
+    self.0.clear();
+  }
+
   pub fn cash(&self) -> anyhow::Result<&Asset> {
     self.0.get(CASH_TICKER).ok_or(anyhow::anyhow!("No cash"))
+  }
+
+  pub fn cash_mut(&mut self) -> anyhow::Result<&mut Asset> {
+    self.get_mut(CASH_TICKER)
   }
 
   pub fn equity(&self) -> f64 {
     let mut cum_equity = 0.0;
     for (_, asset) in self.0.iter() {
       let Asset { quantity, price } = asset;
-      // short sold assets (negative base amount) are not counted since it would reduce equity
-      if quantity > &0.0 {
-        cum_equity += price * quantity;
-      }
+      cum_equity += price * quantity;
     }
     cum_equity
   }
 
-  pub fn get(&self, ticker: &str) -> Option<&Asset> {
-    self.0.get(ticker)
-  }
-
-  pub fn get_or_err(&self, ticker: &str) -> anyhow::Result<&Asset> {
+  pub fn get(&self, ticker: &str) -> anyhow::Result<&Asset> {
     self
       .0
       .get(ticker)
       .ok_or(anyhow::anyhow!("No asset for ticker"))
   }
 
-  pub fn get_mut(&mut self, ticker: &str) -> Option<&mut Asset> {
-    self.0.get_mut(ticker)
-  }
-
-  pub fn get_mut_or_err(&mut self, ticker: &str) -> anyhow::Result<&mut Asset> {
+  pub fn get_mut(&mut self, ticker: &str) -> anyhow::Result<&mut Asset> {
     self
       .0
       .get_mut(ticker)
@@ -540,5 +523,37 @@ impl PartialEq for Timeframe {
         | (Timeframe::OneHour, Timeframe::OneHour)
         | (Timeframe::OneDay, Timeframe::OneDay)
     )
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveTrades(HashMap<String, Trade>);
+impl ActiveTrades {
+  pub fn new() -> Self {
+    Self(HashMap::new())
+  }
+
+  pub fn clear(&mut self) {
+    self.0.clear();
+  }
+
+  pub fn insert(&mut self, trade: Trade) -> Option<Trade> {
+    self.0.insert(trade.key(), trade)
+  }
+
+  pub fn remove(&mut self, trade: &Trade) -> Option<Trade> {
+    self.0.remove(&trade.key())
+  }
+
+  pub fn get(&self, trade: &Trade) -> Option<&Trade> {
+    self.0.get(&trade.key())
+  }
+
+  pub fn get_mut(&mut self, trade: &Trade) -> Option<&mut Trade> {
+    self.0.get_mut(&trade.key())
+  }
+
+  pub fn trades(&self) -> Vec<Trade> {
+    self.0.values().cloned().collect::<Vec<_>>()
   }
 }

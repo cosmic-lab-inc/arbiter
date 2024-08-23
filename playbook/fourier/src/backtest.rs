@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use crate::trade::{Bet, Signal, SignalInfo};
+use crate::trade::{Bet, SignalInfo, Trade};
 use crate::{Backtest, Dataset, Strategy};
 use log::warn;
 use ndarray::AssignElem;
@@ -125,7 +125,7 @@ impl FourierBacktest {
     })
   }
 
-  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Signal>> {
+  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Trade>> {
     match ticker {
       None => Ok(vec![]),
       Some(ticker) => {
@@ -158,21 +158,21 @@ impl FourierBacktest {
           price: latest_data.y(),
           date: Time::from_unix_ms(latest_data.x()),
           ticker: ticker.clone(),
-          quantity: self.assets.get_or_err(&ticker)?.quantity,
+          quantity: self.assets.get(&ticker)?.quantity,
         };
 
         let mut signals = vec![];
         if exit_short {
-          signals.push(Signal::ExitShort(exit_info.clone()));
+          signals.push(Trade::ExitShort(exit_info.clone()));
         }
         if exit_long {
-          signals.push(Signal::ExitLong(exit_info.clone()));
+          signals.push(Trade::ExitLong(exit_info.clone()));
         }
         if enter_short {
-          signals.push(Signal::EnterShort(enter_info.clone()));
+          signals.push(Trade::EnterShort(enter_info.clone()));
         }
         if enter_long {
-          signals.push(Signal::EnterLong(enter_info));
+          signals.push(Trade::EnterLong(enter_info));
         }
         Ok(signals)
       }
@@ -186,7 +186,7 @@ impl Strategy<Data> for FourierBacktest {
     data: Data,
     ticker: Option<String>,
     assets: &Assets,
-  ) -> anyhow::Result<Vec<Signal>> {
+  ) -> anyhow::Result<Vec<Trade>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {
         self.cache.push(data);

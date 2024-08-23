@@ -2,9 +2,8 @@
 #![allow(dead_code)]
 
 use nexus::*;
-use nexus::{Dataset, Strategy};
-use nexus::{Signal, SignalInfo};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct EntropyBacktest {
@@ -141,7 +140,11 @@ impl EntropyBacktest {
     })
   }
 
-  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Signal>> {
+  pub fn signal(
+    &mut self,
+    ticker: Option<String>,
+    active_trades: &ActiveTrades,
+  ) -> anyhow::Result<Vec<Trade>> {
     match ticker {
       None => Ok(vec![]),
       Some(ticker) => {
@@ -159,37 +162,115 @@ impl EntropyBacktest {
           exit_short,
         } = self.generate_signals()?;
 
-        let latest_data = self
+        let Data { x: time, y: price } = *self
           .cache
           .front()
           .ok_or(anyhow::anyhow!("No data in cache"))?;
 
-        let enter_info = SignalInfo {
-          price: latest_data.y(),
-          date: Time::from_unix_ms(latest_data.x()),
-          ticker: ticker.clone(),
-          quantity: self.assets.cash()?.quantity.abs() / latest_data.y(),
-        };
-        let exit_info = SignalInfo {
-          price: latest_data.y(),
-          date: Time::from_unix_ms(latest_data.x()),
-          ticker: ticker.clone(),
-          quantity: self.assets.get_or_err(&ticker)?.quantity.abs(),
-        };
+        let mut quote = self.assets.cash()?.quantity;
+        let mut base = self.assets.get(&ticker)?.quantity;
 
-        let mut signals = vec![];
+        let mut signals: Vec<Trade> = vec![];
+
+        // todo: the problem is in exit/enter within the same bar as the quote/base qtys aren't using the same dollar value like 100% of equity would
+
+        let id = 0;
         if exit_short {
-          signals.push(Signal::ExitShort(exit_info.clone()));
+          let entry = Trade::empty(ticker.clone(), TradeAction::EnterShort, id);
+          if let Some(entry) = active_trades.get(&entry) {
+            let trade = Trade {
+              id,
+              price,
+              date: Time::from_unix_ms(time),
+              ticker: ticker.clone(),
+              quantity: entry.quantity,
+              side: TradeAction::ExitShort,
+            };
+            signals.push(trade);
+
+            // exit short adds to base and subtracts from quote
+            let pre_quote = quote;
+            let pre_base = entry.quantity;
+            quote -= price * entry.quantity.abs();
+            base += entry.quantity.abs();
+            println!(
+              "exit short, price: ${}, base: {} -> {}, quote: ${} -> ${}",
+              trunc!(price, 3),
+              trunc!(pre_base, 3),
+              trunc!(base, 3),
+              trunc!(pre_quote, 3),
+              trunc!(quote, 3)
+            );
+          }
         }
+
         if exit_long {
-          signals.push(Signal::ExitLong(exit_info.clone()));
+          let entry = Trade::empty(ticker.clone(), TradeAction::EnterLong, id);
+          if let Some(entry) = active_trades.get(&entry) {
+            let trade = Trade {
+              id,
+              price,
+              date: Time::from_unix_ms(time),
+              ticker: ticker.clone(),
+              quantity: entry.quantity,
+              side: TradeAction::ExitLong,
+            };
+            signals.push(trade);
+
+            // exit long adds to quote and subtracts from base
+            let pre_quote = quote;
+            let pre_base = entry.quantity;
+            quote += price * entry.quantity.abs();
+            base -= entry.quantity.abs();
+            println!(
+              "exit long, price: ${}, base: {} -> {}, quote: ${} -> ${}",
+              trunc!(price, 3),
+              trunc!(pre_base, 3),
+              trunc!(base, 3),
+              trunc!(pre_quote, 3),
+              trunc!(quote, 3)
+            );
+          }
         }
+
         if enter_short {
-          signals.push(Signal::EnterShort(enter_info.clone()));
+          let trade = Trade {
+            id,
+            price,
+            date: Time::from_unix_ms(time),
+            ticker: ticker.clone(),
+            quantity: quote / price,
+            side: TradeAction::EnterShort,
+          };
+          if active_trades.get(&trade).is_none() {
+            signals.push(trade);
+            println!(
+              "enter short, price: ${}, base: {}",
+              trunc!(price, 3),
+              trunc!(quote / price, 3)
+            );
+          }
         }
+
         if enter_long {
-          signals.push(Signal::EnterLong(enter_info));
+          let trade = Trade {
+            id,
+            price,
+            date: Time::from_unix_ms(time),
+            ticker: ticker.clone(),
+            quantity: quote / price,
+            side: TradeAction::EnterLong,
+          };
+          if active_trades.get(&trade).is_none() {
+            signals.push(trade);
+            println!(
+              "enter long, price: ${}, base: {}",
+              trunc!(price, 3),
+              trunc!(quote / price, 3)
+            );
+          }
         }
+
         Ok(signals)
       }
     }
@@ -202,7 +283,8 @@ impl Strategy<Data> for EntropyBacktest {
     data: Data,
     ticker: Option<String>,
     assets: &Assets,
-  ) -> anyhow::Result<Vec<Signal>> {
+    active_trades: &ActiveTrades,
+  ) -> anyhow::Result<Vec<Trade>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {
         self.cache.push(data);
@@ -212,7 +294,7 @@ impl Strategy<Data> for EntropyBacktest {
       self.last_signal = Some((bars_since + 1, last_signal));
     }
     self.assets = assets.clone();
-    self.signal(ticker)
+    self.signal(ticker, active_trades)
   }
 
   fn cache(&self, ticker: Option<String>) -> Option<&RingBuffer<Data>> {
@@ -859,7 +941,7 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.25;
+  let fee = 0.0;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -874,9 +956,9 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let bits = EntropyBits::One;
-  let period = 62;
-  let zscore = Some(2.75);
+  let bits = EntropyBits::Two;
+  let period = 100;
+  let zscore = None;
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)
