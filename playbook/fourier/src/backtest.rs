@@ -152,13 +152,13 @@ impl FourierBacktest {
           price: latest_data.y(),
           date: Time::from_unix_ms(latest_data.x()),
           ticker: ticker.clone(),
-          quantity: self.assets.cash()?.quantity / latest_data.y(),
+          quantity: self.assets.cash()?.qty / latest_data.y(),
         };
         let exit_info = SignalInfo {
           price: latest_data.y(),
           date: Time::from_unix_ms(latest_data.x()),
           ticker: ticker.clone(),
-          quantity: self.assets.get(&ticker)?.quantity,
+          quantity: self.assets.get(&ticker)?.qty,
         };
 
         let mut signals = vec![];

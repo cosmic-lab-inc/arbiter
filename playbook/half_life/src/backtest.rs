@@ -63,13 +63,13 @@ impl HalfLifeBacktest {
           price: s0.y,
           date: Time::from_unix_ms(s0.x),
           ticker: self.series.id.clone(),
-          quantity: self.assets.cash()?.quantity / s0.y,
+          quantity: self.assets.cash()?.qty / s0.y,
         };
         let exit_info = SignalInfo {
           price: s0.y,
           date: Time::from_unix_ms(s0.x),
           ticker: self.series.id.clone(),
-          quantity: self.assets.get(&self.series.id)?.quantity,
+          quantity: self.assets.get(&self.series.id)?.qty,
         };
 
         let enter_long = z > self.z_entry;

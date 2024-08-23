@@ -55,7 +55,7 @@ pub struct Trade {
   pub id: u8,
   pub price: f64,
   pub date: Time,
-  pub quantity: Option<f64>,
+  pub qty: Option<f64>,
   pub side: TradeAction,
 }
 
@@ -71,7 +71,7 @@ impl Trade {
       id,
       price: 0.0,
       date: Time::now(),
-      quantity: None,
+      qty: None,
       side,
     }
   }
@@ -214,7 +214,7 @@ impl Summary {
       .ok_or(anyhow::anyhow!("No trades for ticker"))?;
     let avg = trades
       .iter()
-      .map(|t| t.price * t.quantity.unwrap_or(0.0))
+      .map(|t| t.price * t.qty.unwrap_or(0.0))
       .sum::<f64>()
       / trades.len() as f64;
     Ok(trunc!(avg, 2))
@@ -433,7 +433,7 @@ pub const CASH_TICKER: &str = "USD";
 
 #[derive(Debug, Clone, Default)]
 pub struct Asset {
-  pub quantity: f64,
+  pub qty: f64,
   pub price: f64,
 }
 
@@ -457,7 +457,10 @@ impl Assets {
   pub fn equity(&self) -> f64 {
     let mut cum_equity = 0.0;
     for (_, asset) in self.0.iter() {
-      let Asset { quantity, price } = asset;
+      let Asset {
+        qty: quantity,
+        price,
+      } = asset;
       if *quantity > 0.0 {
         cum_equity += price * quantity;
       }

@@ -51,8 +51,8 @@ period: 195, zscore: Some(3.0), roi: 206.02%, sharpe: 4.18, dd: -42.453%
 
 --- Top by ROI ---
 period: 8, zscore: Some(2.0), roi: 538.82%, sharpe: 1.109, dd: -53.26%
-period: 79, zscore: Some(1.75), roi: 339.8%, sharpe: 1.138, dd: -28.319%
-period: 66, zscore: Some(3.0), roi: 322.7%, sharpe: 1.613, dd: 0%
+period: 113, zscore: Some(2.75), roi: 375%, sharpe: 1.478, dd: -7.642%
+period: 114, zscore: Some(2.75), roi: 358.04%, sharpe: 1.268, dd: -13.615%
 sort summaries by sharpe ratio in 0ms
 --- Top by Sharpe ---
 period: 13, zscore: Some(3.0), roi: 22.67%, sharpe: inf, dd: 0%

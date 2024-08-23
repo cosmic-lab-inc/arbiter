@@ -147,9 +147,9 @@ impl StatArbBacktest {
         // }
 
         // --- #2 ---
-        let x_base_amt = self.assets.get(&self.x.id)?.quantity;
+        let x_base_amt = self.assets.get(&self.x.id)?.qty;
         let x_quote_amt = x_base_amt * x_0.y();
-        let y_base_amt = self.assets.get(&self.y.id)?.quantity;
+        let y_base_amt = self.assets.get(&self.y.id)?.qty;
         let y_quote_amt = y_base_amt * y_0.y();
 
         // rebalance x and y to self.x_rebal_pct and self.y_rebal_pct
