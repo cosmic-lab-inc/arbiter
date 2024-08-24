@@ -28,6 +28,8 @@ period: 488, zscore: None, roi: 13.49%, sharpe: -1.608, dd: -64.183%
 period: 473, zscore: None, roi: 43.4%, sharpe: -0.647, dd: -64.795%
 period: 433, zscore: None, roi: 398.06%, sharpe: 1.997, dd: -72.812%
 
-trades: 2506, long: 1138/2506, total WR: 49.6%, long WR: 52.02%, short WR: $47.59, pnl: $-88220.52
+entropy: 2.95/3
+trades: 17258, long: 9619/17258, win rate: 50.12%, long WR: 51.75%, short WR: $48.07, pnl: $17618.98
 
-trades: 2506, long: 928/2506, total WR: 57.98%, long WR: 63.79%, short WR: $54.56, pnl: $313122.88
+entropy: 2.939/3
+trades: 17259, long: 6652/17259, win rate: 48.64%, long WR: 50.63%, short WR: $47.39, pnl: $-2853.34

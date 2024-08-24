@@ -103,10 +103,12 @@ impl EntropyBacktest {
     }
     // only trade if no active position
     if new_last_signal.is_none() {
+      let entropy_series = series;
+      // let entropy_series = Dataset::new(series.0.clone().into_iter().rev().collect::<Vec<Data>>());
       let signal = match self.entropy_bits {
-        EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-        EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-        EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+        EntropyBits::One => one_step_entropy_signal(entropy_series, self.period)?,
+        EntropyBits::Two => two_step_entropy_signal(entropy_series, self.period)?,
+        EntropyBits::Three => three_step_entropy_signal(entropy_series, self.period)?,
       };
       match signal {
         EntropySignal::Up => {
@@ -129,7 +131,7 @@ impl EntropyBacktest {
       }
     }
     self.last_signal = new_last_signal;
-    println!(
+    debug!(
       "longs {}/{}, ${}, shorts: {}/{}, ${}",
       self.longs_won,
       self.longs_won + self.longs_lost,
@@ -349,28 +351,26 @@ fn entropy_one_step() -> anyhow::Result<()> {
 
   let clock_start = Time::now();
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2019, 1, 1, None, None, None);
+  let end_time = Time::new(2020, 1, 10, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 15;
+  let period = 10;
   let bits = EntropyBits::One.bits();
   let patterns = EntropyBits::One.patterns();
 
-  let mut win = 0;
-  let mut loss = 0;
-  let mut cum_pnl = 0.0;
+  let mut longs = 0;
+  let mut shorts = 0;
   let mut long_win = 0;
   let mut short_win = 0;
-  let mut long_loss = 0;
-  let mut short_loss = 0;
+  let mut cum_pnl = 0.0;
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
-  let mut pnl_per_trade = vec![];
+
   for i in 0..btc_series.y().len() - period + 1 - patterns {
     let series = btc_series.y()[i..i + period + patterns].to_vec();
 
@@ -398,87 +398,53 @@ fn entropy_one_step() -> anyhow::Result<()> {
     let up = max == entropy_b1;
     let down = max == entropy_b0;
 
-    let mut delta = 0.0;
-    if up && p1 < p0 {
-      win += 1;
-      long_win += 1;
-      delta = p0 - p1;
-    } else if down && p1 > p0 {
-      win += 1;
-      short_win += 1;
-      delta = p1 - p0;
-    } else if up && p1 > p0 {
-      loss += 1;
-      long_loss += 1;
-      delta = p0 - p1;
-    } else if down && p1 < p0 {
-      loss += 1;
-      short_loss += 1;
-      delta = p1 - p0;
+    if up {
+      longs += 1;
+      if p1 < p0 {
+        // long && new price > old price, long wins
+        long_win += 1;
+        cum_pnl += p0 - p1;
+      } else {
+        // long && new price < old price, long loses
+        cum_pnl += p0 - p1;
+      }
+    } else if down {
+      shorts += 1;
+      if p1 > p0 {
+        // short && old price > new price, short wins
+        short_win += 1;
+        cum_pnl += p1 - p0;
+      } else {
+        // short && old price < new price, short loses
+        cum_pnl += p1 - p0;
+      }
     }
-    cum_pnl += delta;
+
     pnl_series.push(cum_pnl);
-    pnl_per_trade.push(delta);
-    entropies.push(shannon_entropy(series.as_slice(), period, patterns));
+    entropies.push(shannon_entropy(series.as_slice(), length, patterns));
   }
   let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
   println!("entropy: {}/{}", trunc!(avg_entropy, 3), patterns);
 
-  let avg_pnl_per_trade = pnl_per_trade.iter().sum::<f64>() / pnl_per_trade.len() as f64;
-
+  let trades = longs + shorts;
+  let win_rate = trunc!((long_win + short_win) as f64 / trades as f64 * 100.0, 2);
+  let long_win_rate = trunc!(long_win as f64 / longs as f64 * 100.0, 2);
+  let short_win_rate = trunc!(short_win as f64 / shorts as f64 * 100.0, 2);
   println!(
-    "trades: {} win rate: {}%, avg trade: ${}, profit: ${}",
-    win + loss,
-    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
-    trunc!(avg_pnl_per_trade, 2),
+    "trades: {}, long: {}/{}, win rate: {}%, long WR: {}%, short WR: ${}, pnl: ${}",
+    trades,
+    longs,
+    longs + shorts,
+    win_rate,
+    long_win_rate,
+    short_win_rate,
     trunc!(cum_pnl, 2)
-  );
-  println!(
-    "{}% of winners are long",
-    trunc!(long_win as f64 / (long_win + short_win) as f64 * 100.0, 3)
-  );
-  println!(
-    "{}% of losers are long",
-    trunc!(
-      long_loss as f64 / (long_loss + short_loss) as f64 * 100.0,
-      3
-    )
-  );
-  println!(
-    "{}% of trades are long",
-    trunc!(
-      (long_win + long_loss) as f64 / (long_win + long_loss + short_win + short_loss) as f64
-        * 100.0,
-      3
-    )
   );
 
   println!(
     "finished test in: {}s",
     Time::now().to_unix() - clock_start.to_unix()
   );
-
-  // let pnl_series = Dataset::new(
-  //   pnl_series
-  //     .into_iter()
-  //     .enumerate()
-  //     .map(|(i, pnl)| Data {
-  //       x: i as i64,
-  //       y: pnl,
-  //     })
-  //     .collect(),
-  // );
-  // Plot::plot(
-  //   vec![Series {
-  //     data: pnl_series.0,
-  //     label: "Strategy".to_string(),
-  //   }],
-  //   "btc_one_step_entropy.png",
-  //   "BTC Entropy",
-  //   "$ PnL",
-  //   "Time",
-  //   Some(false),
-  // )?;
 
   Ok(())
 }
@@ -491,24 +457,22 @@ fn entropy_two_step() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   let clock_start = Time::now();
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let end_time = Time::new(2021, 1, 1, None, None, None);
 
-  let timeframe = "1d";
+  let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 15;
+  let period = 100;
   let bits = EntropyBits::Two.bits();
   let patterns = EntropyBits::Two.patterns();
 
   let mut longs = 0;
   let mut shorts = 0;
   let mut long_win = 0;
-  let mut long_lose = 0;
   let mut short_win = 0;
-  let mut short_lose = 0;
   let mut cum_pnl = 0.0;
 
   let mut entropies = vec![];
@@ -520,6 +484,11 @@ fn entropy_two_step() -> anyhow::Result<()> {
     let expected = btc_series.y()[i + period..i + period + patterns].to_vec();
     assert_eq!(expected.len(), patterns);
 
+    // let data = trained.clone().into_iter().rev().collect::<Vec<f64>>();
+    // let mut b11 = data.clone();
+    // let mut b00 = data.clone();
+    // let mut b10 = data.clone();
+    // let mut b01 = data.clone();
     let mut b11 = trained.clone();
     let mut b00 = trained.clone();
     let mut b10 = trained.clone();
@@ -528,7 +497,6 @@ fn entropy_two_step() -> anyhow::Result<()> {
     let li = trained.len() - 1;
     b11[li - 1] = trained[li] + 1.0;
     b11[li] = b11[li - 1] + 1.0;
-
     b00[li - 1] = trained[li] - 1.0;
     b00[li] = b00[li - 1] - 1.0;
 
@@ -556,52 +524,26 @@ fn entropy_two_step() -> anyhow::Result<()> {
     let up = max == entropy_b11;
     let down = max == entropy_b00;
 
-    // // 49% win rate if losing long comes before winning short
-    // if up {
-    //   longs += 1;
-    //   if p2 < p0 {
-    //     // long && new price > old price, long wins
-    //     long_win += 1;
-    //     cum_pnl += p0 - p2;
-    //   } else {
-    //     // long && new price < old price, long loses
-    //     long_lose += 1;
-    //     cum_pnl += p0 - p2;
-    //   }
-    // } else if down {
-    //   shorts += 1;
-    //   if p2 > p0 {
-    //     // short && old price > new price, short wins
-    //     short_win += 1;
-    //     cum_pnl += p2 - p0;
-    //   } else {
-    //     // short && old price < new price, short loses
-    //     short_lose += 1;
-    //     cum_pnl += p2 - p0;
-    //   }
-    // }
-
-    // 57% win rate if winning shorts comes before losing long
-    if up && p2 < p0 {
-      // long && new price > old price, long wins
-      long_win += 1;
+    if up {
       longs += 1;
-      cum_pnl += p0 - p2;
-    } else if down && p2 > p0 {
-      // short && old price > new price, short wins
-      short_win += 1;
+      if p2 < p0 {
+        // long && new price > old price, long wins
+        long_win += 1;
+        cum_pnl += p0 - p2;
+      } else {
+        // long && new price < old price, long loses
+        cum_pnl += p0 - p2;
+      }
+    } else if down {
       shorts += 1;
-      cum_pnl += p2 - p0;
-    } else if up && p2 > p0 {
-      // long && new price < old price, long loses
-      long_lose += 1;
-      longs += 1;
-      cum_pnl += p0 - p2;
-    } else if down && p2 < p0 {
-      // short && old price < new price, short loses
-      short_lose += 1;
-      shorts += 1;
-      cum_pnl += p2 - p0;
+      if p2 > p0 {
+        // short && old price > new price, short wins
+        short_win += 1;
+        cum_pnl += p2 - p0;
+      } else {
+        // short && old price < new price, short loses
+        cum_pnl += p2 - p0;
+      }
     }
 
     pnl_series.push(cum_pnl);
@@ -615,7 +557,7 @@ fn entropy_two_step() -> anyhow::Result<()> {
   let long_win_rate = trunc!(long_win as f64 / longs as f64 * 100.0, 2);
   let short_win_rate = trunc!(short_win as f64 / shorts as f64 * 100.0, 2);
   println!(
-    "trades: {}, long: {}/{}, total WR: {}%, long WR: {}%, short WR: ${}, pnl: ${}",
+    "trades: {}, long: {}/{}, win rate: {}%, long WR: {}%, short WR: ${}, pnl: ${}",
     trades,
     longs,
     longs + shorts,
@@ -630,28 +572,6 @@ fn entropy_two_step() -> anyhow::Result<()> {
     Time::now().to_unix() - clock_start.to_unix()
   );
 
-  // let pnl_series = Dataset::new(
-  //   pnl_series
-  //     .into_iter()
-  //     .enumerate()
-  //     .map(|(i, pnl)| Data {
-  //       x: i as i64,
-  //       y: pnl,
-  //     })
-  //     .collect(),
-  // );
-  // Plot::plot(
-  //   vec![Series {
-  //     data: pnl_series.0,
-  //     label: "Strategy".to_string(),
-  //   }],
-  //   "btc_two_step_entropy.png",
-  //   "BTC Entropy",
-  //   "$ PnL",
-  //   "Time",
-  //   Some(false),
-  // )?;
-
   Ok(())
 }
 
@@ -660,20 +580,22 @@ fn entropy_three_step() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
   let clock_start = Time::now();
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2019, 1, 1, None, None, None);
-  let timeframe = "1h";
+  let start_time = Time::new(2020, 1, 1, None, None, None);
+  let end_time = Time::new(2020, 1, 10, None, None, None);
+  let timeframe = "1m";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 15;
+  let period = 100;
   let bits = EntropyBits::Three.bits();
   let patterns = EntropyBits::Three.patterns();
 
-  let mut win = 0;
-  let mut loss = 0;
+  let mut longs = 0;
+  let mut shorts = 0;
+  let mut long_win = 0;
+  let mut short_win = 0;
   let mut cum_pnl = 0.0;
 
   let mut entropies = vec![];
@@ -751,29 +673,49 @@ fn entropy_three_step() -> anyhow::Result<()> {
       .max(entropy_b100)
       .max(entropy_b001);
 
-    if max == entropy_b111 && p3 < p0 {
-      win += 1;
-      cum_pnl += p0 - p3;
-    } else if max == entropy_b000 && p3 > p0 {
-      win += 1;
-      cum_pnl += p3 - p0;
-    } else if max == entropy_b111 && p3 > p0 {
-      loss += 1;
-      cum_pnl += p0 - p3;
-    } else if max == entropy_b000 && p3 < p0 {
-      loss += 1;
-      cum_pnl += p3 - p0;
+    let up = max == entropy_b111;
+    let down = max == entropy_b000;
+
+    if up {
+      longs += 1;
+      if p3 < p0 {
+        // long && new price > old price, long wins
+        long_win += 1;
+        cum_pnl += p0 - p3;
+      } else {
+        // long && new price < old price, long loses
+        cum_pnl += p0 - p3;
+      }
+    } else if down {
+      shorts += 1;
+      if p3 > p0 {
+        // short && old price > new price, short wins
+        short_win += 1;
+        cum_pnl += p3 - p0;
+      } else {
+        // short && old price < new price, short loses
+        cum_pnl += p3 - p0;
+      }
     }
+
     pnl_series.push(cum_pnl);
     entropies.push(shannon_entropy(series.as_slice(), period, patterns));
   }
   let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
   println!("entropy: {}/{}", trunc!(avg_entropy, 3), patterns);
 
+  let trades = longs + shorts;
+  let win_rate = trunc!((long_win + short_win) as f64 / trades as f64 * 100.0, 2);
+  let long_win_rate = trunc!(long_win as f64 / longs as f64 * 100.0, 2);
+  let short_win_rate = trunc!(short_win as f64 / shorts as f64 * 100.0, 2);
   println!(
-    "trades: {}, win rate: {}%, profit: ${}",
-    win + loss,
-    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
+    "trades: {}, long: {}/{}, win rate: {}%, long WR: {}%, short WR: ${}, pnl: ${}",
+    trades,
+    longs,
+    longs + shorts,
+    win_rate,
+    long_win_rate,
+    short_win_rate,
     trunc!(cum_pnl, 2)
   );
 
@@ -781,28 +723,6 @@ fn entropy_three_step() -> anyhow::Result<()> {
     "finished test in: {}s",
     Time::now().to_unix() - clock_start.to_unix()
   );
-
-  // let pnl_series = Dataset::new(
-  //   pnl_series
-  //     .into_iter()
-  //     .enumerate()
-  //     .map(|(i, pnl)| Data {
-  //       x: i as i64,
-  //       y: pnl,
-  //     })
-  //     .collect(),
-  // );
-  // Plot::plot(
-  //   vec![Series {
-  //     data: pnl_series.0,
-  //     label: "Strategy".to_string(),
-  //   }],
-  //   "btc_three_step_entropy.png",
-  //   "BTC Entropy",
-  //   "$ PnL",
-  //   "Time",
-  //   Some(false),
-  // )?;
 
   Ok(())
 }
