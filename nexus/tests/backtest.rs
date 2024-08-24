@@ -2,6 +2,41 @@
 
 use nexus::*;
 
+const DATASET: [Data; 8] = [
+  Data {
+    x: 1724526000000,
+    y: 100.0,
+  },
+  Data {
+    x: 1724544000000,
+    y: 200.0,
+  },
+  Data {
+    x: 1724630400000,
+    y: 250.0,
+  },
+  Data {
+    x: 1724716800000,
+    y: 400.0,
+  },
+  Data {
+    x: 1724803200000,
+    y: 300.0,
+  },
+  Data {
+    x: 1724889600000,
+    y: 150.0,
+  },
+  Data {
+    x: 1724976000000,
+    y: 100.0,
+  },
+  Data {
+    x: 1725062400000,
+    y: 75.0,
+  },
+];
+
 #[derive(Debug, Clone)]
 pub struct TestBacktest {
   pub ticker: String,
@@ -25,18 +60,11 @@ impl TestBacktest {
     let Data { x: time, .. } = data;
 
     // starting equity: $1000
-    // simulated time series:
-    // [0] = $100
-    // [1] = $200
-    // [2] = $250
-    // [3] = $400
-    // [4] = $300
-    // [5] = $150
 
     // equity: 10 SOL * $100 = $1000
     // equity after enter long fee: $1000 - 1% = $990
     // enter long with: $990 / $100/SOL = 9.9 SOL
-    if time == 0 {
+    if time == DATASET[0].x {
       exit_short = true;
       enter_long = true;
     }
@@ -45,7 +73,7 @@ impl TestBacktest {
     // equity after exit long fee: $1980 - 1% = $1960.2
     // equity after enter short fee: $1960.2 - 1% = $1940.598
     // enter short with: $1940.598 / $200/SOL = 9.70299 SOL
-    if time == 1 {
+    if time == DATASET[1].x {
       exit_long = true;
       enter_short = true;
     }
@@ -56,7 +84,7 @@ impl TestBacktest {
     // equity after exit short fee: $1455.4485 - 1% = $1440.894015
     // equity after enter long fee: $1440.894015 - 1% = $1426.485075
     // enter long with: $1426.485075 / $250/SOL = 5.7059403 SOL
-    if time == 2 {
+    if time == DATASET[2].x {
       exit_short = true;
       enter_long = true;
     }
@@ -65,7 +93,7 @@ impl TestBacktest {
     // equity after exit long fee: $2282.37612 - 1% = $2259.552359
     // equity after enter short fee: $2259.552359 - 1% = $2236.956835
     // enter short with: $2236.956835 / $400/SOL = 5.592392088 SOL
-    if time == 3 {
+    if time == DATASET[3].x {
       exit_long = true;
       enter_short = true;
     }
@@ -76,19 +104,31 @@ impl TestBacktest {
     // equity after exit short fee: $2796.1960438 - 1% = $2768.234083362
     // equity after enter long fee: $2768.234083362 - 1% = $2740.551742528
     // enter long with: $2740.551742528 / $300/SOL = 9.135172475 SOL
-    if time == 4 {
+    if time == DATASET[4].x {
       exit_short = true;
       enter_long = true;
     }
     // ($300 -> $150) exit long with 50% loss
     // equity: 9.135172475 SOL * $150 = $1370.27587125
     // equity after enter long fee: $1370.27587125 - 1% = $1356.573113
-    if time == 5 {
+    // equity after enter short fee: $1356.573113 - 1% = $1343.007382
+    // enter short with: $1343.007382 / $150/SOL = 8.953382546 SOL
+    if time == DATASET[5].x {
       exit_long = true;
+      enter_short = true;
+    }
+    // ($150 -> $75) exit short with 50% profit
+    // equity: 8.953382546 SOL * $150 = $1343.007382
+    // pnl: 8.953382546 SOL * ($150 - $75) = $671.5036909
+    // equity after pnl: $1343.007382 + $671.5036909 = $2014.511073
+    // equity after exit short fee: $2014.511073 - 1% = $1994.365962
+    if time == DATASET[7].x {
+      exit_short = true;
     }
 
-    // ending equity: $1356.573113
-    // pnl: $356.573113, or 35.66%
+    // ending equity: $1994.365962
+    // pnl: $994.365962, or 99.44%
+    // buy & hold: $100 -> $75 = $750 or -25%
 
     Ok(Signals {
       enter_long,
@@ -230,14 +270,7 @@ fn test_backtest() -> anyhow::Result<()> {
   let leverage = 1;
   let short_selling = true;
 
-  let series = Dataset::new(vec![
-    Data { x: 0, y: 100.0 },
-    Data { x: 1, y: 200.0 },
-    Data { x: 2, y: 250.0 },
-    Data { x: 3, y: 400.0 },
-    Data { x: 4, y: 300.0 },
-    Data { x: 5, y: 150.0 },
-  ]);
+  let series = Dataset::new(DATASET.to_vec());
   let ticker = "TEST".to_string();
   let timeframe = "1d";
 

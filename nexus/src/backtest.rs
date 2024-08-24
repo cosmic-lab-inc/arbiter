@@ -455,17 +455,25 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     side: TradeSide,
   ) -> anyhow::Result<()> {
     let equity_after = self.equity()?;
+    let cum_quote = equity_after - self.capital;
+    let cum_pct = equity_after / self.capital * 100.0 - 100.0;
     let pct_pnl = match side {
       TradeSide::Long => (exit - entry) / entry * 100.0,
       TradeSide::Short => (entry - exit) / entry * 100.0,
     };
+    debug!(
+      "equity: ${}, roi: ${} / {}%",
+      trunc!(equity_after, 2),
+      trunc!(cum_quote, 2),
+      trunc!(cum_pct, 2)
+    );
     self.cum_quote.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
-      y: trunc!(equity_after - self.capital, 2),
+      y: trunc!(cum_quote, 2),
     });
     self.cum_pct.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
-      y: trunc!(equity_after / self.capital * 100.0 - 100.0, 2),
+      y: trunc!(cum_pct, 2),
     });
     self.pct_per_trade.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
@@ -605,27 +613,23 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
           for signal in signals {
             match &signal.side {
               TradeAction::EnterLong => {
-                if let Err(e) = self.enter_long(signal) {
+                if self.enter_long(signal).is_err() {
                   bankrupt = true;
                 }
               }
               TradeAction::ExitLong => {
-                if let Err(e) = self.exit_long(signal) {
+                if self.exit_long(signal).is_err() {
                   bankrupt = true;
                 }
               }
               TradeAction::EnterShort => {
-                if self.short_selling {
-                  if let Err(e) = self.enter_short(signal) {
-                    bankrupt = true;
-                  }
+                if self.short_selling && self.enter_short(signal).is_err() {
+                  bankrupt = true;
                 }
               }
               TradeAction::ExitShort => {
-                if self.short_selling {
-                  if let Err(e) = self.exit_short(signal) {
-                    bankrupt = true;
-                  }
+                if self.short_selling && self.exit_short(signal).is_err() {
+                  bankrupt = true;
                 }
               }
             }
