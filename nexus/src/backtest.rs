@@ -2,7 +2,6 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::*;
-use log::debug;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -299,14 +298,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     let base = quote / price;
     trade.qty = Some(base);
 
-    debug!(
-      "enter long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
-      trunc!(base, 2),
-      trunc!(trade.price, 2),
-      trunc!(cash, 2),
-      trunc!(self.assets.cash()?.qty, 2),
-      trunc!(quote_fee, 2)
-    );
+    // debug!(
+    //   "enter long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+    //   trunc!(base, 2),
+    //   trunc!(trade.price, 2),
+    //   trunc!(cash, 2),
+    //   trunc!(self.assets.cash()?.qty, 2),
+    //   trunc!(quote_fee, 2)
+    // );
 
     self.active_trades.insert(trade.clone());
     self.add_trade(trade.clone(), trade.ticker.clone());
@@ -326,12 +325,9 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     let base = entry_qty.ok_or(anyhow::anyhow!("Trade quantity is None"))?;
     trade.qty = Some(base);
 
-    let pre_cash = self.assets.cash()?.qty;
+    // let pre_cash = self.assets.cash()?.qty;
 
     let mut quote = base * price;
-    // example winning long: ($100 - $80) * 10 SOL = $200
-    // let quote_pnl = (price - entry_price) * base;
-    // quote += quote_pnl;
     let quote_fee = quote * self.fee / 100.0;
     quote -= quote_fee;
     {
@@ -339,14 +335,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       quote_asset.qty += quote;
     }
 
-    debug!(
-      "exit long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
-      trunc!(base, 2),
-      trunc!(trade.price, 2),
-      trunc!(pre_cash, 2),
-      trunc!(self.assets.cash()?.qty, 2),
-      trunc!(quote_fee, 2)
-    );
+    // debug!(
+    //   "exit long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+    //   trunc!(base, 2),
+    //   trunc!(trade.price, 2),
+    //   trunc!(pre_cash, 2),
+    //   trunc!(self.assets.cash()?.qty, 2),
+    //   trunc!(quote_fee, 2)
+    // );
 
     self.active_trades.remove(&entry_key);
     self.add_trade(trade.clone(), trade.ticker.clone());
@@ -383,14 +379,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     let base = quote / price;
     trade.qty = Some(base);
 
-    debug!(
-      "enter short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
-      trunc!(base, 2),
-      trunc!(trade.price, 2),
-      trunc!(cash, 2),
-      trunc!(self.assets.cash()?.qty, 2),
-      trunc!(quote_fee, 2)
-    );
+    // debug!(
+    //   "enter short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+    //   trunc!(base, 2),
+    //   trunc!(trade.price, 2),
+    //   trunc!(cash, 2),
+    //   trunc!(self.assets.cash()?.qty, 2),
+    //   trunc!(quote_fee, 2)
+    // );
 
     self.active_trades.insert(trade.clone());
     self.add_trade(trade.clone(), trade.ticker.clone());
@@ -410,7 +406,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     let base = entry_qty.ok_or(anyhow::anyhow!("Trade quantity is None"))?;
     trade.qty = Some(base);
 
-    let pre_cash = self.assets.cash()?.qty;
+    // let pre_cash = self.assets.cash()?.qty;
 
     let mut quote = base * entry_price;
     // example winning short: ($100 - $80) * 10 SOL = $200
@@ -423,14 +419,14 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       quote_asset.qty += quote;
     }
 
-    debug!(
-      "exit short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
-      trunc!(base, 2),
-      trunc!(trade.price, 2),
-      trunc!(pre_cash, 2),
-      trunc!(self.assets.cash()?.qty, 2),
-      trunc!(quote_fee, 2)
-    );
+    // debug!(
+    //   "exit short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+    //   trunc!(base, 2),
+    //   trunc!(trade.price, 2),
+    //   trunc!(pre_cash, 2),
+    //   trunc!(self.assets.cash()?.qty, 2),
+    //   trunc!(quote_fee, 2)
+    // );
 
     self.active_trades.remove(&entry_key);
     self.add_trade(trade.clone(), trade.ticker.clone());
@@ -461,12 +457,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       TradeSide::Long => (exit - entry) / entry * 100.0,
       TradeSide::Short => (entry - exit) / entry * 100.0,
     };
-    debug!(
-      "equity: ${}, roi: ${} / {}%",
-      trunc!(equity_after, 2),
-      trunc!(cum_quote, 2),
-      trunc!(cum_pct, 2)
-    );
+    // debug!(
+    //   "equity: ${}, roi: ${} / {}%",
+    //   trunc!(equity_after, 2),
+    //   trunc!(cum_quote, 2),
+    //   trunc!(cum_pct, 2)
+    // );
     self.cum_quote.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
       y: trunc!(cum_quote, 2),
