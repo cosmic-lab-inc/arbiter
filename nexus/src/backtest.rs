@@ -2,7 +2,7 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::*;
-use log::{debug, error};
+use log::debug;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -300,11 +300,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     trade.qty = Some(base);
 
     debug!(
-      "enter long: {} @ ${}, cash: ${} -> ${}",
-      trunc!(base, 1),
-      trunc!(trade.price, 1),
-      trunc!(cash, 1),
-      trunc!(self.assets.cash()?.qty, 1)
+      "enter long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+      trunc!(base, 2),
+      trunc!(trade.price, 2),
+      trunc!(cash, 2),
+      trunc!(self.assets.cash()?.qty, 2),
+      trunc!(quote_fee, 2)
     );
 
     self.active_trades.insert(trade.clone());
@@ -339,11 +340,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     }
 
     debug!(
-      "exit long: {} @ ${}, cash: ${} -> ${}",
-      trunc!(base, 1),
-      trunc!(trade.price, 1),
-      trunc!(pre_cash, 1),
-      trunc!(self.assets.cash()?.qty, 1)
+      "exit long: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+      trunc!(base, 2),
+      trunc!(trade.price, 2),
+      trunc!(pre_cash, 2),
+      trunc!(self.assets.cash()?.qty, 2),
+      trunc!(quote_fee, 2)
     );
 
     self.active_trades.remove(&entry_key);
@@ -382,11 +384,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     trade.qty = Some(base);
 
     debug!(
-      "enter short: {} @ ${}, cash: ${} -> ${}",
-      trunc!(base, 1),
-      trunc!(trade.price, 1),
-      trunc!(cash, 1),
-      trunc!(self.assets.cash()?.qty, 1)
+      "enter short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+      trunc!(base, 2),
+      trunc!(trade.price, 2),
+      trunc!(cash, 2),
+      trunc!(self.assets.cash()?.qty, 2),
+      trunc!(quote_fee, 2)
     );
 
     self.active_trades.insert(trade.clone());
@@ -421,11 +424,12 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     }
 
     debug!(
-      "exit short: {} @ ${}, cash: ${} -> ${}",
-      trunc!(base, 1),
-      trunc!(trade.price, 1),
-      trunc!(pre_cash, 1),
-      trunc!(self.assets.cash()?.qty, 1)
+      "exit short: {} @ ${}, cash: ${} -> ${}, fee: ${}",
+      trunc!(base, 2),
+      trunc!(trade.price, 2),
+      trunc!(pre_cash, 2),
+      trunc!(self.assets.cash()?.qty, 2),
+      trunc!(quote_fee, 2)
     );
 
     self.active_trades.remove(&entry_key);
@@ -602,20 +606,17 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
             match &signal.side {
               TradeAction::EnterLong => {
                 if let Err(e) = self.enter_long(signal) {
-                  error!("{:?}", e);
                   bankrupt = true;
                 }
               }
               TradeAction::ExitLong => {
                 if let Err(e) = self.exit_long(signal) {
-                  error!("{:?}", e);
                   bankrupt = true;
                 }
               }
               TradeAction::EnterShort => {
                 if self.short_selling {
                   if let Err(e) = self.enter_short(signal) {
-                    error!("{:?}", e);
                     bankrupt = true;
                   }
                 }
@@ -623,7 +624,6 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
               TradeAction::ExitShort => {
                 if self.short_selling {
                   if let Err(e) = self.exit_short(signal) {
-                    error!("{:?}", e);
                     bankrupt = true;
                   }
                 }

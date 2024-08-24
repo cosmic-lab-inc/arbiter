@@ -33,43 +33,62 @@ impl TestBacktest {
     // [4] = $300
     // [5] = $150
 
-    // equity: $1000
+    // equity: 10 SOL * $100 = $1000
+    // equity after enter long fee: $1000 - 1% = $990
+    // enter long with: $990 / $100/SOL = 9.9 SOL
     if time == 0 {
-      enter_long = true;
       exit_short = true;
+      enter_long = true;
     }
     // ($100 -> $200) exit long with 100% profit
-    // equity: $2000
+    // equity: 9.9 SOL * $200 = $1980
+    // equity after exit long fee: $1980 - 1% = $1960.2
+    // equity after enter short fee: $1960.2 - 1% = $1940.598
+    // enter short with: $1940.598 / $200/SOL = 9.70299 SOL
     if time == 1 {
       exit_long = true;
       enter_short = true;
     }
     // ($200 -> $250) exit short with 25% loss
-    // equity: $1500
+    // equity: 9.70299 SOL * $200 = $1940.598
+    // loss: 9.70299 SOL * ($250 - $200) = $485.1495
+    // equity after loss: $1940.598 - $485.1495 = $1455.4485
+    // equity after exit short fee: $1455.4485 - 1% = $1440.894015
+    // equity after enter long fee: $1440.894015 - 1% = $1426.485075
+    // enter long with: $1426.485075 / $250/SOL = 5.7059403 SOL
     if time == 2 {
-      enter_long = true;
       exit_short = true;
+      enter_long = true;
     }
     // ($250 -> $400) exit long with 60% profit
-    // equity: $2400
+    // equity: 5.7059403 SOL * $400 = $2282.37612
+    // equity after exit long fee: $2282.37612 - 1% = $2259.552359
+    // equity after enter short fee: $2259.552359 - 1% = $2236.956835
+    // enter short with: $2236.956835 / $400/SOL = 5.592392088 SOL
     if time == 3 {
       exit_long = true;
       enter_short = true;
     }
     // ($400 -> $300) exit short with 25% profit
-    // equity: $3000
+    // equity: 5.592392088 SOL * $400 = $2236.956835
+    // pnl: 5.592392088 SOL * ($400 - $300) = $559.2392088
+    // equity after pnl: $2236.956835 + $559.2392088 = $2796.1960438
+    // equity after exit short fee: $2796.1960438 - 1% = $2768.234083362
+    // equity after enter long fee: $2768.234083362 - 1% = $2740.551742528
+    // enter long with: $2740.551742528 / $300/SOL = 9.135172475 SOL
     if time == 4 {
-      enter_long = true;
       exit_short = true;
+      enter_long = true;
     }
     // ($300 -> $150) exit long with 50% loss
-    // equity: $1500
+    // equity: 9.135172475 SOL * $150 = $1370.27587125
+    // equity after enter long fee: $1370.27587125 - 1% = $1356.573113
     if time == 5 {
       exit_long = true;
     }
 
-    // ending equity: $1500
-    // pnl: $500 or 50%
+    // ending equity: $1356.573113
+    // pnl: $356.573113, or 35.66%
 
     Ok(Signals {
       enter_long,
@@ -205,7 +224,7 @@ fn test_backtest() -> anyhow::Result<()> {
 
   use nexus::*;
 
-  let fee = 0.0;
+  let fee = 1.0;
   let slippage = 0.0;
   let bet = Bet::Percent(100.0);
   let leverage = 1;

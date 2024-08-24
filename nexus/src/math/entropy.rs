@@ -209,9 +209,6 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
 
   let up = max == entropy_b11;
   let down = max == entropy_b00;
-  // let up = entropy_b11 > entropy_b00;
-  // let down = entropy_b00 > entropy_b11;
-
   Ok(if up {
     EntropySignal::Up
   } else if down {
