@@ -2,6 +2,7 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::*;
+use log::{debug, error};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -11,9 +12,9 @@ pub trait Strategy<T>: Clone {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    assets: &Assets,
+    assets: &Positions,
     active_trades: &ActiveTrades,
-  ) -> anyhow::Result<Vec<Trade>>;
+  ) -> anyhow::Result<Vec<Signal>>;
   /// Returns a reference to the bar cache
   fn cache(&self, ticker: Option<String>) -> Option<&RingBuffer<Data>>;
   fn stop_loss_pct(&self) -> Option<f64>;
@@ -28,9 +29,9 @@ impl Strategy<f64> for EmptyStrategy {
     &mut self,
     _: Data,
     _: Option<String>,
-    _: &Assets,
+    _: &Positions,
     _: &ActiveTrades,
-  ) -> anyhow::Result<Vec<Trade>> {
+  ) -> anyhow::Result<Vec<Signal>> {
     Ok(vec![])
   }
   /// Returns a reference to the bar cache
@@ -68,7 +69,7 @@ pub struct Backtest<T, S: Strategy<T>> {
   pub trades: HashMap<String, Vec<Trade>>,
   pub signals: HashMap<String, Vec<Trade>>,
 
-  assets: Assets,
+  assets: Positions,
   active_trades: ActiveTrades,
   quote: HashMap<String, f64>,
   cum_pct: HashMap<String, Vec<Data>>,
@@ -91,7 +92,7 @@ impl Default for Backtest<f64, EmptyStrategy> {
       series: HashMap::new(),
       trades: HashMap::new(),
       signals: HashMap::new(),
-      assets: Assets::default(),
+      assets: Positions::default(),
       active_trades: ActiveTrades::new(),
       quote: HashMap::new(),
       cum_pct: HashMap::new(),
@@ -115,7 +116,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       series: HashMap::new(),
       trades: HashMap::new(),
       signals: HashMap::new(),
-      assets: Assets::default(),
+      assets: Positions::default(),
       active_trades: ActiveTrades::new(),
       quote: HashMap::new(),
       cum_pct: HashMap::new(),
@@ -248,12 +249,47 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   // Backtest
   //
 
-  fn enter_long(&mut self, trade: &mut Trade) -> anyhow::Result<()> {
+  pub fn equity(&self) -> anyhow::Result<f64> {
+    let mut equity = self.assets.cash()?.qty;
+
+    for trade in self.active_trades.trades() {
+      let price = self.assets.get(&trade.ticker)?.price;
+      let entry_price = trade.price;
+      let qty = trade.qty.ok_or(anyhow::anyhow!("Trade quantity is None"))?;
+      match trade.side {
+        TradeAction::EnterLong => {
+          // position value is current price * qty
+          let entry_value = entry_price * qty;
+          let upnl = (price - entry_price) * qty;
+          let curr_value = entry_value + upnl;
+          equity += curr_value;
+        }
+        TradeAction::EnterShort => {
+          // pnl = (entry price - current price) * qty
+          let entry_value = entry_price * qty;
+          let upnl = (entry_price - price) * qty;
+          let curr_value = entry_value + upnl;
+          equity += curr_value;
+        }
+        _ => (),
+      }
+    }
+
+    Ok(equity)
+  }
+
+  fn enter_long(&mut self, signal: Signal) -> anyhow::Result<()> {
+    let bet = match signal.bet {
+      None => self.bet,
+      Some(bet) => bet,
+    };
+    let cash = self.assets.cash()?.qty;
+    let mut quote = bet.value() / 100.0 * cash;
+
+    let mut trade = Trade::from((signal, 0.0));
     let price = trade.price * (1.0 + self.slippage / 100.0);
     trade.price = price;
 
-    let cash = self.assets.cash()?.qty;
-    let mut quote = self.bet.value() / 100.0 * cash;
     {
       let quote_asset = self.assets.cash_mut()?;
       quote_asset.qty -= quote;
@@ -262,31 +298,39 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     quote -= quote_fee;
     let base = quote / price;
     trade.qty = Some(base);
-    {
-      let base_asset = self.assets.get_mut(&trade.ticker)?;
-      base_asset.qty += base;
-    }
+
+    debug!(
+      "enter long: {} @ ${}, cash: ${} -> ${}",
+      trunc!(base, 1),
+      trunc!(trade.price, 1),
+      trunc!(cash, 1),
+      trunc!(self.assets.cash()?.qty, 1)
+    );
 
     self.active_trades.insert(trade.clone());
     self.add_trade(trade.clone(), trade.ticker.clone());
     Ok(())
   }
 
-  fn exit_long(&mut self, trade: &mut Trade) -> anyhow::Result<()> {
+  fn exit_long(&mut self, signal: Signal) -> anyhow::Result<()> {
+    let mut trade = Trade::from((signal, 0.0));
+
     let price = trade.price * (1.0 - self.slippage / 100.0);
     trade.price = price;
 
-    let entry_key = Trade::empty(trade.ticker.clone(), TradeAction::EnterLong, trade.id).key();
+    let entry_key = Trade::build_key(&trade.ticker, TradeAction::EnterLong, trade.id);
     let entry_qty = self.active_trades.get(&entry_key).unwrap().qty;
     let entry_price = self.active_trades.get(&entry_key).unwrap().price;
 
     let base = entry_qty.ok_or(anyhow::anyhow!("Trade quantity is None"))?;
     trade.qty = Some(base);
-    {
-      let base_asset = self.assets.get_mut(&trade.ticker)?;
-      base_asset.qty -= base;
-    }
+
+    let pre_cash = self.assets.cash()?.qty;
+
     let mut quote = base * price;
+    // example winning long: ($100 - $80) * 10 SOL = $200
+    // let quote_pnl = (price - entry_price) * base;
+    // quote += quote_pnl;
     let quote_fee = quote * self.fee / 100.0;
     quote -= quote_fee;
     {
@@ -294,32 +338,56 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       quote_asset.qty += quote;
     }
 
+    debug!(
+      "exit long: {} @ ${}, cash: ${} -> ${}",
+      trunc!(base, 1),
+      trunc!(trade.price, 1),
+      trunc!(pre_cash, 1),
+      trunc!(self.assets.cash()?.qty, 1)
+    );
+
     self.active_trades.remove(&entry_key);
     self.add_trade(trade.clone(), trade.ticker.clone());
 
-    self.finalize_trade(&trade.ticker, entry_price, trade.price, trade.date)?;
+    self.finalize_trade(
+      &trade.ticker,
+      entry_price,
+      trade.price,
+      trade.date,
+      TradeSide::Long,
+    )?;
 
     Ok(())
   }
 
-  fn enter_short(&mut self, trade: &mut Trade) -> anyhow::Result<()> {
+  fn enter_short(&mut self, signal: Signal) -> anyhow::Result<()> {
+    let bet = match signal.bet {
+      None => self.bet,
+      Some(bet) => bet,
+    };
+    let cash = self.assets.cash()?.qty;
+    let mut quote = bet.value() / 100.0 * cash;
+
+    let mut trade = Trade::from((signal, 0.0));
     let price = trade.price * (1.0 - self.slippage / 100.0);
     trade.price = price;
 
-    let cash = self.assets.cash()?.qty;
-    let mut quote = self.bet.value() / 100.0 * cash;
     {
       let quote_asset = self.assets.cash_mut()?;
-      quote_asset.qty += quote;
+      quote_asset.qty -= quote;
     }
     let quote_fee = quote * self.fee / 100.0;
     quote -= quote_fee;
     let base = quote / price;
     trade.qty = Some(base);
-    {
-      let base_asset = self.assets.get_mut(&trade.ticker)?;
-      base_asset.qty -= base;
-    }
+
+    debug!(
+      "enter short: {} @ ${}, cash: ${} -> ${}",
+      trunc!(base, 1),
+      trunc!(trade.price, 1),
+      trunc!(cash, 1),
+      trunc!(self.assets.cash()?.qty, 1)
+    );
 
     self.active_trades.insert(trade.clone());
     self.add_trade(trade.clone(), trade.ticker.clone());
@@ -327,31 +395,49 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     Ok(())
   }
 
-  fn exit_short(&mut self, trade: &mut Trade) -> anyhow::Result<()> {
+  fn exit_short(&mut self, signal: Signal) -> anyhow::Result<()> {
+    let mut trade = Trade::from((signal, 0.0));
     let price = trade.price * (1.0 + self.slippage / 100.0);
     trade.price = price;
 
-    let entry_key = Trade::empty(trade.ticker.clone(), TradeAction::EnterShort, trade.id).key();
+    let entry_key = Trade::build_key(&trade.ticker, TradeAction::EnterShort, trade.id);
     let entry_qty = self.active_trades.get(&entry_key).unwrap().qty;
     let entry_price = self.active_trades.get(&entry_key).unwrap().price;
 
     let base = entry_qty.ok_or(anyhow::anyhow!("Trade quantity is None"))?;
     trade.qty = Some(base);
-    {
-      let base_asset = self.assets.get_mut(&trade.ticker)?;
-      base_asset.qty += base;
-    }
-    let quote = base * price;
+
+    let pre_cash = self.assets.cash()?.qty;
+
+    let mut quote = base * entry_price;
+    // example winning short: ($100 - $80) * 10 SOL = $200
+    let quote_pnl = (entry_price - price) * base;
+    quote += quote_pnl;
     let quote_fee = quote * self.fee / 100.0;
+    quote -= quote_fee;
     {
       let quote_asset = self.assets.cash_mut()?;
-      quote_asset.qty -= quote + quote_fee;
+      quote_asset.qty += quote;
     }
+
+    debug!(
+      "exit short: {} @ ${}, cash: ${} -> ${}",
+      trunc!(base, 1),
+      trunc!(trade.price, 1),
+      trunc!(pre_cash, 1),
+      trunc!(self.assets.cash()?.qty, 1)
+    );
 
     self.active_trades.remove(&entry_key);
     self.add_trade(trade.clone(), trade.ticker.clone());
 
-    self.finalize_trade(&trade.ticker, entry_price, trade.price, trade.date)?;
+    self.finalize_trade(
+      &trade.ticker,
+      entry_price,
+      trade.price,
+      trade.date,
+      TradeSide::Short,
+    )?;
 
     Ok(())
   }
@@ -362,9 +448,13 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     entry: f64,
     exit: f64,
     date: Time,
+    side: TradeSide,
   ) -> anyhow::Result<()> {
-    let equity_after = self.assets.equity();
-    let pct_pnl = (exit - entry) / entry * 100.0;
+    let equity_after = self.equity()?;
+    let pct_pnl = match side {
+      TradeSide::Long => (exit - entry) / entry * 100.0,
+      TradeSide::Short => (entry - exit) / entry * 100.0,
+    };
     self.cum_quote.get_mut(ticker).unwrap().push(Data {
       x: date.to_unix_ms(),
       y: trunc!(equity_after - self.capital, 2),
@@ -377,7 +467,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
       x: date.to_unix_ms(),
       y: trunc!(pct_pnl, 2),
     });
-    if equity_after == 0.0 {
+    if equity_after < 0.0 {
       return Err(anyhow::anyhow!("Bankrupt"));
     }
     Ok(())
@@ -389,7 +479,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
     if let Some((_, first_series)) = series.iter().next() {
       self.assets.insert(
         CASH_TICKER,
-        Asset {
+        Position {
           qty: self.capital * self.leverage as f64,
           price: 1.0,
         },
@@ -401,7 +491,7 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
         // populate all tickers with starting values
         self.assets.insert(
           ticker,
-          Asset {
+          Position {
             qty: 0.0,
             price: initial_price,
           },
@@ -509,35 +599,31 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
             &self.active_trades,
           )?;
           for signal in signals {
-            match signal.side {
+            match &signal.side {
               TradeAction::EnterLong => {
-                let mut entry = signal;
-                if let Err(e) = self.enter_long(&mut entry) {
-                  log::error!("{:?}", e);
+                if let Err(e) = self.enter_long(signal) {
+                  error!("{:?}", e);
                   bankrupt = true;
                 }
               }
               TradeAction::ExitLong => {
-                let mut exit = signal;
-                if let Err(e) = self.exit_long(&mut exit) {
-                  log::error!("{:?}", e);
+                if let Err(e) = self.exit_long(signal) {
+                  error!("{:?}", e);
                   bankrupt = true;
                 }
               }
               TradeAction::EnterShort => {
                 if self.short_selling {
-                  let mut entry = signal;
-                  if let Err(e) = self.enter_short(&mut entry) {
-                    log::error!("{:?}", e);
+                  if let Err(e) = self.enter_short(signal) {
+                    error!("{:?}", e);
                     bankrupt = true;
                   }
                 }
               }
               TradeAction::ExitShort => {
                 if self.short_selling {
-                  let mut exit = signal;
-                  if let Err(e) = self.exit_short(&mut exit) {
-                    log::error!("{:?}", e);
+                  if let Err(e) = self.exit_short(signal) {
+                    error!("{:?}", e);
                     bankrupt = true;
                   }
                 }

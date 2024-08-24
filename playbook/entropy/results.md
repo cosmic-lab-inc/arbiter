@@ -1,65 +1,18 @@
 ### 1d - Optimized With 0.25% Fee (CEX) and Z-Score Filter
 
 **Top by ROI**
-period: 62, zscore: Some(2.75), roi: 6244.02%, sharpe: 1.078, dd: -14.834%
-period: 28, zscore: Some(2.5), roi: 5390.96%, sharpe: 1.354, dd: -49.519%
-period: 83, zscore: Some(2.5), roi: 4131.33%, sharpe: 0.86, dd: -29.667%
-
-**Top by Sharpe**
-period: 19, zscore: Some(2.5), roi: 245.78%, sharpe: 2.62, dd: -62.242%
-period: 15, zscore: Some(2.0), roi: 169.04%, sharpe: 2.546, dd: -65.042%
-period: 20, zscore: Some(2.25), roi: 173.02%, sharpe: 2.37, dd: -62.494%
-
-**Top by Drawdown**
-period: 10, zscore: Some(2.75), roi: 870.99%, sharpe: 1, dd: 0%
-period: 3, zscore: Some(1.25), roi: 0%, sharpe: 0, dd: 0%
-period: 3, zscore: Some(1.5), roi: 0%, sharpe: 0, dd: 0%
-
-### 1h - Optimized With 0.25% Fee (CEX) and Z-Score Filter (0..100, 2017-1-1 to 2020-1-1)
-
-**Top by ROI**
-period: 9, zscore: Some(2.25), roi: 145.94%, sharpe: 2.268, dd: -60.831%
-period: 11, zscore: Some(2.75), roi: 144.25%, sharpe: 2.365, dd: -51.28%
-period: 55, zscore: Some(3.0), roi: 129.6%, sharpe: 2.809, dd: -52.26%
-
-**Top by Sharpe**
-period: 55, zscore: Some(3.0), roi: 129.6%, sharpe: 2.809, dd: -52.26%
-period: 11, zscore: Some(2.75), roi: 144.25%, sharpe: 2.365, dd: -51.28%
-period: 9, zscore: Some(2.25), roi: 145.94%, sharpe: 2.268, dd: -60.831%
-
-**Top by Drawdown**
-period: 11, zscore: Some(3.0), roi: 35.62%, sharpe: 1, dd: 0%
-period: 3, zscore: Some(1.25), roi: 0%, sharpe: 0, dd: 0%
-period: 3, zscore: Some(1.5), roi: 0%, sharpe: 0, dd: 0%
-
-### 1h - Optimized With 0.25% Fee (CEX) and Z-Score Filter (100..200, 2017-1-1 to 2020-1-1)
-
-**Top by ROI**
-period: 196, zscore: Some(3.0), roi: 491.95%, sharpe: 2.948, dd: -36.121%
-period: 139, zscore: Some(2.75), roi: 259.27%, sharpe: 2.475, dd: -53.662%
-period: 195, zscore: Some(3.0), roi: 206.02%, sharpe: 4.18, dd: -42.453%
-
-**Top by Sharpe**
-period: 195, zscore: Some(3.0), roi: 206.02%, sharpe: 4.18, dd: -42.453%
-period: 196, zscore: Some(3.0), roi: 491.95%, sharpe: 2.948, dd: -36.121%
-period: 122, zscore: Some(3.0), roi: 197.88%, sharpe: 2.739, dd: -62.983%
-
-**Top by Drawdown**
-period: 168, zscore: Some(3.0), roi: 28.45%, sharpe: 0.504, dd: -34.721%
-period: 196, zscore: Some(3.0), roi: 491.95%, sharpe: 2.948, dd: -36.121%
-period: 195, zscore: Some(3.0), roi: 206.02%, sharpe: 4.18, dd: -42.453%
-
---- Top by ROI ---
-period: 8, zscore: Some(2.0), roi: 538.82%, sharpe: 1.109, dd: -53.26%
-period: 113, zscore: Some(2.75), roi: 375%, sharpe: 1.478, dd: -7.642%
-period: 114, zscore: Some(2.75), roi: 358.04%, sharpe: 1.268, dd: -13.615%
+period: 144, zscore: Some(3.0), roi: 1221.56%, sharpe: 1.171, dd: -6.09%
+period: 184, zscore: Some(3.0), roi: 1217.68%, sharpe: 0.952, dd: -13.407%
+period: 183, zscore: Some(3.0), roi: 1163.34%, sharpe: 0.895, dd: -6.261%
 sort summaries by sharpe ratio in 0ms
---- Top by Sharpe ---
-period: 13, zscore: Some(3.0), roi: 22.67%, sharpe: inf, dd: 0%
-period: 11, zscore: Some(2.75), roi: 58.78%, sharpe: 3.007, dd: 0%
-period: 30, zscore: Some(2.75), roi: 267.9%, sharpe: 2.811, dd: -35.713%
+
+**Top by Sharpe**
+period: 30, zscore: Some(2.75), roi: 255.23%, sharpe: 2.746, dd: -36.353%
+period: 93, zscore: Some(2.75), roi: 103.16%, sharpe: 2.097, dd: -18.09%
+period: 53, zscore: Some(2.5), roi: 85.65%, sharpe: 1.993, dd: -44.026%
 sort summaries by max drawdown in 0ms
---- Top by Drawdown ---
-period: 13, zscore: Some(3.0), roi: 22.67%, sharpe: inf, dd: 0%
-period: 11, zscore: Some(2.75), roi: 58.78%, sharpe: 3.007, dd: 0%
-period: 65, zscore: Some(3.0), roi: 313.38%, sharpe: 1.705, dd: 0%
+
+**Top by Drawdown**
+period: 13, zscore: Some(3.0), roi: 22.06%, sharpe: 0.956, dd: 0%
+period: 3, zscore: None, roi: 0%, sharpe: 0, dd: 0%
+period: 3, zscore: Some(1.0), roi: 0%, sharpe: 0, dd: 0%

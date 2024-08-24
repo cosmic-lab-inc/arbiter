@@ -20,7 +20,7 @@ pub struct FourierBacktest {
   period: usize,
   dominant_freq_cutoff: usize,
   pub cache: RingBuffer<Data>,
-  assets: Assets,
+  assets: Positions,
   pub stop_loss_pct: Option<f64>,
 }
 
@@ -35,7 +35,7 @@ impl FourierBacktest {
       period,
       dominant_freq_cutoff,
       cache: RingBuffer::new(period + 1, ticker),
-      assets: Assets::default(),
+      assets: Positions::default(),
       stop_loss_pct,
     }
   }
@@ -185,7 +185,7 @@ impl Strategy<Data> for FourierBacktest {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    assets: &Assets,
+    assets: &Positions,
   ) -> anyhow::Result<Vec<Trade>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {

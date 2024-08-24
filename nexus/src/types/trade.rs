@@ -24,31 +24,6 @@ impl Bet {
   }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Source {
-  Open,
-  High,
-  Low,
-  Close,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TradeType {
-  EnterLong,
-  ExitLong,
-  EnterShort,
-  ExitShort,
-}
-impl TradeType {
-  pub fn is_entry(&self) -> bool {
-    matches!(self, TradeType::EnterLong | TradeType::EnterShort)
-  }
-
-  pub fn is_exit(&self) -> bool {
-    matches!(self, TradeType::ExitLong | TradeType::ExitShort)
-  }
-}
-
 #[derive(Debug, Clone)]
 pub struct Trade {
   pub ticker: String,
@@ -61,20 +36,35 @@ pub struct Trade {
 
 impl Trade {
   pub fn key(&self) -> String {
-    let this = Self::empty(self.ticker.clone(), self.side, self.id);
-    format!("{}-{}-{}", this.ticker, this.side, this.id)
+    Self::build_key(&self.ticker, self.side, self.id)
   }
 
-  pub fn empty(ticker: String, side: TradeAction, id: u8) -> Self {
+  pub fn build_key(ticker: &str, side: TradeAction, id: u8) -> String {
+    format!("{}-{}-{}", ticker, side, id)
+  }
+}
+impl From<(Signal, f64)> for Trade {
+  fn from(params: (Signal, f64)) -> Self {
+    let (signal, qty) = params;
     Self {
-      ticker,
-      id,
-      price: 0.0,
-      date: Time::now(),
-      qty: None,
-      side,
+      ticker: signal.ticker,
+      id: signal.id,
+      price: signal.price,
+      date: signal.date,
+      qty: Some(qty),
+      side: signal.side,
     }
   }
+}
+
+#[derive(Debug, Clone)]
+pub struct Signal {
+  pub ticker: String,
+  pub id: u8,
+  pub price: f64,
+  pub date: Time,
+  pub bet: Option<Bet>,
+  pub side: TradeAction,
 }
 
 pub struct Signals {
@@ -115,6 +105,12 @@ impl Display for TradeAction {
     };
     write!(f, "{}", str)
   }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TradeSide {
+  Long,
+  Short,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -432,61 +428,46 @@ pub fn sort_summaries(
 pub const CASH_TICKER: &str = "USD";
 
 #[derive(Debug, Clone, Default)]
-pub struct Asset {
+pub struct Position {
   pub qty: f64,
   pub price: f64,
 }
 
-/// key is ticker, value is owned asset quantity
 #[derive(Debug, Clone, Default)]
-pub struct Assets(HashMap<String, Asset>);
+pub struct Positions(pub HashMap<String, Position>);
 
-impl Assets {
+impl Positions {
   pub fn clear(&mut self) {
     self.0.clear();
   }
 
-  pub fn cash(&self) -> anyhow::Result<&Asset> {
+  pub fn cash(&self) -> anyhow::Result<&Position> {
     self.0.get(CASH_TICKER).ok_or(anyhow::anyhow!("No cash"))
   }
 
-  pub fn cash_mut(&mut self) -> anyhow::Result<&mut Asset> {
+  pub fn cash_mut(&mut self) -> anyhow::Result<&mut Position> {
     self.get_mut(CASH_TICKER)
   }
 
-  pub fn equity(&self) -> f64 {
-    let mut cum_equity = 0.0;
-    for (_, asset) in self.0.iter() {
-      let Asset {
-        qty: quantity,
-        price,
-      } = asset;
-      if *quantity > 0.0 {
-        cum_equity += price * quantity;
-      }
-    }
-    cum_equity
-  }
-
-  pub fn get(&self, ticker: &str) -> anyhow::Result<&Asset> {
+  pub fn get(&self, ticker: &str) -> anyhow::Result<&Position> {
     self
       .0
       .get(ticker)
       .ok_or(anyhow::anyhow!("No asset for ticker"))
   }
 
-  pub fn get_mut(&mut self, ticker: &str) -> anyhow::Result<&mut Asset> {
+  pub fn get_mut(&mut self, ticker: &str) -> anyhow::Result<&mut Position> {
     self
       .0
       .get_mut(ticker)
       .ok_or(anyhow::anyhow!("No asset for ticker"))
   }
 
-  pub fn insert(&mut self, ticker: &str, asset: Asset) -> Option<Asset> {
+  pub fn insert(&mut self, ticker: &str, asset: Position) -> Option<Position> {
     self.0.insert(ticker.to_string(), asset)
   }
 
-  pub fn remove(&mut self, ticker: &str) -> Option<Asset> {
+  pub fn remove(&mut self, ticker: &str) -> Option<Position> {
     self.0.remove(ticker)
   }
 }

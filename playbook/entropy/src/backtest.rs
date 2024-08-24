@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
+use log::debug;
 use nexus::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -11,7 +12,7 @@ pub struct EntropyBacktest {
   entropy_bits: EntropyBits,
   entropy_zscore_cutoff: Option<f64>,
   pub cache: RingBuffer<Data>,
-  assets: Assets,
+  assets: Positions,
   pub stop_loss_pct: Option<f64>,
   last_signal: Option<(usize, EntropySignal)>,
   long: Option<f64>,
@@ -32,7 +33,7 @@ impl EntropyBacktest {
       entropy_bits,
       entropy_zscore_cutoff,
       cache: RingBuffer::new(period, ticker),
-      assets: Assets::default(),
+      assets: Positions::default(),
       stop_loss_pct,
       last_signal: None,
       long: None,
@@ -50,87 +51,87 @@ impl EntropyBacktest {
     let series = Dataset::new(self.cache.vec());
 
     // --- NEW METHOD ---
-    let mut new_last_signal = self.last_signal;
-    // exit position created by last_signal if needed
-    if let Some((bars_since, last_signal)) = new_last_signal {
-      if bars_since > self.entropy_bits.bits() {
-        match last_signal {
-          EntropySignal::Up => {
-            exit_long = true;
-            new_last_signal = None;
-          }
-          EntropySignal::Down => {
-            exit_short = true;
-            new_last_signal = None;
-          }
-          _ => {}
-        }
-      }
-    }
-    // only trade if no active position
-    if new_last_signal.is_none() {
-      let signal = match self.entropy_bits {
-        EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-        EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-        EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
-      };
-      match signal {
-        EntropySignal::Up => {
-          enter_long = true;
-          new_last_signal = Some((0, EntropySignal::Up));
-        }
-        EntropySignal::Down => {
-          enter_short = true;
-          new_last_signal = Some((0, EntropySignal::Down));
-        }
-        _ => {}
-      }
-    }
-    self.last_signal = new_last_signal;
-
-    // --- OLD METHOD ---
-    // match self.entropy_zscore_cutoff {
-    //   Some(cutoff) => {
-    //     let y_series = series.y();
-    //     let signal = match self.entropy_bits {
-    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
-    //     };
-    //     let entropy_zscore = zscore(y_series.as_slice(), self.period)?;
-    //     if entropy_zscore.abs() > cutoff {
-    //       match signal {
-    //         EntropySignal::Up => {
-    //           enter_long = true;
-    //           exit_short = true;
-    //         }
-    //         EntropySignal::Down => {
-    //           enter_short = true;
-    //           exit_long = true;
-    //         }
-    //         _ => {}
-    //       }
-    //     }
-    //   }
-    //   None => {
-    //     let signal = match self.entropy_bits {
-    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
-    //     };
-    //     match signal {
+    // let mut new_last_signal = self.last_signal;
+    // // exit position created by last_signal if needed
+    // if let Some((bars_since, last_signal)) = new_last_signal {
+    //   if bars_since > self.entropy_bits.bits() {
+    //     match last_signal {
     //       EntropySignal::Up => {
-    //         enter_long = true;
-    //         exit_short = true;
+    //         exit_long = true;
+    //         new_last_signal = None;
     //       }
     //       EntropySignal::Down => {
-    //         enter_short = true;
-    //         exit_long = true;
+    //         exit_short = true;
+    //         new_last_signal = None;
     //       }
     //       _ => {}
     //     }
     //   }
     // }
+    // // only trade if no active position
+    // if new_last_signal.is_none() {
+    //   let signal = match self.entropy_bits {
+    //     EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+    //   };
+    //   match signal {
+    //     EntropySignal::Up => {
+    //       enter_long = true;
+    //       new_last_signal = Some((0, EntropySignal::Up));
+    //     }
+    //     EntropySignal::Down => {
+    //       enter_short = true;
+    //       new_last_signal = Some((0, EntropySignal::Down));
+    //     }
+    //     _ => {}
+    //   }
+    // }
+    // self.last_signal = new_last_signal;
+
+    // --- OLD METHOD ---
+    match self.entropy_zscore_cutoff {
+      Some(cutoff) => {
+        let y_series = series.y();
+        let signal = match self.entropy_bits {
+          EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+          EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+          EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+        };
+        let entropy_zscore = zscore(y_series.as_slice(), self.period)?;
+        if entropy_zscore.abs() > cutoff {
+          match signal {
+            EntropySignal::Up => {
+              enter_long = true;
+              exit_short = true;
+            }
+            EntropySignal::Down => {
+              enter_short = true;
+              exit_long = true;
+            }
+            _ => {}
+          }
+        }
+      }
+      None => {
+        let signal = match self.entropy_bits {
+          EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+          EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+          EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+        };
+        match signal {
+          EntropySignal::Up => {
+            enter_long = true;
+            exit_short = true;
+          }
+          EntropySignal::Down => {
+            enter_short = true;
+            exit_long = true;
+          }
+          _ => {}
+        }
+      }
+    }
 
     Ok(Signals {
       enter_long,
@@ -144,7 +145,7 @@ impl EntropyBacktest {
     &mut self,
     ticker: Option<String>,
     active_trades: &ActiveTrades,
-  ) -> anyhow::Result<Vec<Trade>> {
+  ) -> anyhow::Result<Vec<Signal>> {
     match ticker {
       None => Ok(vec![]),
       Some(ticker) => {
@@ -167,66 +168,71 @@ impl EntropyBacktest {
           .front()
           .ok_or(anyhow::anyhow!("No data in cache"))?;
 
-        let mut signals: Vec<Trade> = vec![];
+        let mut signals: Vec<Signal> = vec![];
 
         let id = 0;
-        let enter_short_key = Trade::empty(ticker.clone(), TradeAction::EnterShort, id).key();
-        let enter_long_key = Trade::empty(ticker.clone(), TradeAction::EnterLong, id).key();
+        let enter_short_key = Trade::build_key(&ticker, TradeAction::EnterShort, id);
+        let enter_long_key = Trade::build_key(&ticker, TradeAction::EnterLong, id);
+        let active_long = active_trades.get(&enter_long_key);
+        let active_short = active_trades.get(&enter_short_key);
 
-        if exit_short {
-          if let Some(entry) = active_trades.get(&enter_short_key) {
-            let trade = Trade {
+        let mut has_long = active_long.is_some();
+        let mut has_short = active_short.is_some();
+
+        let bet = Bet::Percent(100.0);
+
+        if exit_short && has_short {
+          if let Some(_entry) = active_short {
+            let trade = Signal {
               id,
               price,
               date: Time::from_unix_ms(time),
               ticker: ticker.clone(),
-              qty: entry.qty, // not needed, calculated in backtest using entry
+              bet: None, // not needed, calculated in backtest using entry
               side: TradeAction::ExitShort,
             };
             signals.push(trade);
+            has_short = false;
           }
         }
 
-        if exit_long {
-          if let Some(entry) = active_trades.get(&enter_long_key) {
-            let trade = Trade {
+        if exit_long && has_long {
+          if let Some(_entry) = active_long {
+            let trade = Signal {
               id,
               price,
               date: Time::from_unix_ms(time),
               ticker: ticker.clone(),
-              qty: entry.qty, // not needed, calculated in backtest using entry
+              bet: None,
               side: TradeAction::ExitLong,
             };
             signals.push(trade);
+            has_long = false;
           }
         }
 
-        if enter_short {
-          let trade = Trade {
+        if enter_short && !has_short && !has_long {
+          let trade = Signal {
             id,
             price,
             date: Time::from_unix_ms(time),
             ticker: ticker.clone(),
-            qty: None, // not needed, calculated in backtest using Bet::Percent
+            bet: Some(bet),
             side: TradeAction::EnterShort,
           };
-          if active_trades.get(&enter_short_key).is_none() {
-            signals.push(trade);
-          }
+          signals.push(trade);
         }
 
-        if enter_long {
-          let trade = Trade {
+        if enter_long && !has_short && !has_long {
+          let trade = Signal {
             id,
             price,
             date: Time::from_unix_ms(time),
             ticker: ticker.clone(),
-            qty: None, // not needed, calculated in backtest using Bet::Percent
+            bet: Some(bet),
             side: TradeAction::EnterLong,
           };
-          if active_trades.get(&enter_long_key).is_none() {
-            signals.push(trade);
-          }
+          signals.push(trade);
         }
 
         Ok(signals)
@@ -240,9 +246,9 @@ impl Strategy<Data> for EntropyBacktest {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    assets: &Assets,
+    assets: &Positions,
     active_trades: &ActiveTrades,
-  ) -> anyhow::Result<Vec<Trade>> {
+  ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.cache.id {
         self.cache.push(data);
@@ -712,13 +718,14 @@ fn entropy_three_step() -> anyhow::Result<()> {
 fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
+  init_logger();
 
   let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
-  let short_selling = false;
+  let short_selling = true;
 
   let start_time = Time::new(2017, 1, 1, None, None, None);
   let end_time = Time::new(2025, 1, 1, None, None, None);
@@ -730,18 +737,18 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let period_range = bits.patterns()..120;
+  let period_range = bits.patterns()..500;
   let zscore_range = [
     None,
-    Some(1.0),
-    Some(1.25),
-    Some(1.5),
-    Some(1.75),
-    Some(2.0),
-    Some(2.25),
-    Some(2.5),
-    Some(2.75),
-    Some(3.0),
+    // Some(1.0),
+    // Some(1.25),
+    // Some(1.5),
+    // Some(1.75),
+    // Some(2.0),
+    // Some(2.25),
+    // Some(2.5),
+    // Some(2.75),
+    // Some(3.0),
   ];
 
   struct Params {
@@ -777,7 +784,7 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
         .get(&ticker)
         .map(|trades| trades.len())
         .unwrap_or(0);
-      println!("{} trades / {}ms", num_trades, timer.millis());
+      debug!("{} trades / {}ms", num_trades, timer.millis());
 
       let params = Params {
         period,
@@ -794,15 +801,10 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   // top 3 roi
   {
-    let pre_sort = Time::now();
     summaries.sort_by(|a, b| b.pct_roi.partial_cmp(&a.pct_roi).unwrap_or(Ordering::Equal));
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-    println!(
-      "sort summaries by pct roi in {}ms",
-      Time::now().to_unix_ms() - pre_sort.to_unix_ms()
-    );
 
-    println!("--- Top by ROI ---");
+    println!("**Top by ROI**");
     for params in top_3 {
       println!(
         "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
@@ -813,19 +815,14 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   // top 3 by sharpe ratio
   {
-    let pre_sort = Time::now();
     summaries.sort_by(|a, b| {
       b.sharpe_ratio
         .partial_cmp(&a.sharpe_ratio)
         .unwrap_or(Ordering::Equal)
     });
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-    println!(
-      "sort summaries by sharpe ratio in {}ms",
-      Time::now().to_unix_ms() - pre_sort.to_unix_ms()
-    );
 
-    println!("--- Top by Sharpe ---");
+    println!("**Top by Sharpe**");
     for params in top_3 {
       println!(
         "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
@@ -836,19 +833,14 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   // top 3 by drawdown
   {
-    let pre_sort = Time::now();
     summaries.sort_by(|a, b| {
       b.max_drawdown
         .partial_cmp(&a.max_drawdown)
         .unwrap_or(Ordering::Equal)
     });
     let top_3 = summaries.iter().take(3).collect::<Vec<_>>();
-    println!(
-      "sort summaries by max drawdown in {}ms",
-      Time::now().to_unix_ms() - pre_sort.to_unix_ms()
-    );
 
-    println!("--- Top by Drawdown ---");
+    println!("**Top by Drawdown**");
     for params in top_3 {
       println!(
         "period: {}, zscore: {:?}, roi: {}%, sharpe: {}, dd: {}%",
@@ -865,12 +857,12 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.0;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
-  let short_selling = false;
+  let short_selling = true;
 
   let start_time = Time::new(2017, 1, 1, None, None, None);
   let end_time = Time::new(2025, 1, 1, None, None, None);
@@ -881,8 +873,8 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let bits = EntropyBits::Two;
-  let period = 15;
-  let zscore = None;
+  let period = 144;
+  let zscore = Some(3.0);
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)

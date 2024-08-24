@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use crate::trade::{Bet, SignalInfo, Trade};
+use crate::trade::{Bet, Trade};
 use crate::Backtest;
 use crate::Strategy;
 use log::warn;
@@ -25,7 +25,7 @@ pub struct StatArbBacktest {
   pub x_rebal_pct: f64,
   pub y_rebal_pct: f64,
 
-  assets: Assets,
+  assets: Positions,
 
   pub last_rebal_price: f64,
 }
@@ -50,12 +50,16 @@ impl StatArbBacktest {
       stop_loss_pct,
       x_rebal_pct,
       y_rebal_pct,
-      assets: Assets::default(),
+      assets: Positions::default(),
       last_rebal_price: 0.0,
     }
   }
 
-  pub fn signal(&mut self, ticker: Option<String>) -> anyhow::Result<Vec<Trade>> {
+  pub fn signal(
+    &mut self,
+    ticker: Option<String>,
+    active_trades: &ActiveTrades,
+  ) -> anyhow::Result<Vec<Signal>> {
     match ticker {
       None => Ok(vec![]),
       Some(_ticker) => {
@@ -74,8 +78,6 @@ impl StatArbBacktest {
         // compare spread
         let x = Dataset::new(self.x.vec()).normalize()?;
         let y = Dataset::new(self.y.vec()).normalize()?;
-        // let x = Dataset::new(self.x.vec());
-        // let y = Dataset::new(self.y.vec());
         assert_eq!(x.len(), self.x.len());
         assert_eq!(y.len(), self.y.len());
 
@@ -98,113 +100,115 @@ impl StatArbBacktest {
 
         let mut signals = vec![];
 
+        let id = 0;
+        let x_long_key = Trade::build_key(&self.x.id, TradeAction::EnterLong, id);
+        let x_short_key = Trade::build_key(&self.x.id, TradeAction::EnterShort, id);
+        let y_long_key = Trade::build_key(&self.y.id, TradeAction::EnterLong, id);
+        let y_short_key = Trade::build_key(&self.y.id, TradeAction::EnterShort, id);
+        let active_x_long = active_trades.get(&x_long_key);
+        let active_x_short = active_trades.get(&x_short_key);
+        let active_y_long = active_trades.get(&y_long_key);
+        let active_y_short = active_trades.get(&y_short_key);
+
+        let mut has_x_long = active_x_long.is_some();
+        let mut has_x_short = active_x_short.is_some();
+        let mut has_y_long = active_y_long.is_some();
+        let mut has_y_short = active_y_short.is_some();
+
+        let x_bet = Bet::Percent(self.x_rebal_pct);
+        let y_bet = Bet::Percent(self.y_rebal_pct);
+
         // --- #1 ---
-        // let x_enter_info = SignalInfo {
-        //   price: x_0.y(),
-        //   date: Time::from_unix_ms(x_0.x()),
-        //   ticker: self.x.id.clone(),
-        //   quantity: self.assets.cash()?.quantity / x_0.y(),
-        // };
-        // let y_enter_info = SignalInfo {
-        //   price: y_0.y(),
-        //   date: Time::from_unix_ms(y_0.x()),
-        //   ticker: self.y.id.clone(),
-        //   quantity: self.assets.cash()?.quantity / y_0.y(),
-        // };
-        // let x_exit_info = SignalInfo {
-        //   price: x_0.y(),
-        //   date: Time::from_unix_ms(x_0.x()),
-        //   ticker: self.x.id.clone(),
-        //   quantity: self.assets.get_or_err(&self.x.id)?.quantity,
-        // };
-        // let y_exit_info = SignalInfo {
-        //   price: y_0.y(),
-        //   date: Time::from_unix_ms(y_0.x()),
-        //   ticker: self.y.id.clone(),
-        //   quantity: self.assets.get_or_err(&self.y.id)?.quantity,
-        // };
-        //
-        // let enter_long = z_0.y() > self.zscore_threshold;
-        // let exit_long = z_0.y() < -self.zscore_threshold;
-        // let exit_short = exit_long;
-        // let enter_short = enter_long;
-        //
-        // if exit_long {
-        //   signals.push(Signal::ExitLong(x_exit_info.clone()));
-        //   signals.push(Signal::ExitLong(y_exit_info.clone()));
-        // }
-        // if exit_short {
-        //   signals.push(Signal::ExitShort(x_exit_info.clone()));
-        //   signals.push(Signal::ExitShort(y_exit_info.clone()));
-        // }
-        // if enter_long {
-        //   signals.push(Signal::EnterLong(x_enter_info.clone()));
-        //   signals.push(Signal::EnterLong(y_enter_info.clone()));
-        // }
-        // if enter_short {
-        //   signals.push(Signal::EnterShort(x_enter_info.clone()));
-        //   signals.push(Signal::EnterShort(y_enter_info.clone()));
-        // }
+        let x_enter_long = Signal {
+          id,
+          price: x_0.y(),
+          date: Time::from_unix_ms(x_0.x()),
+          ticker: self.x.id.clone(),
+          bet: Some(x_bet),
+          side: TradeAction::EnterLong,
+        };
+        let y_enter_long = Signal {
+          id,
+          price: y_0.y(),
+          date: Time::from_unix_ms(y_0.x()),
+          ticker: self.y.id.clone(),
+          bet: Some(y_bet),
+          side: TradeAction::EnterLong,
+        };
+        let x_exit_long = Signal {
+          id,
+          price: x_0.y(),
+          date: Time::from_unix_ms(x_0.x()),
+          ticker: self.x.id.clone(),
+          bet: None,
+          side: TradeAction::ExitLong,
+        };
+        let y_exit_long = Signal {
+          id,
+          price: y_0.y(),
+          date: Time::from_unix_ms(y_0.x()),
+          ticker: self.y.id.clone(),
+          bet: None,
+          side: TradeAction::ExitLong,
+        };
 
-        // --- #2 ---
-        let x_base_amt = self.assets.get(&self.x.id)?.qty;
-        let x_quote_amt = x_base_amt * x_0.y();
-        let y_base_amt = self.assets.get(&self.y.id)?.qty;
-        let y_quote_amt = y_base_amt * y_0.y();
+        let x_enter_short = Signal {
+          id,
+          price: x_0.y(),
+          date: Time::from_unix_ms(x_0.x()),
+          ticker: self.x.id.clone(),
+          bet: Some(x_bet),
+          side: TradeAction::EnterShort,
+        };
+        let y_enter_short = Signal {
+          id,
+          price: y_0.y(),
+          date: Time::from_unix_ms(y_0.x()),
+          ticker: self.y.id.clone(),
+          bet: Some(y_bet),
+          side: TradeAction::EnterShort,
+        };
+        let x_exit_short = Signal {
+          id,
+          price: x_0.y(),
+          date: Time::from_unix_ms(x_0.x()),
+          ticker: self.x.id.clone(),
+          bet: None,
+          side: TradeAction::ExitShort,
+        };
+        let y_exit_short = Signal {
+          id,
+          price: y_0.y(),
+          date: Time::from_unix_ms(y_0.x()),
+          ticker: self.y.id.clone(),
+          bet: None,
+          side: TradeAction::ExitShort,
+        };
 
-        // rebalance x and y to self.x_rebal_pct and self.y_rebal_pct
-        let equity = self.assets.equity();
+        let enter_long = z_0.y() > self.zscore_threshold;
+        let exit_long = z_0.y() < -self.zscore_threshold;
+        let exit_short = exit_long;
+        let enter_short = enter_long;
 
-        let x_curr_ratio = x_quote_amt / equity;
-        let x_target_ratio_diff = self.x_rebal_pct / 100.0 - x_curr_ratio;
-        let x_quote_rebal_needed = x_target_ratio_diff * equity;
-        let x_base_rebal_needed = x_quote_rebal_needed / x_0.y();
-
-        let y_curr_ratio = y_quote_amt / equity;
-        let y_target_ratio_diff = self.y_rebal_pct / 100.0 - y_curr_ratio;
-        let y_quote_rebal_needed = y_target_ratio_diff * equity;
-        let y_base_rebal_needed = y_quote_rebal_needed / y_0.y();
-
-        let deviated = z_0.y.abs() > self.zscore_threshold;
-
-        // sell first to have as much cash as possible
-        if x_base_rebal_needed < 0.0 && deviated {
-          let x_exit_info = SignalInfo {
-            price: x_0.y(),
-            date: Time::from_unix_ms(x_0.x()),
-            ticker: self.x.id.clone(),
-            quantity: x_base_rebal_needed.abs(),
-          };
-          signals.push(Trade::ExitLong(x_exit_info));
+        if exit_long && has_x_long && has_y_long {
+          signals.push(x_exit_long.clone());
+          signals.push(y_exit_long.clone());
+          has_x_long = false;
+          has_y_long = false;
         }
-        if y_base_rebal_needed < 0.0 && deviated {
-          let y_exit_info = SignalInfo {
-            price: y_0.y(),
-            date: Time::from_unix_ms(x_0.x()),
-            ticker: self.y.id.clone(),
-            quantity: y_base_rebal_needed.abs(),
-          };
-          signals.push(Trade::ExitLong(y_exit_info));
+        if exit_short && has_x_short && has_y_short {
+          signals.push(x_exit_short.clone());
+          signals.push(y_exit_short.clone());
+          has_x_short = false;
+          has_y_short = false;
         }
-
-        // then buy assets with cash available
-        if x_base_rebal_needed > 0.0 && deviated {
-          let x_enter_info = SignalInfo {
-            price: x_0.y(),
-            date: Time::from_unix_ms(x_0.x()),
-            ticker: self.x.id.clone(),
-            quantity: x_base_rebal_needed,
-          };
-          signals.push(Trade::EnterLong(x_enter_info));
+        if enter_long && !has_x_long && !has_y_long {
+          signals.push(x_enter_long.clone());
+          signals.push(y_enter_long.clone());
         }
-        if y_base_rebal_needed > 0.0 && deviated {
-          let y_enter_info = SignalInfo {
-            price: y_0.y(),
-            date: Time::from_unix_ms(x_0.x()),
-            ticker: self.y.id.clone(),
-            quantity: y_base_rebal_needed,
-          };
-          signals.push(Trade::EnterLong(y_enter_info));
+        if enter_short && !has_x_short && !has_y_short {
+          signals.push(x_enter_short.clone());
+          signals.push(y_enter_short.clone());
         }
 
         Ok(signals)
@@ -219,8 +223,9 @@ impl Strategy<Data> for StatArbBacktest {
     &mut self,
     data: Data,
     ticker: Option<String>,
-    assets: &Assets,
-  ) -> anyhow::Result<Vec<Trade>> {
+    assets: &Positions,
+    active_trades: &ActiveTrades,
+  ) -> anyhow::Result<Vec<Signal>> {
     if let Some(ticker) = ticker.clone() {
       if ticker == self.x.id {
         self.x.push(Data {
@@ -235,7 +240,7 @@ impl Strategy<Data> for StatArbBacktest {
       }
     }
     self.assets = assets.clone();
-    self.signal(ticker)
+    self.signal(ticker, active_trades)
   }
 
   fn cache(&self, ticker: Option<String>) -> Option<&RingBuffer<Data>> {
@@ -266,19 +271,19 @@ impl Strategy<Data> for StatArbBacktest {
 // ==========================================================================================
 
 #[tokio::test]
-async fn btc_eth_stat_arb() -> anyhow::Result<()> {
+async fn stat_arb_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let start_time = Time::new(2024, 1, 1, None, None, None);
-  let end_time = Time::new(2024, 7, 1, None, None, None);
-  let timeframe = "1m";
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 7, 1, None, None, None);
+  let timeframe = "1d";
 
+  let fee = 0.0;
   let window = 9;
   let capacity = window + 1;
   let threshold = 2.0;
   let stop_loss = None;
-  let fee = 0.0;
   let slippage = 0.0;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
@@ -317,27 +322,20 @@ async fn btc_eth_stat_arb() -> anyhow::Result<()> {
     x_rebal_pct,
     y_rebal_pct,
   );
+
   let mut backtest = Backtest::builder(strat)
     .fee(fee)
     .slippage(slippage)
     .bet(bet)
     .leverage(leverage)
     .short_selling(short_selling);
-  // Append to backtest data
+
   backtest
     .series
     .insert(x_ticker.clone(), x_series.data().clone());
   backtest
     .series
     .insert(y_ticker.clone(), y_series.data().clone());
-  println!(
-    "Backtest BTC candles: {}",
-    backtest.series.get(&x_ticker).unwrap().len()
-  );
-  println!(
-    "Backtest ETH candles: {}",
-    backtest.series.get(&y_ticker).unwrap().len()
-  );
 
   backtest.execute("StatArb Backtest", timeframe)?;
 
