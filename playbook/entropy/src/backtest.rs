@@ -503,11 +503,13 @@ fn entropy_two_step() -> anyhow::Result<()> {
   let bits = EntropyBits::Two.bits();
   let patterns = EntropyBits::Two.patterns();
 
-  let mut win = 0;
-  let mut loss = 0;
+  let mut longs = 0;
+  let mut shorts = 0;
+  let mut long_win = 0;
+  let mut long_lose = 0;
+  let mut short_win = 0;
+  let mut short_lose = 0;
   let mut cum_pnl = 0.0;
-  let mut long = 0;
-  let mut short = 0;
 
   let mut entropies = vec![];
   let mut pnl_series = vec![];
@@ -554,35 +556,72 @@ fn entropy_two_step() -> anyhow::Result<()> {
     let up = max == entropy_b11;
     let down = max == entropy_b00;
 
+    // // 49% win rate if losing long comes before winning short
+    // if up {
+    //   longs += 1;
+    //   if p2 < p0 {
+    //     // long && new price > old price, long wins
+    //     long_win += 1;
+    //     cum_pnl += p0 - p2;
+    //   } else {
+    //     // long && new price < old price, long loses
+    //     long_lose += 1;
+    //     cum_pnl += p0 - p2;
+    //   }
+    // } else if down {
+    //   shorts += 1;
+    //   if p2 > p0 {
+    //     // short && old price > new price, short wins
+    //     short_win += 1;
+    //     cum_pnl += p2 - p0;
+    //   } else {
+    //     // short && old price < new price, short loses
+    //     short_lose += 1;
+    //     cum_pnl += p2 - p0;
+    //   }
+    // }
+
+    // 57% win rate if winning shorts comes before losing long
     if up && p2 < p0 {
-      win += 1;
-      long += 1;
+      // long && new price > old price, long wins
+      long_win += 1;
+      longs += 1;
       cum_pnl += p0 - p2;
     } else if down && p2 > p0 {
-      win += 1;
-      short += 1;
+      // short && old price > new price, short wins
+      short_win += 1;
+      shorts += 1;
       cum_pnl += p2 - p0;
     } else if up && p2 > p0 {
-      loss += 1;
-      long += 1;
+      // long && new price < old price, long loses
+      long_lose += 1;
+      longs += 1;
       cum_pnl += p0 - p2;
     } else if down && p2 < p0 {
-      loss += 1;
-      short += 1;
+      // short && old price < new price, short loses
+      short_lose += 1;
+      shorts += 1;
       cum_pnl += p2 - p0;
     }
+
     pnl_series.push(cum_pnl);
-    entropies.push(shannon_entropy(trained.as_slice(), period, patterns));
+    entropies.push(shannon_entropy(trained.as_slice(), length, patterns));
   }
   let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
   println!("entropy: {}/{}", trunc!(avg_entropy, 3), patterns);
 
+  let trades = longs + shorts;
+  let win_rate = trunc!((long_win + short_win) as f64 / trades as f64 * 100.0, 2);
+  let long_win_rate = trunc!(long_win as f64 / longs as f64 * 100.0, 2);
+  let short_win_rate = trunc!(short_win as f64 / shorts as f64 * 100.0, 2);
   println!(
-    "trades: {}, long: {}/{}, win rate: {}%, profit: ${}",
-    win + loss,
-    long,
-    long + short,
-    trunc!(win as f64 / (win + loss) as f64 * 100.0, 3),
+    "trades: {}, long: {}/{}, total WR: {}%, long WR: {}%, short WR: ${}, pnl: ${}",
+    trades,
+    longs,
+    longs + shorts,
+    win_rate,
+    long_win_rate,
+    short_win_rate,
     trunc!(cum_pnl, 2)
   );
 
