@@ -301,3 +301,15 @@ impl From<&[f64]> for Dataset {
     )
   }
 }
+
+impl From<Vec<f64>> for Dataset {
+  fn from(data: Vec<f64>) -> Self {
+    Self::new(
+      data
+        .into_iter()
+        .enumerate()
+        .map(|(i, y)| Data { x: i as i64, y })
+        .collect(),
+    )
+  }
+}

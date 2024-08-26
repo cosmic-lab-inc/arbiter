@@ -41,6 +41,15 @@ impl PartialEq for EntropySignal {
   }
 }
 impl Eq for EntropySignal {}
+impl EntropySignal {
+  pub fn signal(&self) -> i8 {
+    match self {
+      EntropySignal::Up => 1,
+      EntropySignal::Down => -1,
+      EntropySignal::None => 0,
+    }
+  }
+}
 
 /// Based on this blog: https://robotwealth.com/shannon-entropy/
 /// Translated from Zorro's `ShannonEntropy` indicator, written in C: https://financial-hacker.com/is-scalping-irrational/
@@ -87,11 +96,8 @@ pub fn one_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
   let entropy_b0 = shannon_entropy(&b0, length, patterns);
 
   let max = entropy_b1.max(entropy_b0);
-  let up = max == entropy_b1;
-  let down = max == entropy_b0;
-
-  // let up = entropy_b1 > entropy_b0;
-  // let down = entropy_b0 > entropy_b1;
+  let up = max == entropy_b0;
+  let down = max == entropy_b1;
 
   Ok(if up {
     EntropySignal::Up
@@ -143,11 +149,8 @@ pub fn shit_test_one_step_entropy_signals(
     let entropy_b0 = shannon_entropy(&b0, length, patterns);
 
     let max = entropy_b1.max(entropy_b0);
-    let up = max == entropy_b1;
-    let down = max == entropy_b0;
-
-    // let up = entropy_b1 > entropy_b0;
-    // let down = entropy_b0 > entropy_b1;
+    let up = max == entropy_b0;
+    let down = max == entropy_b1;
 
     if up {
       signals.push((data, EntropySignal::Up));
@@ -207,8 +210,8 @@ pub fn two_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Result
     .max(entropy_b10)
     .max(entropy_b01);
 
-  let up = max == entropy_b11;
-  let down = max == entropy_b00;
+  let up = max == entropy_b00;
+  let down = max == entropy_b11;
   Ok(if up {
     EntropySignal::Up
   } else if down {
@@ -275,8 +278,8 @@ pub fn shit_test_two_step_entropy_signals(
       .max(entropy_b10)
       .max(entropy_b01);
 
-    let up = max == entropy_b11;
-    let down = max == entropy_b00;
+    let up = max == entropy_b00;
+    let down = max == entropy_b11;
 
     if up {
       signals.push((data, EntropySignal::Up));
@@ -360,10 +363,12 @@ pub fn three_step_entropy_signal(series: Dataset, period: usize) -> anyhow::Resu
     .max(entropy_b100)
     .max(entropy_b001);
 
-  // original
-  Ok(if max == entropy_b111 {
+  let up = max == entropy_b000;
+  let down = max == entropy_b111;
+
+  Ok(if up {
     EntropySignal::Up
-  } else if max == entropy_b000 {
+  } else if down {
     EntropySignal::Down
   } else {
     EntropySignal::None

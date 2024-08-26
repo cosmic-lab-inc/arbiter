@@ -1,4 +1,4 @@
-use log::warn;
+use log::debug;
 
 pub fn std_dev(x: &[f64]) -> f64 {
   let mean_x: f64 = mean(x);
@@ -68,7 +68,7 @@ pub fn zscore(series: &[f64], window: usize) -> anyhow::Result<f64> {
     / (window_data.len() - 1) as f64;
   let std_dev: f64 = var.sqrt();
   if std_dev == 0.0 {
-    warn!(
+    debug!(
       "Standard deviation is zero with var {}, mean {}, and len {}",
       var,
       mean,

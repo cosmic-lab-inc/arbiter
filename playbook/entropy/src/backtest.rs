@@ -5,6 +5,7 @@ use log::debug;
 use nexus::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use tradestats::metrics::{pearson_correlation_coefficient, rolling_correlation, rolling_zscore};
 
 #[derive(Debug, Clone)]
 struct LastSignal {
@@ -22,6 +23,9 @@ pub struct EntropyBacktest {
   assets: Positions,
   pub stop_loss_pct: Option<f64>,
   last_signal: Option<LastSignal>,
+  e_cache: RingBuffer<f64>,
+  ez_cache: RingBuffer<f64>,
+  pz_cache: RingBuffer<f64>,
 
   longs_won: usize,
   longs_lost: usize,
@@ -47,6 +51,9 @@ impl EntropyBacktest {
       assets: Positions::default(),
       stop_loss_pct,
       last_signal: None,
+      e_cache: RingBuffer::new(period, String::new()),
+      ez_cache: RingBuffer::new(period, String::new()),
+      pz_cache: RingBuffer::new(period, String::new()),
 
       longs_won: 0,
       longs_pnl: 0.0,
@@ -64,9 +71,175 @@ impl EntropyBacktest {
     let mut exit_short = false;
 
     let series = Dataset::new(self.cache.vec());
-    let latest_price = *series.y().last().unwrap();
 
-    // --- NEW METHOD ---
+    // --- #1 METHOD ---
+    // let latest_price = *series.y().last().unwrap();
+    // let mut new_last_signal = self.last_signal.clone();
+    // // exit position created by last_signal if needed
+    // if let Some(LastSignal {
+    //   bars_since,
+    //   signal,
+    //   price,
+    // }) = new_last_signal
+    // {
+    //   if bars_since > self.entropy_bits.bits() {
+    //     match signal {
+    //       EntropySignal::Up => {
+    //         if latest_price > price {
+    //           self.longs_won += 1;
+    //         } else {
+    //           self.longs_lost += 1;
+    //         }
+    //         self.longs_pnl += latest_price - price;
+    //         exit_long = true;
+    //         new_last_signal = None;
+    //       }
+    //       EntropySignal::Down => {
+    //         if latest_price < price {
+    //           self.shorts_won += 1;
+    //         } else {
+    //           self.shorts_lost += 1;
+    //         }
+    //         self.shorts_pnl += price - latest_price;
+    //         exit_short = true;
+    //         new_last_signal = None;
+    //       }
+    //       _ => {}
+    //     }
+    //   }
+    // }
+    // // only trade if no active position
+    // if new_last_signal.is_none() {
+    //   let signal = match self.entropy_bits {
+    //     EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+    //   };
+    //   match signal {
+    //     EntropySignal::Up => {
+    //       enter_long = true;
+    //       new_last_signal = Some(LastSignal {
+    //         bars_since: 0,
+    //         signal: EntropySignal::Up,
+    //         price: latest_price,
+    //       });
+    //     }
+    //     EntropySignal::Down => {
+    //       enter_short = true;
+    //       new_last_signal = Some(LastSignal {
+    //         bars_since: 0,
+    //         signal: EntropySignal::Down,
+    //         price: latest_price,
+    //       });
+    //     }
+    //     _ => {}
+    //   }
+    // }
+    // self.last_signal = new_last_signal;
+    // debug!(
+    //   "longs {}/{}, ${}, shorts: {}/{}, ${}",
+    //   self.longs_won,
+    //   self.longs_won + self.longs_lost,
+    //   trunc!(self.longs_pnl, 2),
+    //   self.shorts_won,
+    //   self.shorts_won + self.shorts_lost,
+    //   trunc!(self.shorts_pnl, 2)
+    // );
+
+    // --- #2 METHOD ---
+    // match self.entropy_zscore_cutoff {
+    //   Some(cutoff) => {
+    //     let y_series = series.y();
+    //     let signal = match self.entropy_bits {
+    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+    //     };
+    //     let z = zscore(y_series.as_slice(), self.period)?;
+    //     if z.abs() > cutoff {
+    //       match signal {
+    //         EntropySignal::Up => {
+    //           enter_long = true;
+    //           exit_short = true;
+    //         }
+    //         EntropySignal::Down => {
+    //           enter_short = true;
+    //           exit_long = true;
+    //         }
+    //         _ => {}
+    //       }
+    //     }
+    //   }
+    //   None => {
+    //     let signal = match self.entropy_bits {
+    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+    //     };
+    //     match signal {
+    //       EntropySignal::Up => {
+    //         enter_long = true;
+    //         exit_short = true;
+    //       }
+    //       EntropySignal::Down => {
+    //         enter_short = true;
+    //         exit_long = true;
+    //       }
+    //       _ => {}
+    //     }
+    //   }
+    // }
+
+    // --- #3 METHOD ---
+    // let closes = series.y();
+    // let e = shannon_entropy(closes.as_slice(), self.period, self.entropy_bits.patterns());
+    // self.e_cache.push(e);
+    // let pz = zscore(closes.as_slice(), self.period)?;
+    // self.pz_cache.push(pz);
+    //
+    // let e_series = self.e_cache.vec();
+    // // not enough values to compute entropy z-score or price z-score
+    // if e_series.len() < self.period || self.pz_cache.vec().len() < self.period {
+    //   return Ok(Signals {
+    //     enter_long,
+    //     exit_long,
+    //     enter_short,
+    //     exit_short,
+    //   });
+    // }
+    // let ez = zscore(e_series.as_slice(), self.period)?;
+    // self.ez_cache.push(ez);
+    // // not enough entropy z-score values to compare to price z-score
+    // if self.ez_cache.vec().len() < self.period {
+    //   return Ok(Signals {
+    //     enter_long,
+    //     exit_long,
+    //     enter_short,
+    //     exit_short,
+    //   });
+    // }
+    //
+    // if ez.abs() > self.entropy_zscore_cutoff.unwrap_or(0.0) {
+    //   let signal = match self.entropy_bits {
+    //     EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+    //     EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+    //   };
+    //   match signal {
+    //     EntropySignal::Up => {
+    //       enter_long = true;
+    //       exit_short = true;
+    //     }
+    //     EntropySignal::Down => {
+    //       enter_short = true;
+    //       exit_long = true;
+    //     }
+    //     _ => {}
+    //   }
+    // }
+
+    // --- #4 METHOD ---
+    let latest_price = *series.y().last().unwrap();
     let mut new_last_signal = self.last_signal.clone();
     // exit position created by last_signal if needed
     if let Some(LastSignal {
@@ -103,31 +276,59 @@ impl EntropyBacktest {
     }
     // only trade if no active position
     if new_last_signal.is_none() {
-      let entropy_series = series;
-      // let entropy_series = Dataset::new(series.0.clone().into_iter().rev().collect::<Vec<Data>>());
-      let signal = match self.entropy_bits {
-        EntropyBits::One => one_step_entropy_signal(entropy_series, self.period)?,
-        EntropyBits::Two => two_step_entropy_signal(entropy_series, self.period)?,
-        EntropyBits::Three => three_step_entropy_signal(entropy_series, self.period)?,
-      };
-      match signal {
-        EntropySignal::Up => {
-          enter_long = true;
-          new_last_signal = Some(LastSignal {
-            bars_since: 0,
-            signal: EntropySignal::Up,
-            price: latest_price,
-          });
+      let closes = series.y();
+      let e = shannon_entropy(closes.as_slice(), self.period, self.entropy_bits.patterns());
+      self.e_cache.push(e);
+      let pz = zscore(closes.as_slice(), self.period)?;
+      self.pz_cache.push(pz);
+
+      let e_series = self.e_cache.vec();
+      // not enough values to compute entropy z-score or price z-score
+      if e_series.len() < self.period || self.pz_cache.vec().len() < self.period {
+        return Ok(Signals {
+          enter_long,
+          exit_long,
+          enter_short,
+          exit_short,
+        });
+      }
+      let ez = zscore(e_series.as_slice(), self.period)?;
+      self.ez_cache.push(ez);
+      // not enough entropy z-score values to compare to price z-score
+      if self.ez_cache.vec().len() < self.period {
+        return Ok(Signals {
+          enter_long,
+          exit_long,
+          enter_short,
+          exit_short,
+        });
+      }
+
+      if ez.abs() > self.entropy_zscore_cutoff.unwrap_or(0.0) {
+        let signal = match self.entropy_bits {
+          EntropyBits::One => one_step_entropy_signal(series, self.period)?,
+          EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
+          EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
+        };
+        match signal {
+          EntropySignal::Up => {
+            enter_long = true;
+            new_last_signal = Some(LastSignal {
+              bars_since: 0,
+              signal: EntropySignal::Up,
+              price: latest_price,
+            });
+          }
+          EntropySignal::Down => {
+            enter_short = true;
+            new_last_signal = Some(LastSignal {
+              bars_since: 0,
+              signal: EntropySignal::Down,
+              price: latest_price,
+            });
+          }
+          _ => {}
         }
-        EntropySignal::Down => {
-          enter_short = true;
-          new_last_signal = Some(LastSignal {
-            bars_since: 0,
-            signal: EntropySignal::Down,
-            price: latest_price,
-          });
-        }
-        _ => {}
       }
     }
     self.last_signal = new_last_signal;
@@ -140,50 +341,6 @@ impl EntropyBacktest {
       self.shorts_won + self.shorts_lost,
       trunc!(self.shorts_pnl, 2)
     );
-
-    // --- OLD METHOD ---
-    // match self.entropy_zscore_cutoff {
-    //   Some(cutoff) => {
-    //     let y_series = series.y();
-    //     let signal = match self.entropy_bits {
-    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
-    //     };
-    //     let entropy_zscore = zscore(y_series.as_slice(), self.period)?;
-    //     if entropy_zscore.abs() > cutoff {
-    //       match signal {
-    //         EntropySignal::Up => {
-    //           enter_long = true;
-    //           exit_short = true;
-    //         }
-    //         EntropySignal::Down => {
-    //           enter_short = true;
-    //           exit_long = true;
-    //         }
-    //         _ => {}
-    //       }
-    //     }
-    //   }
-    //   None => {
-    //     let signal = match self.entropy_bits {
-    //       EntropyBits::One => one_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Two => two_step_entropy_signal(series, self.period)?,
-    //       EntropyBits::Three => three_step_entropy_signal(series, self.period)?,
-    //     };
-    //     match signal {
-    //       EntropySignal::Up => {
-    //         enter_long = true;
-    //         exit_short = true;
-    //       }
-    //       EntropySignal::Down => {
-    //         enter_short = true;
-    //         exit_long = true;
-    //       }
-    //       _ => {}
-    //     }
-    //   }
-    // }
 
     Ok(Signals {
       enter_long,
@@ -358,7 +515,7 @@ fn entropy_one_step() -> anyhow::Result<()> {
   let ticker = "BTC".to_string();
   let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 10;
+  let period = 100;
   let bits = EntropyBits::One.bits();
   let patterns = EntropyBits::One.patterns();
 
@@ -395,8 +552,11 @@ fn entropy_one_step() -> anyhow::Result<()> {
     let p1 = series[eli - bits];
 
     let max = entropy_b1.max(entropy_b0);
-    let up = max == entropy_b1;
-    let down = max == entropy_b0;
+
+    // let up = max == entropy_b1;
+    // let down = max == entropy_b0;
+    let up = max == entropy_b0;
+    let down = max == entropy_b1;
 
     if up {
       longs += 1;
@@ -457,7 +617,7 @@ fn entropy_two_step() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   let clock_start = Time::now();
   let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2021, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
 
   let timeframe = "1h";
 
@@ -484,11 +644,6 @@ fn entropy_two_step() -> anyhow::Result<()> {
     let expected = btc_series.y()[i + period..i + period + patterns].to_vec();
     assert_eq!(expected.len(), patterns);
 
-    // let data = trained.clone().into_iter().rev().collect::<Vec<f64>>();
-    // let mut b11 = data.clone();
-    // let mut b00 = data.clone();
-    // let mut b10 = data.clone();
-    // let mut b01 = data.clone();
     let mut b11 = trained.clone();
     let mut b00 = trained.clone();
     let mut b10 = trained.clone();
@@ -521,8 +676,10 @@ fn entropy_two_step() -> anyhow::Result<()> {
       .max(entropy_b10)
       .max(entropy_b01);
 
-    let up = max == entropy_b11;
-    let down = max == entropy_b00;
+    // let up = max == entropy_b11;
+    // let down = max == entropy_b00;
+    let up = max == entropy_b00;
+    let down = max == entropy_b11;
 
     if up {
       longs += 1;
@@ -580,9 +737,9 @@ fn entropy_three_step() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
   let clock_start = Time::now();
-  let start_time = Time::new(2020, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 1, 10, None, None, None);
-  let timeframe = "1m";
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 10, None, None, None);
+  let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
@@ -673,8 +830,10 @@ fn entropy_three_step() -> anyhow::Result<()> {
       .max(entropy_b100)
       .max(entropy_b001);
 
-    let up = max == entropy_b111;
-    let down = max == entropy_b000;
+    // let up = max == entropy_b111;
+    // let down = max == entropy_b000;
+    let up = max == entropy_b000;
+    let down = max == entropy_b111;
 
     if up {
       longs += 1;
@@ -758,18 +917,18 @@ fn optimize_entropy_1d_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let period_range = bits.patterns()..500;
+  let period_range = 4..500;
   let zscore_range = [
     None,
-    // Some(1.0),
-    // Some(1.25),
-    // Some(1.5),
-    // Some(1.75),
-    // Some(2.0),
-    // Some(2.25),
-    // Some(2.5),
-    // Some(2.75),
-    // Some(3.0),
+    Some(1.0),
+    Some(1.25),
+    Some(1.5),
+    Some(1.75),
+    Some(2.0),
+    Some(2.25),
+    Some(2.5),
+    Some(2.75),
+    Some(3.0),
   ];
 
   struct Params {
@@ -878,7 +1037,7 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   use super::*;
   dotenv::dotenv().ok();
 
-  let fee = 0.0;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
@@ -894,8 +1053,8 @@ fn entropy_1d_backtest() -> anyhow::Result<()> {
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
   let bits = EntropyBits::Two;
-  let period = 15;
-  let zscore = None;
+  let period = 95;
+  let zscore = Some(2.75);
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)
@@ -930,8 +1089,8 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
   let leverage = 1;
   let short_selling = true;
 
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2020, 1, 1, None, None, None);
+  let start_time = Time::new(2019, 1, 1, None, None, None);
+  let end_time = Time::new(2021, 1, 1, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
@@ -940,7 +1099,7 @@ fn optimize_entropy_1h_backtest() -> anyhow::Result<()> {
 
   let bits = EntropyBits::Two;
 
-  let period_range = 100..200;
+  let period_range = 10..500;
   let zscore_range = [
     None,
     Some(1.0),
@@ -1075,17 +1234,17 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
   let leverage = 1;
-  let short_selling = false;
+  let short_selling = true;
 
-  let start_time = Time::new(2018, 1, 1, None, None, None);
-  let end_time = Time::new(2019, 1, 1, None, None, None);
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 3;
+  let period = 100;
   let bits = EntropyBits::Two;
   let zscore = None;
 
@@ -1352,4 +1511,139 @@ fn shit_test_two_step() -> anyhow::Result<()> {
     }
     false => Err(anyhow::anyhow!("results do not match")),
   }
+}
+
+#[test]
+fn entropy_statistics() -> anyhow::Result<()> {
+  let start_time = Time::new(2017, 1, 1, None, None, None);
+  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let timeframe = "1d";
+
+  let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
+  let ticker = "BTC".to_string();
+  let btc_series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
+  // let btc_series = Dataset::new(btc_series.0.into_iter().take(1000).collect());
+
+  let period = 100;
+  let bits = EntropyBits::Two;
+
+  let mut cache = RingBuffer::new(period + bits.bits(), ticker);
+
+  struct Entry {
+    pub price: f64,
+    pub delta: f64,
+    pub price_zscore: f64,
+    pub entropy: f64,
+    pub entropy_signal: EntropySignal,
+  }
+
+  let mut dataset = vec![];
+  for data in btc_series.data().clone().into_iter() {
+    cache.push(data);
+    if cache.vec.len() < period + bits.bits() {
+      continue;
+    }
+    let series = Dataset::new(cache.vec());
+
+    let (in_sample, out_sample) = series.sample(bits.bits());
+    assert_eq!(in_sample.len(), period);
+    assert_eq!(out_sample.len(), bits.bits());
+
+    let closes = in_sample.y();
+    let future = out_sample.0[out_sample.0.len() - 1].y;
+    let present = closes[closes.len() - 1];
+    let delta = (future - present) / present * 100.0;
+    let price_zscore = zscore(closes.as_slice(), period).unwrap();
+
+    let entropy = shannon_entropy(closes.as_slice(), period, bits.patterns());
+    let entropy_signal = match bits {
+      EntropyBits::One => one_step_entropy_signal(in_sample, period)?,
+      EntropyBits::Two => two_step_entropy_signal(in_sample, period)?,
+      EntropyBits::Three => three_step_entropy_signal(in_sample, period)?,
+    };
+    dataset.push(Entry {
+      price: present,
+      delta,
+      price_zscore,
+      entropy,
+      entropy_signal,
+    });
+  }
+
+  // iterate and calculate correlation between entropy and delta, and entropy and price zscore
+  let p = dataset.iter().map(|entry| entry.price).collect();
+  let pz = dataset.iter().map(|entry| entry.price_zscore).collect();
+  let d = dataset.iter().map(|entry| entry.delta).collect();
+  let dz = rolling_zscore(&d, period).unwrap();
+  let e = dataset.iter().map(|entry| entry.entropy).collect();
+  let ez = rolling_zscore(&e, period).unwrap();
+
+  let pz_ez_corr = pearson_correlation_coefficient(&pz, &ez).unwrap();
+  let roll_pz_ez_corr = rolling_correlation(&pz, &ez, period).unwrap();
+  println!("pz : ez,  corr: {}", pz_ez_corr);
+
+  let pz_e_corr = pearson_correlation_coefficient(&pz, &e).unwrap();
+  let roll_pz_e_corr = rolling_correlation(&pz, &e, period).unwrap();
+  println!("pz : e,  corr: {}", pz_e_corr);
+
+  let p_e_corr = pearson_correlation_coefficient(&p, &e).unwrap();
+  let roll_p_e_corr = rolling_correlation(&p, &e, period).unwrap();
+  println!("p : e,  corr: {}", p_e_corr);
+
+  let d_ez_corr = pearson_correlation_coefficient(&d, &ez).unwrap();
+  let roll_d_ez_corr = rolling_correlation(&dz, &ez, period).unwrap();
+  println!("d : ez,  corr: {}", d_ez_corr);
+
+  let pz_dataset = Dataset::from(pz);
+  let ez_dataset = Dataset::from(ez);
+  let roll_pz_ez_dataset = Dataset::from(roll_pz_ez_corr);
+  let roll_pz_e_dataset = Dataset::from(roll_pz_e_corr);
+  let roll_p_e_dataset = Dataset::from(roll_p_e_corr);
+  let roll_d_ez_dataset = Dataset::from(roll_d_ez_corr);
+
+  Plot::plot(
+    vec![
+      Series {
+        data: roll_pz_ez_dataset.0,
+        label: "PZ : EZ Corr".to_string(),
+      },
+      Series {
+        data: roll_pz_e_dataset.0,
+        label: "PZ : E Corr".to_string(),
+      },
+      Series {
+        data: roll_p_e_dataset.0,
+        label: "P : E Corr".to_string(),
+      },
+      Series {
+        data: roll_d_ez_dataset.0,
+        label: "D : EZ Corr".to_string(),
+      },
+    ],
+    "corr.png",
+    "Price v Entropy Correlation",
+    "Correlation",
+    "Time",
+    Some(false),
+  )?;
+
+  Plot::plot(
+    vec![
+      Series {
+        data: pz_dataset.0,
+        label: "Price Z-Score".to_string(),
+      },
+      Series {
+        data: ez_dataset.0,
+        label: "Entropy Z-Score".to_string(),
+      },
+    ],
+    "zscore.png",
+    "Price Z-Score v Entropy Z-Score",
+    "Z Score",
+    "Time",
+    Some(false),
+  )?;
+
+  Ok(())
 }
