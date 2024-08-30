@@ -359,6 +359,9 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   }
 
   fn enter_short(&mut self, signal: Signal) -> anyhow::Result<()> {
+    if !self.short_selling {
+      return Ok(());
+    }
     let bet = match signal.bet {
       None => self.bet,
       Some(bet) => bet,
@@ -395,6 +398,9 @@ impl<T, S: Strategy<T>> Backtest<T, S> {
   }
 
   fn exit_short(&mut self, signal: Signal) -> anyhow::Result<()> {
+    if !self.short_selling {
+      return Ok(());
+    }
     let mut trade = Trade::from((signal, 0.0));
     let price = trade.price * (1.0 + self.slippage / 100.0);
     trade.price = price;

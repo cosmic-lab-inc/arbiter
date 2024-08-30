@@ -42,3 +42,20 @@ period: 460, zscore: Some(3.0), roi: 2.05%, sharpe: inf, dd: 0%
 period: 438, zscore: Some(2.25), roi: 12.55%, sharpe: inf, dd: 0%
 period: 467, zscore: Some(2.75), roi: 4.22%, sharpe: inf, dd: 0%
 period: 460, zscore: Some(3.0), roi: 2.05%, sharpe: inf, dd: 0%
+
+### 1h - Optimized, 0.25% Fee, Entropy Z-Score Filter
+
+**Top by ROI**
+period: 105, zscore: Some(3.0), roi: 1152.36%, sharpe: 1.541, dd: -20.722%
+period: 108, zscore: Some(3.0), roi: 1027.5%, sharpe: 1.858, dd: -21.384%
+period: 114, zscore: Some(3.0), roi: 871.21%, sharpe: 1.399, dd: -27.609%
+sort summaries by sharpe ratio in 0ms
+**Top by Sharpe**
+period: 11, zscore: Some(3.0), roi: 45.31%, sharpe: 3.859, dd: -17.909%
+period: 154, zscore: Some(3.0), roi: 212.99%, sharpe: 3.129, dd: -51.279%
+period: 348, zscore: Some(3.0), roi: 139.58%, sharpe: 2.99, dd: -30.547%
+sort summaries by max drawdown in 0ms
+**Top by Drawdown**
+period: 10, zscore: Some(3.0), roi: 0%, sharpe: 0, dd: 0%
+period: 15, zscore: Some(3.0), roi: 427.9%, sharpe: 1.099, dd: -9.886%
+period: 16, zscore: Some(3.0), roi: 834.42%, sharpe: 1.28, dd: -11.835%
