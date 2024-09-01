@@ -1,5 +1,3 @@
-use crate::Dataset;
-
 #[derive(Debug, Copy, Clone)]
 pub enum EntropyBits {
   One,

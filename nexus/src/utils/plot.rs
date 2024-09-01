@@ -79,16 +79,12 @@ impl Plot {
     };
 
     let root = BitMapBackend::new(out_file, (2048, 1024)).into_drawing_area();
-    root
-      .fill(&WHITE)
-      .map_err(|e| anyhow::anyhow!("Failed to fill drawing area with white: {}", e))?;
+    root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
       .set_all_label_area_size(150)
       .margin(20)
       .caption(title, ("sans-serif", 40.0).into_font())
-      .build_cartesian_2d(min_x..max_x, y_range)
-      .map_err(|e| anyhow::anyhow!("Failed to build cartesian 2d: {}", e))?
-      .set_secondary_coord(0f32..10f32, -1.0f32..1.0f32);
+      .build_cartesian_2d(min_x..max_x, y_range)?;
 
     chart
       .configure_mesh()
@@ -98,8 +94,7 @@ impl Plot {
       .y_desc(y_label)
       .y_labels(10)
       .y_label_formatter(&|y| y_label_formatter(*y))
-      .draw()
-      .map_err(|e| anyhow::anyhow!("Failed to draw mesh: {}", e))?;
+      .draw()?;
 
     let mut draw_series = |s: &Series, color: RGBColor| {
       chart
