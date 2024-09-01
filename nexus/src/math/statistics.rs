@@ -121,3 +121,12 @@ pub fn hurst(x: &[f64]) -> f64 {
   let (slope, _): (f64, f64) = linreg::linear_regression(&cap_x_log, &cap_y_log).unwrap();
   slope
 }
+
+pub fn ema(y: &[f64]) -> f64 {
+  let alpha: f64 = 2.0 / (y.len() as f64 + 1.0);
+  let mut ema: f64 = y[0];
+  for value in y.iter().skip(1) {
+    ema = alpha * value + (1.0 - alpha) * ema;
+  }
+  ema
+}

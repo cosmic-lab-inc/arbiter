@@ -1,4 +1,4 @@
-use crate::{derivative, slope, Bar, Time};
+use crate::{derivative, ema, slope, Bar, Time};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -287,6 +287,10 @@ impl Dataset {
 
   pub fn slope(&self) -> f64 {
     slope(self.y().as_slice())
+  }
+
+  pub fn ema(&self, period: usize) -> Vec<f64> {
+    self.y().windows(period).map(ema).collect()
   }
 }
 
