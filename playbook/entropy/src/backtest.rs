@@ -536,7 +536,7 @@ impl EntropyBacktest {
   }
 
   fn generate_signals(&mut self) -> anyhow::Result<Signals> {
-    self.price_zscore_trigger()
+    self.binary()
   }
 
   pub fn signal(
@@ -973,17 +973,17 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   let leverage = 1;
   let short_selling = true;
 
-  let start_time = Time::new(2017, 1, 1, None, None, None);
-  let end_time = Time::new(2025, 1, 1, None, None, None);
+  let start_time = Time::new(2020, 1, 1, None, None, None);
+  let end_time = Time::new(2022, 1, 1, None, None, None);
   let timeframe = "1h";
 
   let btc_csv = workspace_path(&format!("data/btc_{}.csv", timeframe));
   let ticker = "BTC".to_string();
   let series = Dataset::csv_series(&btc_csv, Some(start_time), Some(end_time), ticker.clone())?;
 
-  let period = 100;
-  let bits = EntropyBits::Two;
-  let zscore = Some(2.0);
+  let period = 10;
+  let bits = EntropyBits::One;
+  let zscore = None;
 
   let strat = EntropyBacktest::new(period, bits, zscore, ticker.clone(), stop_loss);
   let mut backtest = Backtest::builder(strat)
