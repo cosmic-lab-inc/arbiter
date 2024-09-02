@@ -294,7 +294,7 @@ impl EntropyBacktest {
     // If sufficient data caches, then check for signal
     //
 
-    let can_trade = ez.abs() > self.entropy_zscore_cutoff.unwrap_or(0.0);
+    let can_trade = ez < -self.entropy_zscore_cutoff.unwrap_or(0.0).abs();
     if can_trade {
       let latest_price = *series.y().last().unwrap();
       let mut new_last_signal = self.last_signal.clone();
@@ -374,106 +374,6 @@ impl EntropyBacktest {
     })
   }
 
-  fn price_zscore_trigger(&mut self) -> anyhow::Result<Signals> {
-    let mut enter_long = false;
-    let mut exit_long = false;
-    let mut enter_short = false;
-    let mut exit_short = false;
-
-    let series = Dataset::new(self.cache.vec());
-
-    //
-    // Cache entropy and price z-scores
-    //
-
-    let closes = series.y();
-    let e = shannon_entropy(closes.as_slice(), self.period + 1, self.bits.patterns());
-    self.e_cache.push(e);
-    let pz = zscore(closes.as_slice(), self.period)?;
-    self.pz_cache.push(pz);
-
-    let e_series = self.e_cache.vec();
-    // not enough values to compute entropy z-score or price z-score
-    if e_series.len() < self.period || self.pz_cache.vec().len() < self.period {
-      return Ok(Signals {
-        enter_long,
-        exit_long,
-        enter_short,
-        exit_short,
-      });
-    }
-    let ez = zscore(e_series.as_slice(), self.period)?;
-    self.ez_cache.push(ez);
-    if self.ez_cache.vec().len() < self.period {
-      return Ok(Signals {
-        enter_long,
-        exit_long,
-        enter_short,
-        exit_short,
-      });
-    }
-
-    //
-    // If sufficient data caches, then check for signal
-    //
-
-    let cutoff = self.entropy_zscore_cutoff.unwrap_or(0.0).abs();
-    if ez < -cutoff {
-      let latest_price = *series.y().last().unwrap();
-      let mut new_last_signal = self.last_signal.clone();
-      // exit position created by last_signal if needed
-      if let Some(LastSignal {
-        bars_since, signal, ..
-      }) = new_last_signal
-      {
-        if bars_since > self.bits.bits() {
-          match signal {
-            EntropySignal::Up => {
-              exit_long = true;
-              new_last_signal = None;
-            }
-            EntropySignal::Down => {
-              exit_short = true;
-              new_last_signal = None;
-            }
-            _ => {}
-          }
-        }
-      }
-      // only trade if no active position
-      if new_last_signal.is_none() {
-        let signal = n_bit_entropy!(self.bits.bits(), self.period, series.y())?;
-        match signal {
-          EntropySignal::Up => {
-            enter_long = true;
-            new_last_signal = Some(LastSignal {
-              bars_since: 0,
-              signal: EntropySignal::Up,
-              price: latest_price,
-            });
-          }
-          EntropySignal::Down => {
-            enter_short = true;
-            new_last_signal = Some(LastSignal {
-              bars_since: 0,
-              signal: EntropySignal::Down,
-              price: latest_price,
-            });
-          }
-          _ => {}
-        }
-      }
-      self.last_signal = new_last_signal;
-    }
-
-    Ok(Signals {
-      enter_long,
-      exit_long,
-      enter_short,
-      exit_short,
-    })
-  }
-
   fn binary_zscore_entropy(&mut self) -> anyhow::Result<Signals> {
     let mut enter_long = false;
     let mut exit_long = false;
@@ -517,11 +417,11 @@ impl EntropyBacktest {
     //
 
     let cutoff = self.entropy_zscore_cutoff.unwrap_or(0.0).abs();
-    if ez < -cutoff {
+    if ez > cutoff {
       // short
       enter_short = true;
       exit_long = true;
-    } else if ez > cutoff {
+    } else if ez < -cutoff {
       // long
       enter_long = true;
       exit_short = true;
@@ -966,7 +866,7 @@ fn entropy_1h_backtest() -> anyhow::Result<()> {
   dotenv::dotenv().ok();
   init_logger();
 
-  let fee = 0.0;
+  let fee = 0.25;
   let slippage = 0.0;
   let stop_loss = None;
   let bet = Bet::Percent(100.0);
